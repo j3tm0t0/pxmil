@@ -28,7 +28,7 @@
 #include "x1f.h"
 #include "timing.h"
 #include "sysmenu.h"
-#include "menubase.h"
+#include "pspmenu.h"
 #include "softkbd.h"
 #include "selfexec.h"
 #include "perf.h"
@@ -145,6 +145,7 @@ int main(int argc, char *argv[]) {
 					file_setseparator(path, sizeof(path));
 					milstr_ncat(path, fli.path, sizeof(path));
 					diskdrv_setfdd(0, path, 0);
+					pspmenu_setmounted(0, fli.path);
 					break;
 				}
 			} while(file_listnext(flh, &fli) == SUCCESS);
@@ -179,15 +180,15 @@ int main(int argc, char *argv[]) {
 				static UINT8 menutest;
 				if ((el >= 20000) && (menutest == 0)) {
 					menutest = 1;
-					if (menuvram == NULL) {
-						sysmenu_menuopen(0, 0, 0);
+					if (!pspmenu_isopen()) {
+						pspmenu_toggle();
 						scrnmng_menupresent();
 					}
 				}
 				if ((el >= 30000) && (menutest == 1)) {
 					menutest = 2;
-					if (menuvram != NULL) {
-						menubase_close();
+					if (pspmenu_isopen()) {
+						pspmenu_toggle();
 						scrnmng_menupresent();
 					}
 				}

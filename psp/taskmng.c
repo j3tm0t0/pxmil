@@ -10,8 +10,9 @@
  *   R      : アスペクトモード切替 (ドット等倍 / 4:3 / 引き伸ばし)
  *   △/□   : ○/× の連射 (joymng.c)
  *
- * メニュー表示中は D-pad/アナログでカーソルを動かし、○ で決定
- * (menubase へマウスとして渡す)。ゲームへのパッド入力は止まる。
+ * メニューは px68k 風のリスト画面 (psp/pspmenu.c)。上下で項目移動、
+ * ○ で決定、× で戻る。メニュー/キーボード中はゲームへのパッド入力は
+ * 止まる。
  */
 
 #include	"compiler.h"
@@ -21,17 +22,13 @@
 #include	"pccore.h"
 #include	"scrnmng.h"
 #include	"joymng.h"
-#include	"sysmenu.h"
-#include	"menubase.h"
+#include	"pspmenu.h"
 #include	"softkbd.h"
 
 	BOOL	task_avail;
 
 static	UINT32	lastbuttons;
 
-/* メニューカーソル (640x400 座標系) */
-static	int		cur_x = 320;
-static	int		cur_y = 200;
 
 void taskmng_initialize(void) {
 
@@ -44,58 +41,6 @@ void taskmng_initialize(void) {
 void taskmng_exit(void) {
 
 	task_avail = FALSE;
-}
-
-/* メニュー表示中の入力: カーソル移動 + ○ クリックを menubase に渡す */
-static void menu_input(const SceCtrlData *pad, UINT32 pressed, UINT32 released) {
-
-	int		dx = 0, dy = 0;
-	int		moved;
-
-	if (pad->Buttons & PSP_CTRL_LEFT) {
-		dx -= 3;
-	}
-	if (pad->Buttons & PSP_CTRL_RIGHT) {
-		dx += 3;
-	}
-	if (pad->Buttons & PSP_CTRL_UP) {
-		dy -= 3;
-	}
-	if (pad->Buttons & PSP_CTRL_DOWN) {
-		dy += 3;
-	}
-	if (pad->Lx < 64) {
-		dx -= 4;
-	}
-	if (pad->Lx > 192) {
-		dx += 4;
-	}
-	if (pad->Ly < 64) {
-		dy -= 4;
-	}
-	if (pad->Ly > 192) {
-		dy += 4;
-	}
-	moved = (dx | dy);
-	cur_x += dx;
-	cur_y += dy;
-	if (cur_x < 0) cur_x = 0;
-	if (cur_x > 639) cur_x = 639;
-	if (cur_y < 0) cur_y = 0;
-	if (cur_y > 399) cur_y = 399;
-
-	if (pressed & PSP_CTRL_CIRCLE) {
-		menubase_moving(cur_x, cur_y, 1);		/* 左ボタン down */
-	}
-	else if (released & PSP_CTRL_CIRCLE) {
-		menubase_moving(cur_x, cur_y, 2);		/* 左ボタン up */
-	}
-	else if (moved) {
-		menubase_moving(cur_x, cur_y, 0);
-	}
-	if (moved || (pressed & PSP_CTRL_CIRCLE) || (released & PSP_CTRL_CIRCLE)) {
-		scrnmng_menupresent();
-	}
 }
 
 void taskmng_rol(void) {
@@ -121,19 +66,32 @@ void taskmng_rol(void) {
 	lastbuttons = pad.Buttons;
 
 	if (pressed & PSP_CTRL_SELECT) {
-		if (menuvram == NULL) {
-			sysmenu_menuopen(0, 0, 0);
-			scrnmng_menupresent();
-		}
-		else {
-			menubase_close();
-			scrnmng_menupresent();
-		}
+		pspmenu_toggle();
+		scrnmng_menupresent();
 		return;
 	}
 
-	if (menuvram != NULL) {
-		menu_input(&pad, pressed, released);
+	if (pspmenu_isopen()) {
+		/* リストメニュー操作 (エッジ + リピート) */
+		static UINT32 nextrep;
+		UINT32	now = GETTICK();
+		int		dx = 0, dy = 0;
+		UINT32	dirs = pad.Buttons &
+					(PSP_CTRL_UP | PSP_CTRL_DOWN | PSP_CTRL_LEFT | PSP_CTRL_RIGHT);
+
+		if ((pressed & dirs) || (dirs && (now >= nextrep))) {
+			if (dirs & PSP_CTRL_UP)    dy = -1;
+			if (dirs & PSP_CTRL_DOWN)  dy = 1;
+			if (dirs & PSP_CTRL_LEFT)  dx = -1;
+			if (dirs & PSP_CTRL_RIGHT) dx = 1;
+			nextrep = now + ((pressed & dirs) ? 300 : 120);
+		}
+		if (dx || dy || (pressed & (PSP_CTRL_CIRCLE | PSP_CTRL_CROSS))) {
+			pspmenu_input(dx, dy,
+				(pressed & PSP_CTRL_CIRCLE) ? 1 : 0,
+				(pressed & PSP_CTRL_CROSS) ? 1 : 0);
+			scrnmng_menupresent();
+		}
 		return;
 	}
 

@@ -24,7 +24,7 @@
 #include	"perf.h"
 #include	"gu.h"
 #include	"softkbd.h"
-#include	"menubase.h"
+#include	"pspmenu.h"
 
 /* メニュー合成用 (640x400 RGB565) */
 static UINT16	s_compose[640 * 400] __attribute__((aligned(64)));
@@ -187,22 +187,14 @@ static void present_frame(void) {
 	dst.w = w;
 	dst.h = h;
 	dbg_render(s_surface);
-	if ((menuvram != NULL) || softkbd_isvisible()) {
+	if (pspmenu_isopen() || softkbd_isvisible()) {
 		/* ゲーム画面のコピーにメニュー/ソフトキーボードを合成して表示 */
 		const UINT16	*game = (const UINT16 *)s_surface->pixels;
-		UINT			i, npix;
+		UINT			npix;
 
 		npix = 640 * 400;
 		memcpy(s_compose, game, npix * 2);
-		if (menuvram != NULL) {
-			const UINT16	*menu = (const UINT16 *)menuvram->ptr;
-			const UINT8		*alpha = menuvram->alpha;
-			for (i = 0; i < npix; i++) {
-				if (alpha[i] & 2) {
-					s_compose[i] = menu[i];
-				}
-			}
-		}
+		pspmenu_draw(s_compose);
 		softkbd_draw(s_compose);
 		pxgu_present(s_compose, src.w, src.h, dst.x, dst.y, dst.w, dst.h);
 	}

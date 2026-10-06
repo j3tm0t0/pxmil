@@ -72,8 +72,8 @@ static const int	rowlen[] = {
 	NELEMENTS(row3), NELEMENTS(row4), NELEMENTS(row5)};
 #define	NROWS	6
 
-#define	KEYW	18			/* セル幅 1 単位 (px) */
-#define	KEYH	10
+#define	KEYW	20			/* セル幅 1 単位 (px) */
+#define	KEYH	14
 #define	KBD_W	(16 * KEYW + 2)
 #define	KBD_X	((640 - KBD_W) / 2)	/* 中央寄せ */
 #define	KBD_H	(NROWS * KEYH + 2)
@@ -181,7 +181,7 @@ static const UINT8 skb_glyph[][5] = {
 	{0,0,0,0,2},{1,1,2,4,4},{0,0,0,0,7},{1,2,4,2,1},{4,2,1,2,4},
 	{0,5,5,5,2}};
 
-static void fillrect(UINT16 *dst, int x, int y, int w, int h, UINT16 c) {
+void skb_fillrect(UINT16 *dst, int x, int y, int w, int h, UINT16 c) {
 
 	int	i, j;
 
@@ -193,30 +193,45 @@ static void fillrect(UINT16 *dst, int x, int y, int w, int h, UINT16 c) {
 	}
 }
 
-static void drawlabel(UINT16 *dst, int x, int y, const char *s, UINT16 c) {
+/* 3x5 フォントで文字列を描く (scale 倍拡大)。大文字化して描画 */
+void skb_drawtext(UINT16 *dst, int x, int y, const char *s, UINT16 c, int scale) {
 
-	for (; *s != '\0'; s++, x += 4) {
+	for (; *s != '\0'; s++, x += 4 * scale) {
 		const char	*f;
 		const UINT8	*g;
-		int			row, col;
+		char		ch;
+		int			row, col, ry, rx;
 
-		if (*s == ' ') {
+		ch = *s;
+		if ((ch >= 'a') && (ch <= 'z')) {
+			ch = (char)(ch - 'a' + 'A');
+		}
+		if (ch == ' ') {
 			continue;
 		}
-		f = strchr(skb_chars, *s);
+		f = strchr(skb_chars, ch);
 		if (f == NULL) {
 			continue;
 		}
 		g = skb_glyph[f - skb_chars];
 		for (row = 0; row < 5; row++) {
-			UINT16 *p = dst + (y + row) * 640 + x;
-			for (col = 0; col < 3; col++) {
-				if (g[row] & (4 >> col)) {
-					p[col] = c;
+			for (ry = 0; ry < scale; ry++) {
+				UINT16 *p = dst + (y + row * scale + ry) * 640 + x;
+				for (col = 0; col < 3; col++) {
+					if (g[row] & (4 >> col)) {
+						for (rx = 0; rx < scale; rx++) {
+							p[col * scale + rx] = c;
+						}
+					}
 				}
 			}
 		}
 	}
+}
+
+static void drawlabel(UINT16 *dst, int x, int y, const char *s, UINT16 c) {
+
+	skb_drawtext(dst, x, y, s, c, 2);
 }
 
 void softkbd_draw(UINT16 *dst) {
@@ -226,7 +241,7 @@ void softkbd_draw(UINT16 *dst) {
 	if (!s_visible) {
 		return;
 	}
-	fillrect(dst, KBD_X, KBD_Y, KBD_W, KBD_H, COL_BG);
+	skb_fillrect(dst, KBD_X, KBD_Y, KBD_W, KBD_H, COL_BG);
 	for (r = 0; r < NROWS; r++) {
 		int x = KBD_X + 1;
 		for (c = 0; c < rowlen[r]; c++) {
@@ -247,7 +262,7 @@ void softkbd_draw(UINT16 *dst) {
 				bg = COL_KEY;
 				fg = COL_TEXT;
 			}
-			fillrect(dst, x, y, w, KEYH - 1, bg);
+			skb_fillrect(dst, x, y, w, KEYH - 1, bg);
 			drawlabel(dst, x + 2, y + 2, k->label, fg);
 			x += k->w * KEYW;
 		}

@@ -12,7 +12,7 @@
 #include	"compiler.h"
 #include	<pspctrl.h>
 #include	"joymng.h"
-#include	"menubase.h"
+#include	"pspmenu.h"
 #include	"softkbd.h"
 
 #define	JOY_UP_BIT		0x01
@@ -38,7 +38,7 @@ BYTE joymng_getstat(void) {
 	BYTE		ret;
 
 	ret = joy_autoinput;
-	if ((menuvram != NULL) || softkbd_isvisible()) {
+	if (pspmenu_isopen() || softkbd_isvisible()) {
 		return(0xff);			/* メニュー/ソフトキーボード中はパッド入力を渡さない */
 	}
 	if (sceCtrlPeekBufferPositive(&pad, 1) <= 0) {
