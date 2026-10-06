@@ -47,6 +47,14 @@ static	SCRNSURF	scrnsurf;
 /* vram/palettes.c が参照する。0 = スキャンライン表示なし */
 int allow_scanlines = 0;
 
+/* アスペクトモード (R トリガーで巡回切替) */
+enum {
+	ASPECT_DOT = 0,		/* ドット等倍比 8:5 */
+	ASPECT_MONITOR,		/* 実機モニタ比 4:3 */
+	ASPECT_STRETCH		/* 全画面引き伸ばし */
+};
+static int aspect_mode = ASPECT_DOT;
+
 /* ---- デバッグオーバーレイ (左上に loop/draw/fps を表示) ----
  * メインループから毎周 scrnmng_dbgtick() を呼ぶ。ループが回っていれば
  * 数字が増え、コアが描画していれば draw も増える。どちらも止まって
@@ -234,9 +242,51 @@ void scrnmng_surfunlock(const SCRNSURF *surf) {
 	/* ウィンドウサーフェースはキャッシュしない (SDL 側で作り直されうる) */
 	winsurf = SDL_GetWindowSurface(s_sdlWindow);
 	if (winsurf != NULL) {
-		SDL_BlitScaled(surface, NULL, winsurf, NULL);
+		/* アスペクトモードに従って 480x272 に収める。表示モードで
+		 * source サイズが変わっても scrnstat に追従する。 */
+		SDL_Rect	src, dst;
+		int			w, h;
+		int			aw, ah;
+
+		src.x = 0;
+		src.y = 0;
+		src.w = min(scrnstat.width, 640);
+		src.h = min(scrnstat.height, 400);
+		switch(aspect_mode) {
+		case ASPECT_DOT:		/* ドット等倍比 (640x400 → 435x272) */
+			aw = src.w;
+			ah = src.h;
+			break;
+		case ASPECT_MONITOR:	/* 実機モニタ 4:3 (→ 362x272) */
+			aw = 4;
+			ah = 3;
+			break;
+		default:				/* 480x272 引き伸ばし */
+			aw = PSP_SCREEN_WIDTH;
+			ah = PSP_SCREEN_HEIGHT;
+			break;
+		}
+		w = PSP_SCREEN_WIDTH;
+		h = w * ah / aw;
+		if (h > PSP_SCREEN_HEIGHT) {
+			h = PSP_SCREEN_HEIGHT;
+			w = h * aw / ah;
+		}
+		dst.x = (PSP_SCREEN_WIDTH - w) / 2;
+		dst.y = (PSP_SCREEN_HEIGHT - h) / 2;
+		dst.w = w;
+		dst.h = h;
+		if ((dst.x != 0) || (dst.y != 0)) {
+			SDL_FillRect(winsurf, NULL, 0);
+		}
+		SDL_BlitScaled(surface, &src, winsurf, &dst);
 		SDL_UpdateWindowSurface(s_sdlWindow);
 	}
+}
+
+void scrnmng_nextaspect(void) {
+
+	aspect_mode = (aspect_mode + 1) % 3;
 }
 
 

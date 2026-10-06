@@ -21,6 +21,8 @@
 #include "ini.h"
 #include "pccore.h"
 #include "iocore.h"
+#include "milstr.h"
+#include "diskdrv.h"
 #include "scrndraw.h"
 #include "x1f.h"
 #include "timing.h"
@@ -83,6 +85,32 @@ int main(int argc, char *argv[]) {
 	sysmng_initialize();
 	taskmng_initialize();
 	pccore_initialize();
+
+	/* disk/ にある最初のディスクイメージを FDD0 にマウントして起動する
+	 * (メニュー UI 実装までのつなぎ)。 */
+	{
+		FLINFO	fli;
+		FLISTH	flh;
+
+		flh = file_list1st(file_getcd("disk"), &fli);
+		if (flh != FLISTH_INVALID) {
+			do {
+				const char *ext = file_getext(fli.path);
+				if ((!file_cmpname(ext, "2d")) ||
+					(!file_cmpname(ext, "d88")) ||
+					(!file_cmpname(ext, "88d")) ||
+					(!file_cmpname(ext, "2hd"))) {
+					char path[MAX_PATH];
+					milstr_ncpy(path, file_getcd("disk"), sizeof(path));
+					file_setseparator(path, sizeof(path));
+					milstr_ncat(path, fli.path, sizeof(path));
+					diskdrv_setfdd(0, path, 0);
+					break;
+				}
+			} while(file_listnext(flh, &fli) == SUCCESS);
+			file_listclose(flh);
+		}
+	}
 
 	scrndraw_redraw();
 	pccore_reset();

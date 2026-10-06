@@ -6,6 +6,7 @@
  * sceCtrl による最小限のボタン入力を行う。
  *   START  : リセット
  *   SELECT : 終了 (XMB へ戻る)
+ *   R      : アスペクトモード切替 (ドット等倍 / 4:3 / 引き伸ばし)
  */
 
 #include	"compiler.h"
@@ -13,6 +14,7 @@
 #include	<pspctrl.h>
 #include	"taskmng.h"
 #include	"pccore.h"
+#include	"scrnmng.h"
 
 	BOOL	task_avail;
 
@@ -23,7 +25,7 @@ void taskmng_initialize(void) {
 	task_avail = TRUE;
 	lastbuttons = 0;
 	sceCtrlSetSamplingCycle(0);
-	sceCtrlSetSamplingMode(PSP_CTRL_MODE_DIGITAL);
+	sceCtrlSetSamplingMode(PSP_CTRL_MODE_ANALOG);	/* joymng がスティックも見る */
 }
 
 void taskmng_exit(void) {
@@ -53,6 +55,9 @@ void taskmng_rol(void) {
 		}
 		if (pressed & PSP_CTRL_SELECT) {
 			task_avail = FALSE;
+		}
+		if (pressed & PSP_CTRL_RTRIGGER) {
+			scrnmng_nextaspect();
 		}
 	}
 }
