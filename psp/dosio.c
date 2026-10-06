@@ -11,12 +11,141 @@
 #include <dirent.h>
 #endif
 
+
+/* ---- Disk image RAM cache ----
+ * fdd_2d/fdd_d88 open/seek/read/close the image for EVERY sector access;
+ * on the memory stick that costs tens of ms per frame during loads.
+ * Read-opens of disk images are served from a whole-file RAM copy,
+ * invalidated by write opens (file_open/file_create). */
+
+#define	DCACHE_SLOTS	2
+#define	DCACHE_MAX		(2 * 1024 * 1024)
+#define	MEMFH_MAGIC		0x4d464831
+
+typedef struct {
+	UINT32	magic;
+	UINT8	*data;
+	UINT	size;
+	UINT	pos;
+} MEMFH;
+
+typedef struct {
+	char	path[MAX_PATH];
+	UINT8	*data;
+	UINT	size;
+	UINT32	last;
+} DSLOT;
+
+static DSLOT	dslot[DCACHE_SLOTS];
+static UINT32	duse;
+
+static int dcache_isimage(const char *path) {
+
+	const char *p = strrchr(path, '.');
+	if (p == NULL) {
+		return(0);
+	}
+	p++;
+	return((!strcasecmp(p, "2d")) || (!strcasecmp(p, "d88")) ||
+			(!strcasecmp(p, "88d")) || (!strcasecmp(p, "2hd")));
+}
+
+static void dcache_invalidate(const char *path) {
+
+	int i;
+	for (i = 0; i < DCACHE_SLOTS; i++) {
+		if (dslot[i].data && (!strcmp(dslot[i].path, path))) {
+			free(dslot[i].data);
+			dslot[i].data = NULL;
+			dslot[i].path[0] = '\0';
+		}
+	}
+}
+
+static FILEH dcache_open(const char *path) {
+
+	int		i, victim;
+	FILE	*fh;
+	long	size;
+	MEMFH	*m;
+	DSLOT	*sl = NULL;
+
+	for (i = 0; i < DCACHE_SLOTS; i++) {
+		if (dslot[i].data && (!strcmp(dslot[i].path, path))) {
+			sl = &dslot[i];
+			break;
+		}
+	}
+	if (sl == NULL) {
+		fh = fopen(path, "rb");
+		if (fh == NULL) {
+			return(NULL);
+		}
+		fseek(fh, 0, SEEK_END);
+		size = ftell(fh);
+		if ((size <= 0) || (size > DCACHE_MAX)) {
+			fclose(fh);
+			return(NULL);
+		}
+		victim = 0;
+		for (i = 1; i < DCACHE_SLOTS; i++) {
+			if (dslot[i].data == NULL) {
+				victim = i;
+				break;
+			}
+			if (dslot[i].last < dslot[victim].last) {
+				victim = i;
+			}
+		}
+		sl = &dslot[victim];
+		if (sl->data) {
+			free(sl->data);
+			sl->data = NULL;
+		}
+		sl->data = (UINT8 *)malloc(size);
+		if (sl->data == NULL) {
+			fclose(fh);
+			return(NULL);
+		}
+		fseek(fh, 0, SEEK_SET);
+		if (fread(sl->data, 1, size, fh) != (size_t)size) {
+			fclose(fh);
+			free(sl->data);
+			sl->data = NULL;
+			return(NULL);
+		}
+		fclose(fh);
+		sl->size = (UINT)size;
+		strncpy(sl->path, path, MAX_PATH - 1);
+	}
+	sl->last = ++duse;
+	m = (MEMFH *)malloc(sizeof(MEMFH));
+	if (m == NULL) {
+		return(NULL);
+	}
+	m->magic = MEMFH_MAGIC;
+	m->data = sl->data;
+	m->size = sl->size;
+	m->pos = 0;
+	return((FILEH)m);
+}
+
+static MEMFH *memfh(FILEH handle) {
+
+	MEMFH *m = (MEMFH *)handle;
+	if ((m != NULL) && (m->magic == MEMFH_MAGIC)) {
+		return(m);
+	}
+	return(NULL);
+}
+
 static	char	curpath[MAX_PATH] = "./";
 static	char	*curfilep = curpath + 2;
 
 /* �t�@�C������ */
 FILEH file_open(const char *path) {
 
+	dcache_invalidate(path);
 #if defined(WIN32) && defined(OSLANG_UTF8)
 	char	sjis[MAX_PATH];
 	codecnv_utf8tosjis(sjis, NELEMENTS(sjis), path, (UINT)-1);
@@ -28,6 +157,12 @@ FILEH file_open(const char *path) {
 
 FILEH file_open_rb(const char *path) {
 
+	if (dcache_isimage(path)) {
+		FILEH m = dcache_open(path);
+		if (m != NULL) {
+			return(m);
+		}
+	}
 #if defined(WIN32) && defined(OSLANG_UTF8)
 	char	sjis[MAX_PATH];
 	codecnv_utf8tosjis(sjis, NELEMENTS(sjis), path, (UINT)-1);
@@ -39,6 +174,7 @@ FILEH file_open_rb(const char *path) {
 
 FILEH file_create(const char *path) {
 
+	dcache_invalidate(path);
 #if defined(WIN32) && defined(OSLANG_UTF8)
 	char	sjis[MAX_PATH];
 	codecnv_utf8tosjis(sjis, NELEMENTS(sjis), path, (UINT)-1);
@@ -50,22 +186,48 @@ FILEH file_create(const char *path) {
 
 long file_seek(FILEH handle, long pointer, int method) {
 
+	MEMFH *m = memfh(handle);
+	if (m) {
+		long p = pointer;
+		if (method == SEEK_CUR) p += (long)m->pos;
+		else if (method == SEEK_END) p += (long)m->size;
+		if (p < 0) p = 0;
+		if (p > (long)m->size) p = (long)m->size;
+		m->pos = (UINT)p;
+		return(p);
+	}
 	fseek(handle, pointer, method);
 	return(ftell(handle));
 }
 
 UINT file_read(FILEH handle, void *data, UINT length) {
 
+	MEMFH *m = memfh(handle);
+	if (m) {
+		UINT n = m->size - m->pos;
+		if (n > length) n = length;
+		CopyMemory(data, m->data + m->pos, n);
+		m->pos += n;
+		return(n);
+	}
 	return((UINT)fread(data, 1, length, handle));
 }
 
 UINT file_write(FILEH handle, const void *data, UINT length) {
 
+	if (memfh(handle)) {
+		return(0);
+	}
 	return((UINT)fwrite(data, 1, length, handle));
 }
 
 short file_close(FILEH handle) {
 
+	MEMFH *m = memfh(handle);
+	if (m) {
+		free(m);
+		return(0);
+	}
 	fclose(handle);
 	return(0);
 }
@@ -73,6 +235,10 @@ short file_close(FILEH handle) {
 UINT file_getsize(FILEH handle) {
 
 	struct stat sb;
+	MEMFH *m = memfh(handle);
+	if (m) {
+		return(m->size);
+	}
 
 	if (fstat(fileno(handle), &sb) == 0)
 	{
@@ -143,6 +309,9 @@ short file_getdatetime(FILEH handle, DOSDATE *dosdate, DOSTIME *dostime) {
 
 struct stat sb;
 
+	if (memfh(handle)) {
+		return(-1);
+	}
 	if (fstat(fileno(handle), &sb) == 0) {
 		if (cnv_sttime(&sb.st_mtime, dosdate, dostime) == SUCCESS) {
 			return(0);
