@@ -6,6 +6,7 @@
 #include "ini.h"
 #include "pccore.h"
 #include "scrnmng.h"
+#include "pspmenu.h"
 
 static const char ini_title[] = "Xmillennium";
 static const char inifile[] = "xmil.cfg";
@@ -46,7 +47,8 @@ static const PFTBL iniitem[] = {
 
 	// PSP
 	{"PSP_Aspc", PFMAX_UINT8,		&pspcfg_aspect,			2},
-	{"PSPFpsOn", PFTYPE_BOOL,		&pspcfg_overlay,		0}};
+	{"PSPFpsOn", PFTYPE_BOOL,		&pspcfg_overlay,		0},
+	{"PSPClkMl", PFMAX_UINT8,		&pspcfg_clockmul,		4}};
 
 void initload(void) {
 

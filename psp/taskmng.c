@@ -128,6 +128,7 @@ void taskmng_rol(void) {
 
 	if (pressed & PSP_CTRL_START) {
 		pccore_reset();
+		pspmenu_applyclock();
 	}
 	if ((pressed & (PSP_CTRL_LTRIGGER | PSP_CTRL_RTRIGGER)) &&
 		((pad.Buttons & (PSP_CTRL_LTRIGGER | PSP_CTRL_RTRIGGER)) ==

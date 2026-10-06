@@ -18,6 +18,20 @@
 #include	"softkbd.h"
 #include	"pspmenu.h"
 
+/* CPU クロック倍率 (baseclock 2MHz x multiple)。2=4MHz(実機) 3=6MHz 4=8MHz。
+ * ゼビウス等は VSYNC 待ちでペースを取るため、クロックを上げると
+ * ゲーム速度そのままで描き替えが毎フレーム間に合うようになる。 */
+UINT8	pspcfg_clockmul = 2;
+
+void pspmenu_applyclock(void) {
+
+	if ((pspcfg_clockmul < 2) || (pspcfg_clockmul > 4)) {
+		pspcfg_clockmul = 2;
+	}
+	pccore.multiple = pspcfg_clockmul;
+	pccore.realclock = pccore.baseclock * pccore.multiple;
+}
+
 /* ---- 状態 ---- */
 
 enum {
@@ -33,6 +47,7 @@ enum {
 	MID_RESET,
 	MID_ASPECT,
 	MID_OVERLAY,
+	MID_CLOCK,
 	MID_CLOSE,
 	MID_EXIT,
 	MID_MAX
@@ -125,6 +140,7 @@ static void decide_main(void) {
 			break;
 		case MID_RESET:
 			pccore_reset();
+			pspmenu_applyclock();
 			s_open = 0;
 			break;
 		case MID_ASPECT:
@@ -132,6 +148,10 @@ static void decide_main(void) {
 			break;
 		case MID_OVERLAY:
 			pspcfg_overlay ^= 1;
+			break;
+		case MID_CLOCK:
+			pspcfg_clockmul = (UINT8)((pspcfg_clockmul - 1) % 3 + 2);
+			pspmenu_applyclock();
 			break;
 		case MID_CLOSE:
 			s_open = 0;
@@ -155,6 +175,10 @@ void pspmenu_input(int dx, int dy, int decide, int back) {
 			}
 			if (s_sel == MID_OVERLAY) {
 				pspcfg_overlay ^= 1;
+			}
+			if (s_sel == MID_CLOCK) {
+				pspcfg_clockmul = (UINT8)((pspcfg_clockmul - 1) % 3 + 2);
+				pspmenu_applyclock();
 			}
 		}
 		if (decide) {
@@ -238,8 +262,10 @@ void pspmenu_draw(UINT16 *dst) {
 		}
 		sprintf(buf, "FPS DISPLAY: < %s >", (pspcfg_overlay) ? "ON" : "OFF");
 		drawitem(dst, 7, buf, (s_sel == MID_OVERLAY), COL_ITEM);
-		drawitem(dst, 8, "CLOSE MENU", (s_sel == MID_CLOSE), COL_ITEM);
-		drawitem(dst, 9, "EXIT EMULATOR", (s_sel == MID_EXIT), COL_ITEM);
+		sprintf(buf, "CPU CLOCK: < %dMHZ >", pspcfg_clockmul * 2);
+		drawitem(dst, 8, buf, (s_sel == MID_CLOCK), COL_ITEM);
+		drawitem(dst, 9, "CLOSE MENU", (s_sel == MID_CLOSE), COL_ITEM);
+		drawitem(dst, 10, "EXIT EMULATOR", (s_sel == MID_EXIT), COL_ITEM);
 		skb_drawtext(dst, PX + 16, PY + PH - 14,
 			"UP/DOWN:MOVE  O:OK  X:CLOSE", COL_DIM, 2);
 	}

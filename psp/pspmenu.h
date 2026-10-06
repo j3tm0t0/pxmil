@@ -10,6 +10,8 @@ void pspmenu_toggle(void);
 void pspmenu_input(int dx, int dy, int decide, int back);
 void pspmenu_draw(UINT16 *dst);
 void pspmenu_setmounted(int drive, const char *name);
+void pspmenu_applyclock(void);
+extern UINT8 pspcfg_clockmul;
 
 #ifdef __cplusplus
 }

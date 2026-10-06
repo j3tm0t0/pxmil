@@ -165,6 +165,7 @@ int main(int argc, char *argv[]) {
 
 	scrndraw_redraw();
 	pccore_reset();
+	pspmenu_applyclock();
 
 	/* timing_setrate はこのソースツリーでは誰も呼ばず msstep=0 のまま
 	 * (libretro は retro_run 駆動なので放置されている)。設定しないと
