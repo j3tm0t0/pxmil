@@ -21,6 +21,7 @@
 #include	"scrnmng.h"
 #include	"scrndraw.h"
 #include	"vramhdl.h"
+#include	"perf.h"
 
 static SDL_Window	*s_sdlWindow;
 static SDL_Surface	*s_surface;		/* 640x400 RGB565 作業サーフェース */
@@ -63,7 +64,6 @@ static int border_clear = 2;	/* 黒帯を塗り直す残り回数 (切替時に�
 
 static UINT32	dbg_loopcnt;
 static UINT32	dbg_drawcnt;
-static UINT32	dbg_fps;
 
 /* 3x5 の数字フォント (各行 3bit、上から 5 行) */
 static const UINT8 dbgfont[10][5] = {
@@ -98,9 +98,11 @@ static UINT32	dbg_lastpresent;	/* 最後に present した時刻 (surfunlock が
 static void dbg_render(SDL_Surface *winsurf) {
 
 	SDL_LockSurface(winsurf);
-	dbg_drawnum(winsurf, 2, 2, dbg_loopcnt % 100000, 5);
-	dbg_drawnum(winsurf, 2, 9, dbg_drawcnt % 100000, 5);
-	dbg_drawnum(winsurf, 2, 16, dbg_fps, 3);
+	dbg_drawnum(winsurf, 2, 2, dbg_loopcnt % 100000, 5);		/* ループ生存 */
+	dbg_drawnum(winsurf, 2, 9, perf_now.execps, 3);			/* exec/s */
+	dbg_drawnum(winsurf, 2, 16, perf_now.drawps, 3);			/* 表示 fps */
+	dbg_drawnum(winsurf, 2, 23, perf_now.execus / 100, 4);	/* exec 平均 0.1ms */
+	dbg_drawnum(winsurf, 2, 30, perf_now.presus / 100, 4);	/* present 平均 0.1ms */
 	SDL_UnlockSurface(winsurf);
 }
 
@@ -108,17 +110,10 @@ static void present_frame(void);
 
 void scrnmng_dbgtick(void) {
 
-	static UINT32	lastms;
-	static UINT32	lastdraw;
-	UINT32			now;
+	UINT32	now;
 
 	dbg_loopcnt++;
 	now = SDL_GetTicks();
-	if ((now - lastms) >= 1000) {
-		dbg_fps = dbg_drawcnt - lastdraw;	/* 近似 fps (1 秒毎更新) */
-		lastdraw = dbg_drawcnt;
-		lastms = now;
-	}
 
 	/* コアが 500ms 以上描画していないときだけ、こちらから present して
 	 * 生存表示を続ける (停止の切り分け用)。通常時は surfunlock に任せる。
@@ -140,6 +135,9 @@ static void present_frame(void) {
 	SDL_Rect	src, dst;
 	int			w, h;
 	int			aw, ah;
+	UINT32		t0;
+
+	t0 = perf_us();
 
 	/* ウィンドウサーフェースはキャッシュしない (SDL 側で作り直されうる) */
 	winsurf = SDL_GetWindowSurface(s_sdlWindow);
@@ -192,6 +190,7 @@ static void present_frame(void) {
 	dbg_render(winsurf);
 	SDL_UpdateWindowSurface(s_sdlWindow);
 	dbg_lastpresent = SDL_GetTicks();
+	perf_add_present(perf_us() - t0);
 }
 
 void scrnmng_initialize(void) {

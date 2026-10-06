@@ -29,6 +29,7 @@
 #include "timing.h"
 #include "sysmenu.h"
 #include "selfexec.h"
+#include "perf.h"
 
 /* X1 のメモリ使用量は少ないので 16MB で十分 (PSP-1000 のユーザー空間は 24MB) */
 PSP_HEAP_SIZE_KB(16384);
@@ -42,6 +43,16 @@ static	UINT		waitcnt;
 static	UINT		framemax = 1;
 
 #define	framereset(cnt)		framecnt = 0
+
+/* pccore_exec を計測付きで呼ぶ */
+static void exec_frame(BOOL draw) {
+
+	UINT32	t0;
+
+	t0 = perf_us();
+	pccore_exec(draw);
+	perf_add_exec(perf_us() - t0);
+}
 
 static void processwait(UINT cnt) {
 
@@ -131,9 +142,10 @@ int main(int argc, char *argv[]) {
 
 	while(taskmng_isavail()) {
 		taskmng_rol();
+		perf_tick();
 		scrnmng_dbgtick();
 		if (xmiloscfg.NOWAIT) {
-			pccore_exec(framecnt == 0);
+			exec_frame(framecnt == 0);
 			if (xmiloscfg.DRAW_SKIP) {			/* nowait frame skip */
 				framecnt++;
 				if (framecnt >= xmiloscfg.DRAW_SKIP) {
@@ -149,7 +161,7 @@ int main(int argc, char *argv[]) {
 		}
 		else if (xmiloscfg.DRAW_SKIP) {			/* frame skip */
 			if (framecnt < xmiloscfg.DRAW_SKIP) {
-				pccore_exec(framecnt == 0);
+				exec_frame(framecnt == 0);
 				framecnt++;
 			}
 			else {
@@ -159,7 +171,7 @@ int main(int argc, char *argv[]) {
 		else {									/* auto skip */
 			if (!waitcnt) {
 				UINT cnt;
-				pccore_exec(framecnt == 0);
+				exec_frame(framecnt == 0);
 				framecnt++;
 				cnt = timing_getcount();
 				if (framecnt > cnt) {
@@ -198,6 +210,8 @@ int main(int argc, char *argv[]) {
 	sysmenu_destroy();
 	TRACETERM();
 	SDL_Quit();
+
+	perf_dump();	/* pxmil.log に毎秒の計測値を書き出す */
 
 	/* 実機では pspbrew.dev に戻る (テストサイクル短縮)。存在しない環境
 	 * (PPSSPP 等) ではスキップしてそのまま終了する。 */
