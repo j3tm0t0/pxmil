@@ -109,6 +109,12 @@ int main(int argc, char *argv[]) {
 	/* PSP では 44100Hz のサウンド生成が CPU 予算を圧迫してテンポが
 	 * 揺れるため 22050Hz に固定する (生成・ミックスとも半減)。 */
 	xmilcfg.samplingrate = 22050;
+	/* オートフレームスキップは exec が十分速い現状では framemax が
+	 * 1↔2 で振動して 47-55fps のカクつきになる。毎フレーム描画
+	 * (DRAW_SKIP=1) を既定にする。 */
+	if (xmiloscfg.DRAW_SKIP == 0) {
+		xmiloscfg.DRAW_SKIP = 1;
+	}
 
 	TRACEINIT();
 
