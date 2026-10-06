@@ -47,6 +47,70 @@ static	SCRNSURF	scrnsurf;
 /* vram/palettes.c が参照する。0 = スキャンライン表示なし */
 int allow_scanlines = 0;
 
+/* ---- デバッグオーバーレイ (左上に loop/draw/fps を表示) ----
+ * メインループから毎周 scrnmng_dbgtick() を呼ぶ。ループが回っていれば
+ * 数字が増え、コアが描画していれば draw も増える。どちらも止まって
+ * いれば表示自体が更新されない — という切り分けができる。 */
+
+static UINT32	dbg_loopcnt;
+static UINT32	dbg_drawcnt;
+static UINT32	dbg_fps;
+
+/* 3x5 の数字フォント (各行 3bit、上から 5 行) */
+static const UINT8 dbgfont[10][5] = {
+	{7,5,5,5,7}, {2,6,2,2,7}, {7,1,7,4,7}, {7,1,7,1,7}, {5,5,7,1,1},
+	{7,4,7,1,7}, {7,4,7,5,7}, {7,1,1,1,1}, {7,5,7,5,7}, {7,5,7,1,7},
+};
+
+static void dbg_drawnum(SDL_Surface *s, int x, int y, UINT32 val, int digits) {
+
+	int		d, row, col;
+	UINT16	*p;
+
+	for (d = digits - 1; d >= 0; d--) {
+		UINT32 v = val % 10;
+		val /= 10;
+		for (row = 0; row < 5; row++) {
+			p = (UINT16 *)((UINT8 *)s->pixels + (y + row) * s->pitch) + x + d * 4;
+			for (col = 0; col < 3; col++) {
+				p[col] = (dbgfont[v][row] & (4 >> col)) ? 0xffff : 0x0000;
+			}
+			p[3] = 0;
+		}
+	}
+}
+
+void scrnmng_dbgtick(void) {
+
+	static UINT32	lastms;
+	static UINT32	lastdraw;
+	SDL_Surface		*winsurf;
+	SDL_Rect		rect;
+	UINT32			now;
+
+	dbg_loopcnt++;
+	now = SDL_GetTicks();
+	if ((now - lastms) < 250) {		/* 描画は 4Hz に間引く */
+		return;
+	}
+	if ((now - lastms) >= 1000) {
+		dbg_fps = dbg_drawcnt - lastdraw;	/* 近似 fps (1 秒毎更新) */
+		lastdraw = dbg_drawcnt;
+		lastms = now;
+	}
+	winsurf = SDL_GetWindowSurface(s_sdlWindow);
+	if (winsurf == NULL) {
+		return;
+	}
+	SDL_LockSurface(winsurf);
+	dbg_drawnum(winsurf, 2, 2, dbg_loopcnt % 100000, 5);
+	dbg_drawnum(winsurf, 2, 9, dbg_drawcnt % 100000, 5);
+	dbg_drawnum(winsurf, 2, 16, dbg_fps, 3);
+	SDL_UnlockSurface(winsurf);
+	rect.x = 0; rect.y = 0; rect.w = 2 + 5 * 4 + 2; rect.h = 24;
+	SDL_UpdateWindowSurfaceRects(s_sdlWindow, &rect, 1);
+}
+
 void scrnmng_initialize(void) {
 
 	scrnstat.width = 640;
@@ -165,6 +229,7 @@ void scrnmng_surfunlock(const SCRNSURF *surf) {
 	}
 	scrnmng.surface = NULL;
 	SDL_UnlockSurface(surface);
+	dbg_drawcnt++;
 
 	/* ウィンドウサーフェースはキャッシュしない (SDL 側で作り直されうる) */
 	winsurf = SDL_GetWindowSurface(s_sdlWindow);

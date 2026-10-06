@@ -87,8 +87,17 @@ int main(int argc, char *argv[]) {
 	scrndraw_redraw();
 	pccore_reset();
 
+	/* timing_setrate はこのソースツリーでは誰も呼ばず msstep=0 のまま
+	 * (libretro は retro_run 駆動なので放置されている)。設定しないと
+	 * timing_getcount() が永遠に 0 で、最初のフレーム描画後に
+	 * processwait で止まる。4000<<16/clock が 1ms あたりの進み幅なので
+	 * clock=66733 で約 59.94 カウント/秒 (≒X1 のフレームレート)。 */
+	timing_setrate(66733);
+	timing_reset();
+
 	while(taskmng_isavail()) {
 		taskmng_rol();
+		scrnmng_dbgtick();
 		if (xmiloscfg.NOWAIT) {
 			pccore_exec(framecnt == 0);
 			if (xmiloscfg.DRAW_SKIP) {			/* nowait frame skip */

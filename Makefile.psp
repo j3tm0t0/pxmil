@@ -67,9 +67,10 @@ COREOBJS = \
 	$(FONTOBJS) $(IOOBJS) $(SOUNDOBJS) $(Z80OBJS) $(VRAMOBJS)
 
 # ------------------------------------------------------- フロントエンド objs
-# 統合時に psp/ フロントエンド (psp/xmil.o psp/scrnmng.o psp/soundmng.o
-# psp/dosio.o など) を追加する。コアビルド段階では空。
-FRONTEND_OBJS =
+FRONTEND_OBJS = \
+	psp/xmil.o psp/scrnmng.o psp/soundmng.o psp/sysmng.o psp/sysmenu.o \
+	psp/taskmng.o psp/timemng.o psp/trace.o psp/dosio.o psp/fontmng.o \
+	psp/ini.o psp/joymng.o psp/mousemng.o
 
 OBJS = $(COREOBJS) $(FRONTEND_OBJS)
 
@@ -80,7 +81,7 @@ BUILD_PRX = 1
 
 PSPDEV = $(shell psp-config -d)
 PSPBIN = $(PSPDEV)/psp/bin
-SDL_CONFIG = $(PSPBIN)/sdl-config
+SDL_CONFIG = $(PSPBIN)/sdl2-config
 
 # 最近の pspdev の sdl-config は prefix が壊れている (/psp) ので修正する
 # (px68k から流用。フロントエンドが SDL を使う場合に効く。コアには不要)
@@ -98,15 +99,15 @@ INCDIR = psp . codecnv common embed embed/menu embed/menubase fdd font io \
 # -G0: libretro の PSP ターゲットに合わせる。px68k では -G8 (小データを
 # gp 相対で参照、約 -14%/frame) を使っているが、割り込みハンドラと $gp の
 # 関係を監査してからでないと危険なので、まずは -G0 で始める。
-CFLAGS = -G0 -O2 -Wall
+CFLAGS = -G0 -O2 -Wall $(SDL_INCLUDE)
 CXXFLAGS = $(CFLAGS) -fno-exceptions -fno-rtti
 ASFLAGS = $(CFLAGS)
 
 LIBDIR =
 LDFLAGS =
-# フロントエンド統合時に必要なライブラリ (px68k 参照):
-#   -lSDLmain -lSDL -lpspgum -lpspgu -lm -lpspaudio -lpsppower など
-LIBS = $(SDL_LIB) -lpspgum -lpspgu -lm -lpspaudio -lpsppower
+# sdl2-config --libs が -lSDL2main -lSDL2 と PSP 側依存 (GU/GE/audio 等) を
+# 返す。残りは newlib/libm。
+LIBS = $(SDL_LIB) -lm -lpsppower
 
 EXTRA_TARGETS = EBOOT.PBP
 PSP_EBOOT_TITLE = X millennium for PSP
