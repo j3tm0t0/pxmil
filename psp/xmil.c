@@ -173,27 +173,6 @@ int main(int argc, char *argv[]) {
 		taskmng_rol();
 		perf_tick();
 
-		/* メニュー中はエミュレーションを一時停止 (音も止める)。
-		 * 再開時は timing をリセットして追いつきバーストを防ぐ。 */
-		{
-			static int paused;
-			if (pspmenu_isopen()) {
-				if (!paused) {
-					paused = 1;
-					soundmng_stop();
-				}
-				taskmng_sleep(10);
-				continue;
-			}
-			if (paused) {
-				paused = 0;
-				soundmng_play();
-				timing_reset();
-				timing_setcount(0);
-				framecnt = 0;
-				waitcnt = 0;
-			}
-		}
 		if (autotest_ms != 0) {
 			UINT32 el = GETTICK() - boot_tick;
 			if (el >= autotest_ms) {
@@ -247,6 +226,28 @@ int main(int argc, char *argv[]) {
 			}
 		}
 		scrnmng_dbgtick();
+		/* メニュー中はエミュレーションを一時停止 (音も止める)。
+		 * 再開時は timing をリセットして追いつきバーストを防ぐ。 */
+		{
+			static int paused;
+			if (pspmenu_isopen()) {
+				if (!paused) {
+					paused = 1;
+					soundmng_stop();
+				}
+				taskmng_sleep(10);
+				continue;
+			}
+			if (paused) {
+				paused = 0;
+				soundmng_play();
+				timing_reset();
+				timing_setcount(0);
+				framecnt = 0;
+				waitcnt = 0;
+			}
+		}
+
 		if (xmiloscfg.NOWAIT) {
 			exec_frame(framecnt == 0);
 			if (xmiloscfg.DRAW_SKIP) {			/* nowait frame skip */
