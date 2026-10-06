@@ -124,6 +124,20 @@ void pxgu_present(const UINT16 *src, int srcw, int srch,
 	if (!s_init) {
 		return;
 	}
+
+	/* パイプライン: ここで「前フレーム」の GE 完了を待って表示へ回し、
+	 * 今フレームはコマンド発行だけして戻る (GE はエミュレーションと
+	 * 並行して描く)。表示は 1 フレーム遅れるが CPU の待ちが消える。 */
+	if (s_frame > 0) {
+		sceGuSync(0, 0);
+		if (s_ovltext[0]) {
+			UINT32 off = ((s_frame - 1) & 1) ? FRAME_SIZE : 0;
+			skb_drawtext_s((UINT16 *)(0x44000000 | off), BUF_WIDTH,
+							2, 2, s_ovltext, 0xffff, 2);
+		}
+		sceGuSwapBuffers();
+	}
+
 	sceKernelDcacheWritebackRange(src, 640 * srch * 2);
 
 	sceGuStart(GU_DIRECT, s_list);
@@ -162,15 +176,6 @@ void pxgu_present(const UINT16 *src, int srcw, int srch,
 	}
 
 	sceGuFinish();
-	sceGuSync(0, 0);
-
-	/* エミュ画面のスケーリングと無関係な固定サイズ表示 (fps 等)。
-	 * GE 完了後に、これから表示するバッファへ CPU で直接描く。 */
-	if (s_ovltext[0]) {
-		UINT32 off = (s_frame & 1) ? FRAME_SIZE : 0;
-		skb_drawtext_s((UINT16 *)(0x44000000 | off), BUF_WIDTH,
-						2, 2, s_ovltext, 0xffff, 2);
-	}
 	s_frame++;
-	sceGuSwapBuffers();
+	/* sync と swap は次回の pxgu_present 冒頭で行う */
 }
