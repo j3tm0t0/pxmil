@@ -15,6 +15,7 @@
 #include	"taskmng.h"
 #include	"pccore.h"
 #include	"scrnmng.h"
+#include	"joymng.h"
 
 	BOOL	task_avail;
 
@@ -56,8 +57,16 @@ void taskmng_rol(void) {
 		if (pressed & PSP_CTRL_SELECT) {
 			task_avail = FALSE;
 		}
-		if (pressed & PSP_CTRL_RTRIGGER) {
-			scrnmng_nextaspect();
+		if ((pressed & (PSP_CTRL_LTRIGGER | PSP_CTRL_RTRIGGER)) &&
+			((pad.Buttons & (PSP_CTRL_LTRIGGER | PSP_CTRL_RTRIGGER)) ==
+							(PSP_CTRL_LTRIGGER | PSP_CTRL_RTRIGGER))) {
+			joy_swapbtn ^= 1;			/* L+R 同時: ○× 入れ替え */
+		}
+		else if (pressed & PSP_CTRL_RTRIGGER) {
+			scrnmng_nextaspect();		/* R: アスペクト切替 */
+		}
+		else if (pressed & PSP_CTRL_LTRIGGER) {
+			joy_autofire ^= 1;			/* L: 連射トグル */
 		}
 	}
 }

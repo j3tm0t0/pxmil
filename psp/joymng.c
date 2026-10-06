@@ -27,15 +27,22 @@
 /* autotest の自動入力 (負論理マスク、0xff = 入力なし)。xmil.c が設定 */
 BYTE	joy_autoinput = 0xff;
 
+/* L トリガーで切替 (taskmng.c が設定) */
+BYTE	joy_autofire = 0;		/* 1 = ○ を押しっぱなしで 15 連射 */
+BYTE	joy_swapbtn = 0;		/* 1 = ○× (ボタン1/2) を入れ替え */
+
 BYTE joymng_getstat(void) {
 
 	SceCtrlData	pad;
 	BYTE		ret;
+	UINT32		fire1, fire2;
 
 	ret = joy_autoinput;
 	if (sceCtrlPeekBufferPositive(&pad, 1) <= 0) {
 		return(ret);
 	}
+	fire1 = joy_swapbtn ? JOY_BTN2_BIT : JOY_BTN1_BIT;
+	fire2 = joy_swapbtn ? JOY_BTN1_BIT : JOY_BTN2_BIT;
 	if (pad.Buttons & PSP_CTRL_UP) {
 		ret &= (BYTE)~JOY_UP_BIT;
 	}
@@ -61,10 +68,14 @@ BYTE joymng_getstat(void) {
 		ret &= (BYTE)~JOY_RIGHT_BIT;
 	}
 	if (pad.Buttons & PSP_CTRL_CIRCLE) {
-		ret &= (BYTE)~JOY_BTN1_BIT;
+		/* 連射: 押している間 30ms ON / 30ms OFF (約 16 連/秒)。
+		 * X1 側は毎フレーム読むので 60Hz 未満の矩形波にする */
+		if ((!joy_autofire) || ((GETTICK() / 30) & 1)) {
+			ret &= (BYTE)~fire1;
+		}
 	}
 	if (pad.Buttons & PSP_CTRL_CROSS) {
-		ret &= (BYTE)~JOY_BTN2_BIT;
+		ret &= (BYTE)~fire2;
 	}
 	if (pad.Buttons & PSP_CTRL_TRIANGLE) {
 		ret &= (BYTE)~JOY_BTN3_BIT;
