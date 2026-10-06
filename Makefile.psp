@@ -99,7 +99,18 @@ INCDIR = psp . codecnv common embed embed/menu embed/menubase fdd font io \
 # -G0: libretro の PSP ターゲットに合わせる。px68k では -G8 (小データを
 # gp 相対で参照、約 -14%/frame) を使っているが、割り込みハンドラと $gp の
 # 関係を監査してからでないと危険なので、まずは -G0 で始める。
-CFLAGS = -G8 -O2 -Wall $(SDL_INCLUDE)
+# PGO: make PGO=gen で計測ビルド (PPSSPP で autotest を走らせると gcda が
+# ~/.config/ppsspp/<このディレクトリの絶対パス>/ に落ちる)。回収して
+# make PGO=use で最適化ビルド。どちらも make clean してから。
+ifeq ($(PGO),gen)
+PGOFLAGS = -DPXMIL_GCOV -fprofile-generate=ms0:/PSP/GAME/PXMIL/pgo \
+	-fprofile-prefix-path=$(PWD) -fprofile-update=single
+else ifeq ($(PGO),use)
+PGOFLAGS = -fprofile-use=pgo -fprofile-prefix-path=$(PWD) \
+	-fprofile-correction -Wno-missing-profile
+endif
+
+CFLAGS = -G8 -O2 -Wall $(PGOFLAGS) $(SDL_INCLUDE)
 CXXFLAGS = $(CFLAGS) -fno-exceptions -fno-rtti
 ASFLAGS = $(CFLAGS)
 
