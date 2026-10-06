@@ -111,15 +111,15 @@ static UINT32	dbg_lastpresent;	/* 最後に present した時刻 (surfunlock が
  * 表に出てチカチカするため)。 */
 static void dbg_render(SDL_Surface *s) {
 
+	char	buf[8];
+
 	if (!pspcfg_overlay) {
 		return;
 	}
+	/* 表示 fps を 1 つだけ (px68k 風の控えめサイズ) */
+	sprintf(buf, "%u", (unsigned)perf_now.drawps);
 	SDL_LockSurface(s);
-	dbg_drawnum(s, 2, 2, dbg_loopcnt % 100000, 5);		/* ループ生存 */
-	dbg_drawnum(s, 2, 16, perf_now.execps, 3);			/* exec/s */
-	dbg_drawnum(s, 2, 30, perf_now.drawps, 3);			/* 表示 fps */
-	dbg_drawnum(s, 2, 44, perf_now.execus / 100, 4);	/* exec 平均 0.1ms */
-	dbg_drawnum(s, 2, 58, perf_now.presus / 100, 4);	/* present 平均 0.1ms */
+	skb_drawtext((UINT16 *)s->pixels, 4, 4, buf, 0xffff, 2);
 	SDL_UnlockSurface(s);
 }
 
