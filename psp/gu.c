@@ -123,6 +123,10 @@ void pxgu_present(const UINT16 *src, int srcw, int srch,
 	sceKernelDcacheWritebackRange(src, 640 * srch * 2);
 
 	sceGuStart(GU_DIRECT, s_list);
+	/* CPU が書き換えたテクスチャを使うため GE のテクスチャキャッシュを
+	 * 破棄する。無いと実機で古いキャッシュラインが混ざってゴミになる
+	 * (PPSSPP はテクスチャキャッシュを再現しないので出ない)。 */
+	sceGuTexFlush();
 	sceGuClearColor(0);
 	sceGuClear(GU_COLOR_BUFFER_BIT);
 
