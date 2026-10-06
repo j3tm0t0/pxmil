@@ -38,6 +38,8 @@ PSP_HEAP_SIZE_KB(16384);
 static const char default_exepath[] = "ms0:/PSP/GAME/PXMIL/EBOOT.PBP";
 
 		XMILOSCFG	xmiloscfg = {0, 0};
+static	UINT32		autotest_ms;	/* 0 = 通常起動 */
+static	UINT32		boot_tick;
 static	UINT		framecnt;
 static	UINT		waitcnt;
 static	UINT		framemax = 1;
@@ -79,6 +81,24 @@ int main(int argc, char *argv[]) {
 	}
 	else {
 		file_setcd(default_exepath);
+	}
+
+	/* 自動テスト: EBOOT の隣に autotest ファイル (中身 = 秒数) があれば、
+	 * その秒数だけ走って自動終了し、selfexec で pspbrew.dev へ戻る。
+	 * tools/device-test.sh が使う。読んだら消すので手動起動には響かない。 */
+	{
+		FILEH fh = file_open_rb(file_getcd("autotest"));
+		if (fh != FILEH_INVALID) {
+			char buf[16];
+			UINT r = file_read(fh, buf, sizeof(buf) - 1);
+			file_close(fh);
+			buf[(r < sizeof(buf)) ? r : 0] = '\0';
+			autotest_ms = (UINT32)atoi(buf) * 1000;
+			if (autotest_ms == 0) {
+				autotest_ms = 45 * 1000;
+			}
+			file_delete(file_getcd("autotest"));
+		}
 	}
 
 	initload();
@@ -140,9 +160,14 @@ int main(int argc, char *argv[]) {
 	timing_setrate(66733);
 	timing_reset();
 
+	boot_tick = GETTICK();
+
 	while(taskmng_isavail()) {
 		taskmng_rol();
 		perf_tick();
+		if ((autotest_ms != 0) && ((GETTICK() - boot_tick) >= autotest_ms)) {
+			taskmng_exit();
+		}
 		scrnmng_dbgtick();
 		if (xmiloscfg.NOWAIT) {
 			exec_frame(framecnt == 0);

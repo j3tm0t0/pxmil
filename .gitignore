@@ -11,3 +11,4 @@ roms/
 *.prx
 EBOOT.PBP
 PARAM.SFO
+results/

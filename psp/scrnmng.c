@@ -243,13 +243,16 @@ void scrnmng_destroy(void) {
 	}
 }
 
+/* PSP の GU_PSM_5650 はビット 0-4 が R、11-15 が B (SDL の RGB565 と逆)。
+ * GU にそのまま渡すため、パレットを PSP 並びで作る (タイトルロゴの
+ * 青赤が入れ替わっていた原因)。 */
 RGB16 scrnmng_makepal16(RGB32 pal32) {
 
 	RGB16	ret;
 
-	ret = (pal32.p.r & 0xf8) << 8;
+	ret = (pal32.p.b & 0xf8) << 8;
 	ret += (pal32.p.g & 0xfc) << 3;
-	ret += pal32.p.b >> 3;
+	ret += pal32.p.r >> 3;
 	return(ret);
 }
 
