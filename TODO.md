@@ -7,12 +7,13 @@
 - [ ] 連射レート切替
 
 ## 性能
-実機ゲーム本編で 60fps 達成 (exec 10.4ms + present 6.3ms ≈ 16.3ms)。
+実機で全区間 60fps 達成 (GE パイプライン化で present は発行のみ ~0.15ms、ロードアニメ含む)。ディスクイメージ RAM キャッシュでロード時の I/O スパイクも解消。
 - [x] 計測基盤 (psp/perf.c、autotest、tools/device-test.sh で無人計測)
 - [x] GU 縮小転送 + 32px スライス (present 25ms → 6.3ms)
 - [x] -G8 (効果なしだが維持) / MEMOPTIMIZE 0 vs 2 (差なし、2 に戻した)
-- [ ] PGO: CPU 予算 98% で余裕がないので、音切れ等が出たら着手
-  (デバッグポート未移植なので __gcov_dump() at exit + GCOV_PREFIX 方式)
+- [x] PGO 基盤 (make PGO=gen/use、PPSSPP 訓練、pgo/ にコミット済み)。
+  ただし exec への効果はこのコアではゼロだった
+- [x] GE パイプライン化 / VRAM テクスチャステージング / ディスク RAM キャッシュ
 - [ ] サウンド生成は per-sample 整数演算と確認済み (soft-double は init のみ)
 
 ## 機能 (その他)
