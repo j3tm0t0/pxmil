@@ -70,7 +70,7 @@ COREOBJS = \
 FRONTEND_OBJS = \
 	psp/xmil.o psp/scrnmng.o psp/soundmng.o psp/sysmng.o psp/sysmenu.o \
 	psp/taskmng.o psp/timemng.o psp/trace.o psp/dosio.o psp/fontmng.o \
-	psp/ini.o psp/joymng.o psp/mousemng.o psp/selfexec.o psp/perf.o
+	psp/ini.o psp/joymng.o psp/mousemng.o psp/selfexec.o psp/perf.o psp/gu.o
 
 OBJS = $(COREOBJS) $(FRONTEND_OBJS)
 

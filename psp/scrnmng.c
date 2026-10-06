@@ -22,6 +22,7 @@
 #include	"scrndraw.h"
 #include	"vramhdl.h"
 #include	"perf.h"
+#include	"gu.h"
 
 static SDL_Window	*s_sdlWindow;
 static SDL_Surface	*s_surface;		/* 640x400 RGB565 作業サーフェース */
@@ -55,7 +56,6 @@ enum {
 	ASPECT_STRETCH		/* 全画面引き伸ばし */
 };
 static int aspect_mode = ASPECT_DOT;
-static int border_clear = 2;	/* 黒帯を塗り直す残り回数 (切替時に再セット) */
 
 /* ---- デバッグオーバーレイ (左上に loop/draw/fps を表示) ----
  * メインループから毎周 scrnmng_dbgtick() を呼ぶ。ループが回っていれば
@@ -71,20 +71,27 @@ static const UINT8 dbgfont[10][5] = {
 	{7,4,7,1,7}, {7,4,7,5,7}, {7,1,1,1,1}, {7,5,7,5,7}, {7,5,7,1,7},
 };
 
+/* 2x2 ドットで描く (640x400 ソースに描いてから縮小されるため) */
 static void dbg_drawnum(SDL_Surface *s, int x, int y, UINT32 val, int digits) {
 
-	int		d, row, col;
+	int		d, row, rep, col;
 	UINT16	*p;
 
 	for (d = digits - 1; d >= 0; d--) {
 		UINT32 v = val % 10;
 		val /= 10;
 		for (row = 0; row < 5; row++) {
-			p = (UINT16 *)((UINT8 *)s->pixels + (y + row) * s->pitch) + x + d * 4;
-			for (col = 0; col < 3; col++) {
-				p[col] = (dbgfont[v][row] & (4 >> col)) ? 0xffff : 0x0000;
+			for (rep = 0; rep < 2; rep++) {
+				p = (UINT16 *)((UINT8 *)s->pixels +
+					(y + row * 2 + rep) * s->pitch) + x + d * 8;
+				for (col = 0; col < 3; col++) {
+					UINT16 c = (dbgfont[v][row] & (4 >> col)) ? 0xffff : 0;
+					p[col * 2] = c;
+					p[col * 2 + 1] = c;
+				}
+				p[6] = 0;
+				p[7] = 0;
 			}
-			p[3] = 0;
 		}
 	}
 }
@@ -95,15 +102,15 @@ static UINT32	dbg_lastpresent;	/* 最後に present した時刻 (surfunlock が
  * surfunlock の 1 箇所に統一 — PSP の SDL2 はダブルバッファで、複数箇所
  * から update するとスワップが交互に走り、古いフレームのバッファが
  * 表に出てチカチカするため)。 */
-static void dbg_render(SDL_Surface *winsurf) {
+static void dbg_render(SDL_Surface *s) {
 
-	SDL_LockSurface(winsurf);
-	dbg_drawnum(winsurf, 2, 2, dbg_loopcnt % 100000, 5);		/* ループ生存 */
-	dbg_drawnum(winsurf, 2, 9, perf_now.execps, 3);			/* exec/s */
-	dbg_drawnum(winsurf, 2, 16, perf_now.drawps, 3);			/* 表示 fps */
-	dbg_drawnum(winsurf, 2, 23, perf_now.execus / 100, 4);	/* exec 平均 0.1ms */
-	dbg_drawnum(winsurf, 2, 30, perf_now.presus / 100, 4);	/* present 平均 0.1ms */
-	SDL_UnlockSurface(winsurf);
+	SDL_LockSurface(s);
+	dbg_drawnum(s, 2, 2, dbg_loopcnt % 100000, 5);		/* ループ生存 */
+	dbg_drawnum(s, 2, 16, perf_now.execps, 3);			/* exec/s */
+	dbg_drawnum(s, 2, 30, perf_now.drawps, 3);			/* 表示 fps */
+	dbg_drawnum(s, 2, 44, perf_now.execus / 100, 4);	/* exec 平均 0.1ms */
+	dbg_drawnum(s, 2, 58, perf_now.presus / 100, 4);	/* present 平均 0.1ms */
+	SDL_UnlockSurface(s);
 }
 
 static void present_frame(void);
@@ -126,12 +133,12 @@ void scrnmng_dbgtick(void) {
 	present_frame();
 }
 
-/* 最終ゲームフレーム (s_surface) をアスペクトモードに従って winsurf に
- * 縮小転送し、オーバーレイを重ねて present する。present はこの関数の
- * 1 箇所のみ (surfunlock と dbgtick のフォールバックが共用)。 */
+/* 最終ゲームフレーム (s_surface) にオーバーレイを重ね、アスペクト
+ * モードに従って GU で 480x272 へ縮小描画・スワップする。present は
+ * この関数の 1 箇所のみ (surfunlock と dbgtick のフォールバックが共用)。
+ * GU のダブルバッファはスワップがアトミックなので中間状態は見えない。 */
 static void present_frame(void) {
 
-	SDL_Surface	*winsurf;
 	SDL_Rect	src, dst;
 	int			w, h;
 	int			aw, ah;
@@ -139,9 +146,7 @@ static void present_frame(void) {
 
 	t0 = perf_us();
 
-	/* ウィンドウサーフェースはキャッシュしない (SDL 側で作り直されうる) */
-	winsurf = SDL_GetWindowSurface(s_sdlWindow);
-	if ((winsurf == NULL) || (s_surface == NULL)) {
+	if (s_surface == NULL) {
 		return;
 	}
 
@@ -175,20 +180,9 @@ static void present_frame(void) {
 	dst.y = (PSP_SCREEN_HEIGHT - h) / 2;
 	dst.w = w;
 	dst.h = h;
-	/* レターボックスの黒帯は起動直後とアスペクト切替直後だけ塗る。
-	 * PSP の SDL2 ではウィンドウサーフェースが表示中の VRAM に近く、
-	 * 毎フレーム FillRect すると「黒塗り→ブリット」の中間状態が画面に
-	 * 見えて盛大にチカチカする (実機で確認。帯のないストレッチモード
-	 * だけチラつかないのが決め手だった)。ゲーム矩形はブリットが毎回
-	 * 全面上書きするので塗り直し不要。保険でダブルバッファ両面分の
-	 * 2 回塗る。 */
-	if (border_clear > 0) {
-		border_clear--;
-		SDL_FillRect(winsurf, NULL, 0);
-	}
-	SDL_BlitScaled(s_surface, &src, winsurf, &dst);
-	dbg_render(winsurf);
-	SDL_UpdateWindowSurface(s_sdlWindow);
+	dbg_render(s_surface);
+	pxgu_present((const UINT16 *)s_surface->pixels, src.w, src.h,
+				dst.x, dst.y, dst.w, dst.h);
 	dbg_lastpresent = SDL_GetTicks();
 	perf_add_present(perf_us() - t0);
 }
@@ -232,6 +226,7 @@ BOOL scrnmng_create(int width, int height) {
 	scrnmng.width = width;
 	scrnmng.height = height;
 	scrnmng.bpp = fmt->BitsPerPixel;
+	pxgu_init();		/* 表示は GU が引き受ける (SDL の window surface は使わない) */
 	return(SUCCESS);
 }
 
@@ -317,7 +312,7 @@ void scrnmng_surfunlock(const SCRNSURF *surf) {
 void scrnmng_nextaspect(void) {
 
 	aspect_mode = (aspect_mode + 1) % 3;
-	border_clear = 2;
+
 }
 
 
