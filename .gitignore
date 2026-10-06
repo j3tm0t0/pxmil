@@ -1,0 +1,13 @@
+# ROM / disk images for local testing (never commit)
+roms/
+
+# Claude Code worktrees / local state
+.claude/
+
+# Build outputs
+*.o
+*.a
+*.elf
+*.prx
+EBOOT.PBP
+PARAM.SFO
