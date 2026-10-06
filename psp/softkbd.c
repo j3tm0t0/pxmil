@@ -75,6 +75,7 @@ static const int	rowlen[] = {
 #define	KEYW	18			/* セル幅 1 単位 (px) */
 #define	KEYH	10
 #define	KBD_W	(16 * KEYW + 2)
+#define	KBD_X	((640 - KBD_W) / 2)	/* 中央寄せ */
 #define	KBD_H	(NROWS * KEYH + 2)
 #define	KBD_Y	(400 - KBD_H)
 
@@ -225,9 +226,9 @@ void softkbd_draw(UINT16 *dst) {
 	if (!s_visible) {
 		return;
 	}
-	fillrect(dst, 0, KBD_Y, KBD_W, KBD_H, COL_BG);
+	fillrect(dst, KBD_X, KBD_Y, KBD_W, KBD_H, COL_BG);
 	for (r = 0; r < NROWS; r++) {
-		int x = 1;
+		int x = KBD_X + 1;
 		for (c = 0; c < rowlen[r]; c++) {
 			const SKEY	*k = &rows[r][c];
 			int			w = k->w * KEYW - 1;

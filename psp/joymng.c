@@ -5,8 +5,8 @@
  * io/sndboard.c が PSG reg 0x0e の読み出しで joymng_getstat() を参照する。
  * ビット配置は nds/libretro 版と同じ (負論理、1 = 離している):
  *   bit0 = 上, bit1 = 下, bit2 = 左, bit3 = 右
- *   bit6 = ボタン1 (○), bit5 = ボタン2 (×), bit7 = ボタン3 (△), bit4 = ボタン4 (□)
- * アナログスティックもデジタル方向に変換する。
+ *   bit6 = ボタン1 (○), bit5 = ボタン2 (×)
+ * △ = ○ の連射、□ = × の連射。アナログスティックもデジタル方向に変換。
  */
 
 #include	"compiler.h"
@@ -74,11 +74,15 @@ BYTE joymng_getstat(void) {
 	if (pad.Buttons & PSP_CTRL_CROSS) {
 		ret &= (BYTE)~JOY_BTN2_BIT;
 	}
-	if (pad.Buttons & PSP_CTRL_TRIANGLE) {
-		ret &= (BYTE)~JOY_BTN3_BIT;
-	}
-	if (pad.Buttons & PSP_CTRL_SQUARE) {
-		ret &= (BYTE)~JOY_BTN4_BIT;
+	/* △/□ は ○/× の連射 (30ms ON/OFF ≒ 16 連/秒) */
+	if ((pad.Buttons & (PSP_CTRL_TRIANGLE | PSP_CTRL_SQUARE)) &&
+		((GETTICK() / 30) & 1)) {
+		if (pad.Buttons & PSP_CTRL_TRIANGLE) {
+			ret &= (BYTE)~JOY_BTN1_BIT;
+		}
+		if (pad.Buttons & PSP_CTRL_SQUARE) {
+			ret &= (BYTE)~JOY_BTN2_BIT;
+		}
 	}
 	return(ret);
 }

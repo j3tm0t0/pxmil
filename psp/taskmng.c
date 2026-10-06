@@ -6,8 +6,9 @@
  * sceCtrl によるボタン入力を行う。
  *   SELECT : メニュー開閉 (終了はメニューの Exit から)
  *   START  : リセット
- *   L      : 連射トグル / L+R 同時 : ○× 入れ替え
+ *   L      : ソフトキーボード開閉 / L+R 同時 : ○× 入れ替え
  *   R      : アスペクトモード切替 (ドット等倍 / 4:3 / 引き伸ばし)
+ *   △/□   : ○/× の連射 (joymng.c)
  *
  * メニュー表示中は D-pad/アナログでカーソルを動かし、○ で決定
  * (menubase へマウスとして渡す)。ゲームへのパッド入力は止まる。
@@ -136,11 +137,6 @@ void taskmng_rol(void) {
 		return;
 	}
 
-	if (pressed & PSP_CTRL_TRIANGLE) {
-		softkbd_toggle();			/* △: ソフトキーボード開閉 */
-		scrnmng_menupresent();
-	}
-
 	if (softkbd_isvisible()) {
 		/* カーソル移動 (エッジ + 150ms リピート) */
 		static UINT32 nextrep;
@@ -184,7 +180,8 @@ void taskmng_rol(void) {
 		scrnmng_nextaspect();		/* R: アスペクト切替 */
 	}
 	else if (pressed & PSP_CTRL_LTRIGGER) {
-		xmilcfg.BTN_RAPID ^= 1;		/* L: 連射トグル (コア実装) */
+		softkbd_toggle();			/* L: ソフトキーボード開閉 */
+		scrnmng_menupresent();
 	}
 }
 
