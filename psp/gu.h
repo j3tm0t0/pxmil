@@ -6,6 +6,7 @@ extern "C" {
 #endif
 
 void pxgu_init(void);
+void pxgu_set_overlay(const char *text);
 void pxgu_present(const UINT16 *src, int srcw, int srch,
 				int dstx, int dsty, int dstw, int dsth);
 

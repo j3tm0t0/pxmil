@@ -109,18 +109,17 @@ static UINT32	dbg_lastpresent;	/* 最後に present した時刻 (surfunlock が
  * surfunlock の 1 箇所に統一 — PSP の SDL2 はダブルバッファで、複数箇所
  * から update するとスワップが交互に走り、古いフレームのバッファが
  * 表に出てチカチカするため)。 */
-static void dbg_render(SDL_Surface *s) {
+static void dbg_render(void) {
 
 	char	buf[8];
 
-	if (!pspcfg_overlay) {
-		return;
+	if (pspcfg_overlay) {
+		sprintf(buf, "%u", (unsigned)perf_now.drawps);
+		pxgu_set_overlay(buf);
 	}
-	/* 表示 fps を 1 つだけ (px68k 風の控えめサイズ) */
-	sprintf(buf, "%u", (unsigned)perf_now.drawps);
-	SDL_LockSurface(s);
-	skb_drawtext((UINT16 *)s->pixels, 4, 4, buf, 0xffff, 2);
-	SDL_UnlockSurface(s);
+	else {
+		pxgu_set_overlay("");
+	}
 }
 
 static void present_frame(void);
@@ -190,7 +189,7 @@ static void present_frame(void) {
 	dst.y = (PSP_SCREEN_HEIGHT - h) / 2;
 	dst.w = w;
 	dst.h = h;
-	dbg_render(s_surface);
+	dbg_render();
 	if (pspmenu_isopen() || softkbd_isvisible()) {
 		/* ゲーム画面のコピーにメニュー/ソフトキーボードを合成して表示 */
 		const UINT16	*game = (const UINT16 *)s_surface->pixels;

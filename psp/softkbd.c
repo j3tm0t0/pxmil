@@ -193,8 +193,9 @@ void skb_fillrect(UINT16 *dst, int x, int y, int w, int h, UINT16 c) {
 	}
 }
 
-/* 3x5 フォントで文字列を描く (scale 倍拡大)。大文字化して描画 */
-void skb_drawtext(UINT16 *dst, int x, int y, const char *s, UINT16 c, int scale) {
+/* 3x5 フォントで文字列を描く (scale 倍拡大、stride = 行ピクセル数) */
+void skb_drawtext_s(UINT16 *dst, int stride, int x, int y, const char *s,
+													UINT16 c, int scale) {
 
 	for (; *s != '\0'; s++, x += 4 * scale) {
 		const char	*f;
@@ -216,7 +217,7 @@ void skb_drawtext(UINT16 *dst, int x, int y, const char *s, UINT16 c, int scale)
 		g = skb_glyph[f - skb_chars];
 		for (row = 0; row < 5; row++) {
 			for (ry = 0; ry < scale; ry++) {
-				UINT16 *p = dst + (y + row * scale + ry) * 640 + x;
+				UINT16 *p = dst + (y + row * scale + ry) * stride + x;
 				for (col = 0; col < 3; col++) {
 					if (g[row] & (4 >> col)) {
 						for (rx = 0; rx < scale; rx++) {
@@ -227,6 +228,11 @@ void skb_drawtext(UINT16 *dst, int x, int y, const char *s, UINT16 c, int scale)
 			}
 		}
 	}
+}
+
+void skb_drawtext(UINT16 *dst, int x, int y, const char *s, UINT16 c, int scale) {
+
+	skb_drawtext_s(dst, 640, x, y, s, c, scale);
 }
 
 static void drawlabel(UINT16 *dst, int x, int y, const char *s, UINT16 c) {

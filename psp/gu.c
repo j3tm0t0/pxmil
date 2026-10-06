@@ -16,6 +16,7 @@
 #include	<pspgu.h>
 
 #include	"gu.h"
+#include	"softkbd.h"
 
 #define	BUF_WIDTH	512
 #define	SCR_WIDTH	480
@@ -24,6 +25,17 @@
 
 static unsigned int __attribute__((aligned(64))) s_list[4096];
 static int	s_init;
+static int	s_frame;			/* swap 回数 (描画バッファの判定用) */
+static char	s_ovltext[16];		/* ネイティブ座標の固定サイズオーバーレイ */
+
+void pxgu_set_overlay(const char *text) {
+
+	int i;
+	for (i = 0; (i < 15) && text[i]; i++) {
+		s_ovltext[i] = text[i];
+	}
+	s_ovltext[i] = '\0';
+}
 
 typedef struct {
 	float	u, v;
@@ -131,5 +143,14 @@ void pxgu_present(const UINT16 *src, int srcw, int srch,
 
 	sceGuFinish();
 	sceGuSync(0, 0);
+
+	/* エミュ画面のスケーリングと無関係な固定サイズ表示 (fps 等)。
+	 * GE 完了後に、これから表示するバッファへ CPU で直接描く。 */
+	if (s_ovltext[0]) {
+		UINT32 off = (s_frame & 1) ? FRAME_SIZE : 0;
+		skb_drawtext_s((UINT16 *)(0x44000000 | off), BUF_WIDTH,
+						2, 2, s_ovltext, 0xffff, 2);
+	}
+	s_frame++;
 	sceGuSwapBuffers();
 }

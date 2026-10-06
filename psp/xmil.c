@@ -101,6 +101,7 @@ int main(int argc, char *argv[]) {
 				autotest_ms = 45 * 1000;
 			}
 			file_delete(file_getcd("autotest"));
+			pspcfg_overlay = 1;	/* 無人確認で fps が見えるように */
 		}
 	}
 
