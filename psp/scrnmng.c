@@ -231,8 +231,14 @@ BOOL scrnmng_create(int width, int height) {
 		fprintf(stderr, "Error: SDL_CreateWindow: %s\n", SDL_GetError());
 		return(FAILURE);
 	}
-	s_surface = SDL_CreateRGBSurface(SDL_SWSURFACE, width, height, 16,
-										0xf800, 0x07e0, 0x001f, 0);
+	/* GE はテクスチャ先頭を 16 バイト境界に切り捨てるため、SDL 任せの
+	 * 確保だと 1px ずれて各行左端に前行の右端が回り込む (実機で確認)。
+	 * 64 バイト整列の自前バッファをサーフェースに貼る。 */
+	{
+		static UINT16 s_pixels[640 * 400] __attribute__((aligned(64)));
+		s_surface = SDL_CreateRGBSurfaceFrom(s_pixels, width, height, 16,
+							width * 2, 0xf800, 0x07e0, 0x001f, 0);
+	}
 	if (s_surface == NULL) {
 		fprintf(stderr, "Error: SDL_CreateRGBSurface: %s\n", SDL_GetError());
 		return(FAILURE);
