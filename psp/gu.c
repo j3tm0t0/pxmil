@@ -127,6 +127,10 @@ void pxgu_present(const UINT16 *src, int srcw, int srch,
 	 * 破棄する。無いと実機で古いキャッシュラインが混ざってゴミになる
 	 * (PPSSPP はテクスチャキャッシュを再現しないので出ない)。 */
 	sceGuTexFlush();
+	/* CLAMP は毎フレーム設定する。init で一度設定するだけでは実機で
+	 * 保持されず REPEAT に戻り、バイリニアが u=0 で右端を回り込んで
+	 * 画像左端に右端の内容が 1 ラインぶん出る (実機のみ再現)。 */
+	sceGuTexWrap(GU_CLAMP, GU_CLAMP);
 	sceGuClearColor(0);
 	sceGuClear(GU_COLOR_BUFFER_BIT);
 
