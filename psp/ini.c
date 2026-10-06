@@ -45,7 +45,8 @@ static const PFTBL iniitem[] = {
 	{"btn_MODE", PFTYPE_BOOL,		&xmilcfg.BTN_MODE,		0},
 
 	// PSP
-	{"PSP_Aspc", PFMAX_UINT8,		&pspcfg_aspect,			2}};
+	{"PSP_Aspc", PFMAX_UINT8,		&pspcfg_aspect,			2},
+	{"PSP_Fps ", PFTYPE_BOOL,		&pspcfg_overlay,		0}};
 
 void initload(void) {
 

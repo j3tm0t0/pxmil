@@ -21,6 +21,7 @@ void scrnmng_dbgtick(void);
 void scrnmng_nextaspect(void);
 void scrnmng_menupresent(void);
 extern UINT8 pspcfg_aspect;
+extern UINT8 pspcfg_overlay;
 void scrnmng_setwidth(int posx, int width);
 #define scrnmng_setextend(e)
 void scrnmng_setheight(int posy, int height);

@@ -60,8 +60,9 @@ enum {
 	ASPECT_MONITOR,		/* 実機モニタ比 4:3 */
 	ASPECT_STRETCH		/* 全画面引き伸ばし */
 };
-/* ini (PSP_Aspc) で保存・復元される */
+/* ini (PSP_Aspc / PSP_Fps) で保存・復元される */
 UINT8 pspcfg_aspect = ASPECT_DOT;
+UINT8 pspcfg_overlay = 0;		/* 1 = 左上に perf オーバーレイを表示 */
 
 /* ---- デバッグオーバーレイ (左上に loop/draw/fps を表示) ----
  * メインループから毎周 scrnmng_dbgtick() を呼ぶ。ループが回っていれば
@@ -110,6 +111,9 @@ static UINT32	dbg_lastpresent;	/* 最後に present した時刻 (surfunlock が
  * 表に出てチカチカするため)。 */
 static void dbg_render(SDL_Surface *s) {
 
+	if (!pspcfg_overlay) {
+		return;
+	}
 	SDL_LockSurface(s);
 	dbg_drawnum(s, 2, 2, dbg_loopcnt % 100000, 5);		/* ループ生存 */
 	dbg_drawnum(s, 2, 16, perf_now.execps, 3);			/* exec/s */

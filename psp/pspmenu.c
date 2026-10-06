@@ -32,6 +32,7 @@ enum {
 	MID_EJECT1,
 	MID_RESET,
 	MID_ASPECT,
+	MID_OVERLAY,
 	MID_CLOSE,
 	MID_EXIT,
 	MID_MAX
@@ -129,6 +130,9 @@ static void decide_main(void) {
 		case MID_ASPECT:
 			scrnmng_nextaspect();
 			break;
+		case MID_OVERLAY:
+			pspcfg_overlay ^= 1;
+			break;
 		case MID_CLOSE:
 			s_open = 0;
 			break;
@@ -145,8 +149,13 @@ void pspmenu_input(int dx, int dy, int decide, int back) {
 		if (dy) {
 			s_sel = (s_sel + dy + MID_MAX) % MID_MAX;
 		}
-		if ((dx) && (s_sel == MID_ASPECT)) {
-			scrnmng_nextaspect();
+		if (dx) {
+			if (s_sel == MID_ASPECT) {
+				scrnmng_nextaspect();
+			}
+			if (s_sel == MID_OVERLAY) {
+				pspcfg_overlay ^= 1;
+			}
 		}
 		if (decide) {
 			decide_main();
@@ -223,8 +232,10 @@ void pspmenu_draw(UINT16 *dst) {
 			sprintf(buf, "ASPECT: < %s >", asp[pspcfg_aspect % 3]);
 			drawitem(dst, 6, buf, (s_sel == MID_ASPECT), COL_ITEM);
 		}
-		drawitem(dst, 7, "CLOSE MENU", (s_sel == MID_CLOSE), COL_ITEM);
-		drawitem(dst, 8, "EXIT EMULATOR", (s_sel == MID_EXIT), COL_ITEM);
+		sprintf(buf, "FPS DISPLAY: < %s >", (pspcfg_overlay) ? "ON" : "OFF");
+		drawitem(dst, 7, buf, (s_sel == MID_OVERLAY), COL_ITEM);
+		drawitem(dst, 8, "CLOSE MENU", (s_sel == MID_CLOSE), COL_ITEM);
+		drawitem(dst, 9, "EXIT EMULATOR", (s_sel == MID_EXIT), COL_ITEM);
 		skb_drawtext(dst, PX + 16, PY + PH - 14,
 			"UP/DOWN:MOVE  O:OK  X:CLOSE", COL_DIM, 2);
 	}
