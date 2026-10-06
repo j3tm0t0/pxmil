@@ -1,0 +1,60 @@
+/* PSP 用 scrnmng.h (libretro/scrnmng.h ベース)。
+ * scrnmng_setcolormode は SUPPORT_TURBOZ (pccore.c) が要求する。
+ * 実装はフロントエンド (psp/scrnmng.c) が提供する。 */
+
+typedef struct {
+	BYTE	*ptr;
+	int		xalign;
+	int		yalign;
+	int		width;
+	int		height;
+	UINT	bpp;
+	int		extend;
+} SCRNSURF;
+
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+void scrnmng_setwidth(int posx, int width);
+#define scrnmng_setextend(e)
+void scrnmng_setheight(int posy, int height);
+const SCRNSURF *scrnmng_surflock(void);
+void scrnmng_surfunlock(const SCRNSURF *surf);
+
+#define	scrnmng_isfullscreen()	(0)
+#define	scrnmng_haveextend()	(0)
+#define	scrnmng_getbpp()		(16)
+#define	scrnmng_allflash()		
+#define	scrnmng_palchanged()	
+
+RGB16 scrnmng_makepal16(RGB32 pal32);
+
+/* SUPPORT_TURBOZ: 4096 色モード切替 (win9x 版と同シグネチャ) */
+BRESULT scrnmng_setcolormode(BOOL fullcolor);
+
+#ifdef __cplusplus
+}
+#endif
+
+
+// ---- for SDL
+
+void scrnmng_initialize(void);
+BOOL scrnmng_create(int width, int height);
+void scrnmng_destroy(void);
+
+
+// ---- for menubase
+
+typedef struct {
+	int		width;
+	int		height;
+	int		bpp;
+} SCRNMENU;
+
+BOOL scrnmng_entermenu(SCRNMENU *smenu);
+void scrnmng_leavemenu(void);
+void scrnmng_menudraw(const RECT_T *rct);
+
