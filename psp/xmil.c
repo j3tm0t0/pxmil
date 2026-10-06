@@ -27,6 +27,7 @@
 #include "x1f.h"
 #include "timing.h"
 #include "sysmenu.h"
+#include "selfexec.h"
 
 /* X1 のメモリ使用量は少ないので 16MB で十分 (PSP-1000 のユーザー空間は 24MB) */
 PSP_HEAP_SIZE_KB(16384);
@@ -192,6 +193,17 @@ int main(int argc, char *argv[]) {
 	sysmenu_destroy();
 	TRACETERM();
 	SDL_Quit();
+
+	/* 実機では pspbrew.dev に戻る (テストサイクル短縮)。存在しない環境
+	 * (PPSSPP 等) ではスキップしてそのまま終了する。 */
+	{
+		static const char pspbrew[] = "ms0:/PSP/GAME/pspbrew.dev/EBOOT.PBP";
+		FILEH fh = file_open_rb(pspbrew);
+		if (fh != FILEH_INVALID) {
+			file_close(fh);
+			exec_eboot(pspbrew);	/* 失敗時のみ戻ってくる */
+		}
+	}
 	return(SUCCESS);
 
 xmilmain_err4:

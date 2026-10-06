@@ -88,35 +88,49 @@ static void dbg_drawnum(SDL_Surface *s, int x, int y, UINT32 val, int digits) {
 	}
 }
 
-void scrnmng_dbgtick(void) {
+static UINT32	dbg_lastpresent;	/* 最後に present した時刻 (surfunlock が更新) */
 
-	static UINT32	lastms;
-	static UINT32	lastdraw;
-	SDL_Surface		*winsurf;
-	SDL_Rect		rect;
-	UINT32			now;
+/* オーバーレイを winsurf に描き込む (present はしない。present は
+ * surfunlock の 1 箇所に統一 — PSP の SDL2 はダブルバッファで、複数箇所
+ * から update するとスワップが交互に走り、古いフレームのバッファが
+ * 表に出てチカチカするため)。 */
+static void dbg_render(SDL_Surface *winsurf) {
 
-	dbg_loopcnt++;
-	now = SDL_GetTicks();
-	if ((now - lastms) < 250) {		/* 描画は 4Hz に間引く */
-		return;
-	}
-	if ((now - lastms) >= 1000) {
-		dbg_fps = dbg_drawcnt - lastdraw;	/* 近似 fps (1 秒毎更新) */
-		lastdraw = dbg_drawcnt;
-		lastms = now;
-	}
-	winsurf = SDL_GetWindowSurface(s_sdlWindow);
-	if (winsurf == NULL) {
-		return;
-	}
 	SDL_LockSurface(winsurf);
 	dbg_drawnum(winsurf, 2, 2, dbg_loopcnt % 100000, 5);
 	dbg_drawnum(winsurf, 2, 9, dbg_drawcnt % 100000, 5);
 	dbg_drawnum(winsurf, 2, 16, dbg_fps, 3);
 	SDL_UnlockSurface(winsurf);
-	rect.x = 0; rect.y = 0; rect.w = 2 + 5 * 4 + 2; rect.h = 24;
-	SDL_UpdateWindowSurfaceRects(s_sdlWindow, &rect, 1);
+}
+
+void scrnmng_dbgtick(void) {
+
+	static UINT32	lastms;
+	static UINT32	lastdraw;
+	SDL_Surface		*winsurf;
+	UINT32			now;
+
+	dbg_loopcnt++;
+	now = SDL_GetTicks();
+	if ((now - lastms) >= 1000) {
+		dbg_fps = dbg_drawcnt - lastdraw;	/* 近似 fps (1 秒毎更新) */
+		lastdraw = dbg_drawcnt;
+		lastms = now;
+	}
+
+	/* コアが 500ms 以上描画していないときだけ、こちらから present して
+	 * 生存表示を続ける (停止の切り分け用)。通常時は surfunlock に任せる。 */
+	if ((now - dbg_lastpresent) < 500) {
+		return;
+	}
+	winsurf = SDL_GetWindowSurface(s_sdlWindow);
+	if (winsurf == NULL) {
+		return;
+	}
+	SDL_FillRect(winsurf, NULL, 0);
+	dbg_render(winsurf);
+	SDL_UpdateWindowSurface(s_sdlWindow);
+	dbg_lastpresent = now;
 }
 
 void scrnmng_initialize(void) {
@@ -237,7 +251,6 @@ void scrnmng_surfunlock(const SCRNSURF *surf) {
 	}
 	scrnmng.surface = NULL;
 	SDL_UnlockSurface(surface);
-	dbg_drawcnt++;
 
 	/* ウィンドウサーフェースはキャッシュしない (SDL 側で作り直されうる) */
 	winsurf = SDL_GetWindowSurface(s_sdlWindow);
@@ -276,12 +289,17 @@ void scrnmng_surfunlock(const SCRNSURF *surf) {
 		dst.y = (PSP_SCREEN_HEIGHT - h) / 2;
 		dst.w = w;
 		dst.h = h;
+		/* ダブルバッファの両面を毎回全面描き直す (部分更新だと前々
+		 * フレームの内容が残った面と交互に表示されてチカチカする)。 */
 		if ((dst.x != 0) || (dst.y != 0)) {
 			SDL_FillRect(winsurf, NULL, 0);
 		}
 		SDL_BlitScaled(surface, &src, winsurf, &dst);
+		dbg_render(winsurf);
 		SDL_UpdateWindowSurface(s_sdlWindow);
+		dbg_lastpresent = SDL_GetTicks();
 	}
+	dbg_drawcnt++;
 }
 
 void scrnmng_nextaspect(void) {

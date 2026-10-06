@@ -70,7 +70,7 @@ COREOBJS = \
 FRONTEND_OBJS = \
 	psp/xmil.o psp/scrnmng.o psp/soundmng.o psp/sysmng.o psp/sysmenu.o \
 	psp/taskmng.o psp/timemng.o psp/trace.o psp/dosio.o psp/fontmng.o \
-	psp/ini.o psp/joymng.o psp/mousemng.o
+	psp/ini.o psp/joymng.o psp/mousemng.o psp/selfexec.o
 
 OBJS = $(COREOBJS) $(FRONTEND_OBJS)
 
@@ -107,7 +107,7 @@ LIBDIR =
 LDFLAGS =
 # sdl2-config --libs が -lSDL2main -lSDL2 と PSP 側依存 (GU/GE/audio 等) を
 # 返す。残りは newlib/libm。
-LIBS = $(SDL_LIB) -lm -lpsppower
+LIBS = $(SDL_LIB) -lm -lpsppower -lpspsystemctrl_user
 
 EXTRA_TARGETS = EBOOT.PBP
 PSP_EBOOT_TITLE = X millennium for PSP
