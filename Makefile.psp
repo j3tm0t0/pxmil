@@ -111,6 +111,7 @@ LIBS = $(SDL_LIB) -lm -lpsppower -lpspsystemctrl_user
 
 EXTRA_TARGETS = EBOOT.PBP
 PSP_EBOOT_TITLE = X millennium for PSP
+PSP_EBOOT_ICON = assets/icon0.png
 
 PSPSDK = $(shell psp-config --pspsdk-path)
 include $(PSPSDK)/lib/build.mak
