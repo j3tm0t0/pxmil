@@ -12,6 +12,7 @@
 #include	"compiler.h"
 #include	<pspctrl.h>
 #include	"joymng.h"
+#include	"menubase.h"
 
 #define	JOY_UP_BIT		0x01
 #define	JOY_DOWN_BIT	0x02
@@ -36,6 +37,9 @@ BYTE joymng_getstat(void) {
 	BYTE		ret;
 
 	ret = joy_autoinput;
+	if (menuvram != NULL) {
+		return(0xff);			/* メニュー中はゲームに入力を渡さない */
+	}
 	if (sceCtrlPeekBufferPositive(&pad, 1) <= 0) {
 		return(ret);
 	}

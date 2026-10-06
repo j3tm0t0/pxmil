@@ -23,6 +23,10 @@
 #include	"vramhdl.h"
 #include	"perf.h"
 #include	"gu.h"
+#include	"menubase.h"
+
+/* メニュー合成用 (640x400 RGB565) */
+static UINT16	s_compose[640 * 400] __attribute__((aligned(64)));
 
 static SDL_Window	*s_sdlWindow;
 static SDL_Surface	*s_surface;		/* 640x400 RGB565 作業サーフェース */
@@ -182,8 +186,26 @@ static void present_frame(void) {
 	dst.w = w;
 	dst.h = h;
 	dbg_render(s_surface);
-	pxgu_present((const UINT16 *)s_surface->pixels, src.w, src.h,
-				dst.x, dst.y, dst.w, dst.h);
+	if (menuvram != NULL) {
+		/* ゲーム画面のコピーにメニューを合成して表示する */
+		const UINT16	*game = (const UINT16 *)s_surface->pixels;
+		const UINT16	*menu = (const UINT16 *)menuvram->ptr;
+		const UINT8		*alpha = menuvram->alpha;
+		UINT			i, npix;
+
+		npix = 640 * 400;
+		memcpy(s_compose, game, npix * 2);
+		for (i = 0; i < npix; i++) {
+			if (alpha[i] & 2) {
+				s_compose[i] = menu[i];
+			}
+		}
+		pxgu_present(s_compose, src.w, src.h, dst.x, dst.y, dst.w, dst.h);
+	}
+	else {
+		pxgu_present((const UINT16 *)s_surface->pixels, src.w, src.h,
+					dst.x, dst.y, dst.w, dst.h);
+	}
 	dbg_lastpresent = SDL_GetTicks();
 	perf_add_present(perf_us() - t0);
 }
@@ -320,22 +342,37 @@ void scrnmng_nextaspect(void) {
 }
 
 
-// ---- for menubase (スタブ: sysmenu がメニューを開かないため呼ばれない)
+// ---- for menubase
+//
+// メニューは menuvram (640x400、alpha 平面つき) に描かれる。present 時に
+// s_surface のコピーへ alpha&2 の画素だけ上書きして合成し、それを GU で
+// 表示する。ゲームはメニュー中も裏で動き続ける (sdl2 版と同じ挙動)。
 
 BOOL scrnmng_entermenu(SCRNMENU *smenu) {
 
-	if (smenu) {
-		smenu->width = scrnmng.width;
-		smenu->height = scrnmng.height;
-		smenu->bpp = scrnmng.bpp;
+	if (smenu == NULL) {
+		return(FAILURE);
 	}
-	return(FAILURE);
+	smenu->width = scrnmng.width;
+	smenu->height = scrnmng.height;
+	smenu->bpp = scrnmng.bpp;
+	return(SUCCESS);
 }
 
 void scrnmng_leavemenu(void) {
+
+	/* 次の present が素のゲーム画面に戻す */
 }
 
 void scrnmng_menudraw(const RECT_T *rct) {
 
+	/* 部分更新は追わず、present ごとに全面合成する */
 	(void)rct;
+	present_frame();
+}
+
+/* メニュー操作直後の再描画用 (taskmng から呼ぶ) */
+void scrnmng_menupresent(void) {
+
+	present_frame();
 }

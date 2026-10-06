@@ -28,6 +28,7 @@
 #include "x1f.h"
 #include "timing.h"
 #include "sysmenu.h"
+#include "menubase.h"
 #include "selfexec.h"
 #include "perf.h"
 #include "joymng.h"
@@ -170,6 +171,25 @@ int main(int argc, char *argv[]) {
 			UINT32 el = GETTICK() - boot_tick;
 			if (el >= autotest_ms) {
 				taskmng_exit();
+			}
+			/* メニューの無人確認: 20s 時点で一度だけ開く (開けなければ
+			 * そのまま)。30s で閉じる。 */
+			{
+				static UINT8 menutest;
+				if ((el >= 20000) && (menutest == 0)) {
+					menutest = 1;
+					if (menuvram == NULL) {
+						sysmenu_menuopen(0, 0, 0);
+						scrnmng_menupresent();
+					}
+				}
+				if ((el >= 30000) && (menutest == 1)) {
+					menutest = 2;
+					if (menuvram != NULL) {
+						menubase_close();
+						scrnmng_menupresent();
+					}
+				}
 			}
 			/* 本編の負荷を測るための自動入力: 12-14s でトリガー連打して
 			 * ゲーム開始、16s 以降は移動 + 連射で遊んでいるふりをする。

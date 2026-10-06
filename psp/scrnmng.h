@@ -19,6 +19,7 @@ extern "C" {
 
 void scrnmng_dbgtick(void);
 void scrnmng_nextaspect(void);
+void scrnmng_menupresent(void);
 extern UINT8 pspcfg_aspect;
 void scrnmng_setwidth(int posx, int width);
 #define scrnmng_setextend(e)
