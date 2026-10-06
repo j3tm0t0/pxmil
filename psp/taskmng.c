@@ -22,6 +22,7 @@
 #include	"joymng.h"
 #include	"sysmenu.h"
 #include	"menubase.h"
+#include	"softkbd.h"
 
 	BOOL	task_avail;
 
@@ -132,6 +133,42 @@ void taskmng_rol(void) {
 
 	if (menuvram != NULL) {
 		menu_input(&pad, pressed, released);
+		return;
+	}
+
+	if (pressed & PSP_CTRL_TRIANGLE) {
+		softkbd_toggle();			/* △: ソフトキーボード開閉 */
+		scrnmng_menupresent();
+	}
+
+	if (softkbd_isvisible()) {
+		/* カーソル移動 (エッジ + 150ms リピート) */
+		static UINT32 nextrep;
+		UINT32	now = GETTICK();
+		int		dx = 0, dy = 0;
+		UINT32	dirs = pad.Buttons &
+					(PSP_CTRL_UP | PSP_CTRL_DOWN | PSP_CTRL_LEFT | PSP_CTRL_RIGHT);
+
+		if ((pressed & dirs) || (dirs && (now >= nextrep))) {
+			if (dirs & PSP_CTRL_LEFT)  dx = -1;
+			if (dirs & PSP_CTRL_RIGHT) dx = 1;
+			if (dirs & PSP_CTRL_UP)    dy = -1;
+			if (dirs & PSP_CTRL_DOWN)  dy = 1;
+			nextrep = now + ((pressed & dirs) ? 300 : 120);
+			softkbd_move(dx, dy);
+			scrnmng_menupresent();
+		}
+		if (pressed & PSP_CTRL_CIRCLE) {
+			softkbd_press();
+			scrnmng_menupresent();
+		}
+		if (released & PSP_CTRL_CIRCLE) {
+			softkbd_release();
+		}
+		if (pressed & PSP_CTRL_CROSS) {
+			softkbd_toggle();		/* ×: 閉じる */
+			scrnmng_menupresent();
+		}
 		return;
 	}
 

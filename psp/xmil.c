@@ -29,6 +29,7 @@
 #include "timing.h"
 #include "sysmenu.h"
 #include "menubase.h"
+#include "softkbd.h"
 #include "selfexec.h"
 #include "perf.h"
 #include "joymng.h"
@@ -189,6 +190,16 @@ int main(int argc, char *argv[]) {
 						menubase_close();
 						scrnmng_menupresent();
 					}
+				}
+				if ((el >= 32000) && (menutest == 2)) {
+					menutest = 3;
+					softkbd_toggle();	/* ソフトキーボードの無人確認 */
+					scrnmng_menupresent();
+				}
+				if ((el >= 40000) && (menutest == 3)) {
+					menutest = 4;
+					softkbd_toggle();
+					scrnmng_menupresent();
 				}
 			}
 			/* 本編の負荷を測るための自動入力: 12-14s でトリガー連打して

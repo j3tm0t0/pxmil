@@ -23,6 +23,7 @@
 #include	"vramhdl.h"
 #include	"perf.h"
 #include	"gu.h"
+#include	"softkbd.h"
 #include	"menubase.h"
 
 /* メニュー合成用 (640x400 RGB565) */
@@ -186,20 +187,23 @@ static void present_frame(void) {
 	dst.w = w;
 	dst.h = h;
 	dbg_render(s_surface);
-	if (menuvram != NULL) {
-		/* ゲーム画面のコピーにメニューを合成して表示する */
+	if ((menuvram != NULL) || softkbd_isvisible()) {
+		/* ゲーム画面のコピーにメニュー/ソフトキーボードを合成して表示 */
 		const UINT16	*game = (const UINT16 *)s_surface->pixels;
-		const UINT16	*menu = (const UINT16 *)menuvram->ptr;
-		const UINT8		*alpha = menuvram->alpha;
 		UINT			i, npix;
 
 		npix = 640 * 400;
 		memcpy(s_compose, game, npix * 2);
-		for (i = 0; i < npix; i++) {
-			if (alpha[i] & 2) {
-				s_compose[i] = menu[i];
+		if (menuvram != NULL) {
+			const UINT16	*menu = (const UINT16 *)menuvram->ptr;
+			const UINT8		*alpha = menuvram->alpha;
+			for (i = 0; i < npix; i++) {
+				if (alpha[i] & 2) {
+					s_compose[i] = menu[i];
+				}
 			}
 		}
+		softkbd_draw(s_compose);
 		pxgu_present(s_compose, src.w, src.h, dst.x, dst.y, dst.w, dst.h);
 	}
 	else {
