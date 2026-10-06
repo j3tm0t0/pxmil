@@ -1,0 +1,10 @@
+# ROM / disk images for local testing (never commit)
+roms/
+
+# Build outputs
+*.o
+*.a
+*.elf
+*.prx
+EBOOT.PBP
+PARAM.SFO
