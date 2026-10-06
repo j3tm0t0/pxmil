@@ -5,6 +5,7 @@
 #include "xmil.h"
 #include "ini.h"
 #include "pccore.h"
+#include "scrnmng.h"
 
 static const char ini_title[] = "Xmillennium";
 static const char inifile[] = "xmil.cfg";
@@ -41,7 +42,10 @@ static const PFTBL iniitem[] = {
 
 	{"MouseInt", PFTYPE_BOOL,		&xmilcfg.MOUSE_SW,		0},
 	{"btnRAPID", PFTYPE_BOOL,		&xmilcfg.BTN_RAPID,		0},
-	{"btn_MODE", PFTYPE_BOOL,		&xmilcfg.BTN_MODE,		0}};
+	{"btn_MODE", PFTYPE_BOOL,		&xmilcfg.BTN_MODE,		0},
+
+	// PSP
+	{"PSP_Aspc", PFMAX_UINT8,		&pspcfg_aspect,			2}};
 
 void initload(void) {
 

@@ -12,5 +12,3 @@ BYTE joymng_getstat(void);
 
 /* autotest の自動入力 (負論理マスク、0xff = 入力なし) */
 extern BYTE joy_autoinput;
-extern BYTE joy_autofire;
-extern BYTE joy_swapbtn;

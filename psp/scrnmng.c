@@ -55,7 +55,8 @@ enum {
 	ASPECT_MONITOR,		/* 実機モニタ比 4:3 */
 	ASPECT_STRETCH		/* 全画面引き伸ばし */
 };
-static int aspect_mode = ASPECT_DOT;
+/* ini (PSP_Aspc) で保存・復元される */
+UINT8 pspcfg_aspect = ASPECT_DOT;
 
 /* ---- デバッグオーバーレイ (左上に loop/draw/fps を表示) ----
  * メインループから毎周 scrnmng_dbgtick() を呼ぶ。ループが回っていれば
@@ -156,7 +157,7 @@ static void present_frame(void) {
 	src.y = 0;
 	src.w = min(scrnstat.width, 640);
 	src.h = min(scrnstat.height, 400);
-	switch(aspect_mode) {
+	switch(pspcfg_aspect) {
 	case ASPECT_DOT:		/* ドット等倍比 (640x400 → 435x272) */
 		aw = src.w;
 		ah = src.h;
@@ -314,7 +315,7 @@ void scrnmng_surfunlock(const SCRNSURF *surf) {
 
 void scrnmng_nextaspect(void) {
 
-	aspect_mode = (aspect_mode + 1) % 3;
+	pspcfg_aspect = (UINT8)((pspcfg_aspect + 1) % 3);
 
 }
 

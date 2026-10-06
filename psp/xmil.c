@@ -257,6 +257,7 @@ int main(int argc, char *argv[]) {
 	TRACETERM();
 	SDL_Quit();
 
+	initsave();		/* 設定 (連射・入替・アスペクト等) を保存 */
 	perf_dump();	/* pxmil.log に毎秒の計測値を書き出す */
 
 	/* 実機では pspbrew.dev に戻る (テストサイクル短縮)。存在しない環境
