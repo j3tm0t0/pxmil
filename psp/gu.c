@@ -56,21 +56,40 @@ void pxgu_init(void) {
 	s_init = 1;
 }
 
-/* 1 ストリップを dst に対応する範囲へ描く */
+/* 1 ストリップを dst に対応する範囲へ、幅 SLICE_W の縦スライスに
+ * 分割して描く。RAM 上の非スウィズルテクスチャを 1 枚の大きな
+ * スプライトで描くと GE のテクスチャキャッシュが効かず激遅になる
+ * (実機計測で 25ms/フレーム)。細い縦帯に分けるのが PSP の定石。 */
+#define	SLICE_W		32
+
 static void draw_strip(const UINT16 *tex, int texw, int texh,
 						float u0, float u1,
 						float x0, float x1, float y0, float y1) {
 
 	VERTEX	*v;
+	float	u, du, x, dx;
+	int		n, i;
 
 	sceGuTexImage(0, texw, 512, 640, tex);
-	v = (VERTEX *)sceGuGetMemory(2 * sizeof(VERTEX));
-	v[0].u = u0;	v[0].v = 0.0f;
-	v[0].x = x0;	v[0].y = y0;	v[0].z = 0.0f;
-	v[1].u = u1;	v[1].v = (float)texh;
-	v[1].x = x1;	v[1].y = y1;	v[1].z = 0.0f;
+	n = (int)((u1 - u0) + SLICE_W - 1) / SLICE_W;
+	if (n < 1) {
+		n = 1;
+	}
+	du = (u1 - u0) / n;
+	dx = (x1 - x0) / n;
+	v = (VERTEX *)sceGuGetMemory(2 * n * sizeof(VERTEX));
+	u = u0;
+	x = x0;
+	for (i = 0; i < n; i++) {
+		v[i * 2].u = u;			v[i * 2].v = 0.0f;
+		v[i * 2].x = x;			v[i * 2].y = y0;	v[i * 2].z = 0.0f;
+		u += du;
+		x += dx;
+		v[i * 2 + 1].u = u;		v[i * 2 + 1].v = (float)texh;
+		v[i * 2 + 1].x = x;		v[i * 2 + 1].y = y1;	v[i * 2 + 1].z = 0.0f;
+	}
 	sceGuDrawArray(GU_SPRITES,
-		GU_TEXTURE_32BITF | GU_VERTEX_32BITF | GU_TRANSFORM_2D, 2, NULL, v);
+		GU_TEXTURE_32BITF | GU_VERTEX_32BITF | GU_TRANSFORM_2D, 2 * n, NULL, v);
 }
 
 /*
