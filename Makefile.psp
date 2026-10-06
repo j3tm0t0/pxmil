@@ -115,8 +115,6 @@ PXMIL_VER := $(shell date +%Y%m%d)-$(shell git rev-parse --short HEAD 2>/dev/nul
 
 CFLAGS = -G8 -O2 -Wall $(PGOFLAGS) $(SDL_INCLUDE) -DPXMIL_VER='"$(PXMIL_VER)"'
 
-# バージョンが変わったらメニューを作り直す
-psp/pspmenu.o: $(wildcard .git/HEAD .git/index)
 CXXFLAGS = $(CFLAGS) -fno-exceptions -fno-rtti
 ASFLAGS = $(CFLAGS)
 
@@ -137,3 +135,7 @@ include $(PSPSDK)/lib/build.mak
 objs: $(COREOBJS)
 
 .PHONY: objs
+
+# バージョンが変わったらメニューを作り直す (build.mak の include 後に
+# 置くこと: 先頭に置くとデフォルトターゲットになってしまう)
+psp/pspmenu.o: $(wildcard .git/HEAD .git/index)
