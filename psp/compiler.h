@@ -111,5 +111,8 @@ long GetTicks(void);
 #define	SUPPORT_OPM
 #define	SUPPORT_TURBOZ
 
-//#define SOUND_CRITICAL
+/* SDL のオーディオコールバックは別スレッドで sound_pcmlock を呼ぶため
+ * 必須 (無効だと SNDCSEC_* が空定義になり、エミュレーションスレッドの
+ * ストリーム更新と競合してノイズや稀なクラッシュになる)。 */
+#define	SOUND_CRITICAL
 #define	SOUNDRESERVE	100

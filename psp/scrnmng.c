@@ -103,11 +103,12 @@ static void dbg_render(SDL_Surface *winsurf) {
 	SDL_UnlockSurface(winsurf);
 }
 
+static void present_frame(void);
+
 void scrnmng_dbgtick(void) {
 
 	static UINT32	lastms;
 	static UINT32	lastdraw;
-	SDL_Surface		*winsurf;
 	UINT32			now;
 
 	dbg_loopcnt++;
@@ -119,18 +120,71 @@ void scrnmng_dbgtick(void) {
 	}
 
 	/* コアが 500ms 以上描画していないときだけ、こちらから present して
-	 * 生存表示を続ける (停止の切り分け用)。通常時は surfunlock に任せる。 */
+	 * 生存表示を続ける (停止の切り分け用)。通常時は surfunlock に任せる。
+	 * 内容は surfunlock と同じ「最終ゲームフレーム + オーバーレイ」。
+	 * 黒塗り + オーバーレイだけを出すと、フレームスキップで描画間隔が
+	 * 500ms を超えたときにゲーム画面と黒画面が交互に出てチカチカする。 */
 	if ((now - dbg_lastpresent) < 500) {
 		return;
 	}
+	present_frame();
+}
+
+/* 最終ゲームフレーム (s_surface) をアスペクトモードに従って winsurf に
+ * 縮小転送し、オーバーレイを重ねて present する。present はこの関数の
+ * 1 箇所のみ (surfunlock と dbgtick のフォールバックが共用)。 */
+static void present_frame(void) {
+
+	SDL_Surface	*winsurf;
+	SDL_Rect	src, dst;
+	int			w, h;
+	int			aw, ah;
+
+	/* ウィンドウサーフェースはキャッシュしない (SDL 側で作り直されうる) */
 	winsurf = SDL_GetWindowSurface(s_sdlWindow);
-	if (winsurf == NULL) {
+	if ((winsurf == NULL) || (s_surface == NULL)) {
 		return;
 	}
-	SDL_FillRect(winsurf, NULL, 0);
+
+	/* アスペクトモードに従って 480x272 に収める。表示モードで
+	 * source サイズが変わっても scrnstat に追従する。 */
+	src.x = 0;
+	src.y = 0;
+	src.w = min(scrnstat.width, 640);
+	src.h = min(scrnstat.height, 400);
+	switch(aspect_mode) {
+	case ASPECT_DOT:		/* ドット等倍比 (640x400 → 435x272) */
+		aw = src.w;
+		ah = src.h;
+		break;
+	case ASPECT_MONITOR:	/* 実機モニタ 4:3 (→ 362x272) */
+		aw = 4;
+		ah = 3;
+		break;
+	default:				/* 480x272 引き伸ばし */
+		aw = PSP_SCREEN_WIDTH;
+		ah = PSP_SCREEN_HEIGHT;
+		break;
+	}
+	w = PSP_SCREEN_WIDTH;
+	h = w * ah / aw;
+	if (h > PSP_SCREEN_HEIGHT) {
+		h = PSP_SCREEN_HEIGHT;
+		w = h * aw / ah;
+	}
+	dst.x = (PSP_SCREEN_WIDTH - w) / 2;
+	dst.y = (PSP_SCREEN_HEIGHT - h) / 2;
+	dst.w = w;
+	dst.h = h;
+	/* ダブルバッファの両面を毎回全面描き直す (部分更新だと前々
+	 * フレームの内容が残った面と交互に表示されてチカチカする)。 */
+	if ((dst.x != 0) || (dst.y != 0)) {
+		SDL_FillRect(winsurf, NULL, 0);
+	}
+	SDL_BlitScaled(s_surface, &src, winsurf, &dst);
 	dbg_render(winsurf);
 	SDL_UpdateWindowSurface(s_sdlWindow);
-	dbg_lastpresent = now;
+	dbg_lastpresent = SDL_GetTicks();
 }
 
 void scrnmng_initialize(void) {
@@ -240,7 +294,6 @@ const SCRNSURF *scrnmng_surflock(void) {
 void scrnmng_surfunlock(const SCRNSURF *surf) {
 
 	SDL_Surface	*surface;
-	SDL_Surface	*winsurf;
 
 	if (surf == NULL) {
 		return;
@@ -251,54 +304,7 @@ void scrnmng_surfunlock(const SCRNSURF *surf) {
 	}
 	scrnmng.surface = NULL;
 	SDL_UnlockSurface(surface);
-
-	/* ウィンドウサーフェースはキャッシュしない (SDL 側で作り直されうる) */
-	winsurf = SDL_GetWindowSurface(s_sdlWindow);
-	if (winsurf != NULL) {
-		/* アスペクトモードに従って 480x272 に収める。表示モードで
-		 * source サイズが変わっても scrnstat に追従する。 */
-		SDL_Rect	src, dst;
-		int			w, h;
-		int			aw, ah;
-
-		src.x = 0;
-		src.y = 0;
-		src.w = min(scrnstat.width, 640);
-		src.h = min(scrnstat.height, 400);
-		switch(aspect_mode) {
-		case ASPECT_DOT:		/* ドット等倍比 (640x400 → 435x272) */
-			aw = src.w;
-			ah = src.h;
-			break;
-		case ASPECT_MONITOR:	/* 実機モニタ 4:3 (→ 362x272) */
-			aw = 4;
-			ah = 3;
-			break;
-		default:				/* 480x272 引き伸ばし */
-			aw = PSP_SCREEN_WIDTH;
-			ah = PSP_SCREEN_HEIGHT;
-			break;
-		}
-		w = PSP_SCREEN_WIDTH;
-		h = w * ah / aw;
-		if (h > PSP_SCREEN_HEIGHT) {
-			h = PSP_SCREEN_HEIGHT;
-			w = h * aw / ah;
-		}
-		dst.x = (PSP_SCREEN_WIDTH - w) / 2;
-		dst.y = (PSP_SCREEN_HEIGHT - h) / 2;
-		dst.w = w;
-		dst.h = h;
-		/* ダブルバッファの両面を毎回全面描き直す (部分更新だと前々
-		 * フレームの内容が残った面と交互に表示されてチカチカする)。 */
-		if ((dst.x != 0) || (dst.y != 0)) {
-			SDL_FillRect(winsurf, NULL, 0);
-		}
-		SDL_BlitScaled(surface, &src, winsurf, &dst);
-		dbg_render(winsurf);
-		SDL_UpdateWindowSurface(s_sdlWindow);
-		dbg_lastpresent = SDL_GetTicks();
-	}
+	present_frame();
 	dbg_drawcnt++;
 }
 

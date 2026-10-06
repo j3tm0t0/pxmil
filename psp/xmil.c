@@ -10,6 +10,7 @@
 #include "compiler.h"
 #include <SDL.h>
 #include <pspmoduleinfo.h>
+#include <psppower.h>
 #include "strres.h"
 #include "xmil.h"
 #include "dosio.h"
@@ -56,6 +57,10 @@ static void processwait(UINT cnt) {
 /* compiler.h (SDL.h) により main は SDL_main に置換され、
    libSDL2main.a 側の main() から呼ばれる */
 int main(int argc, char *argv[]) {
+
+	/* 既定の 222MHz では間に合わないため最大クロックで動かす
+	 * (px68k と同様。バスは CPU の半分)。 */
+	scePowerSetClockFrequency(333, 333, 166);
 
 	/* ファイルパスの基準を EBOOT のあるディレクトリにする */
 	if ((argc > 0) && (argv[0] != NULL) && (strchr(argv[0], '/') != NULL)) {

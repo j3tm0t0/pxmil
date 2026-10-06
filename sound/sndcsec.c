@@ -17,7 +17,7 @@
 
 	pthread_mutex_t		sndcsec;		// = PTHREAD_MUTEX_INITIALIZER;
 
-#elif defined(_SDL_mutex_h)
+#elif defined(_SDL_mutex_h) || defined(SDL_mutex_h_)	/* SDL1.2 / SDL2 */
 
 	SDL_mutex*		g_sndcsec;
 
