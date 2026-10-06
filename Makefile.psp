@@ -9,58 +9,58 @@
 # ---------------------------------------------------------------- コア objs
 
 ROOTOBJS = \
-	pccore.o calendar.o debugsub.o ievent.o keystat.o nevent.o \
-	statsave.o timing.o
+	xmil/pccore.o xmil/calendar.o xmil/debugsub.o xmil/ievent.o xmil/keystat.o xmil/nevent.o \
+	xmil/statsave.o xmil/timing.o
 
 CODECNVOBJS = \
-	codecnv/eucsjis.o codecnv/eucucs2.o codecnv/sjiseuc.o \
-	codecnv/sjisucs2.o codecnv/tcswap16.o codecnv/tcswap32.o \
-	codecnv/textcnv.o codecnv/ucs2sjis.o codecnv/ucs2utf8.o \
-	codecnv/utf8ucs2.o
+	xmil/codecnv/eucsjis.o xmil/codecnv/eucucs2.o xmil/codecnv/sjiseuc.o \
+	xmil/codecnv/sjisucs2.o xmil/codecnv/tcswap16.o xmil/codecnv/tcswap32.o \
+	xmil/codecnv/textcnv.o xmil/codecnv/ucs2sjis.o xmil/codecnv/ucs2utf8.o \
+	xmil/codecnv/utf8ucs2.o
 
 COMMONOBJS = \
-	common/_memory.o common/bmpdata.o common/lstarray.o common/milstr.o \
-	common/parts.o common/profile.o common/rect.o common/resize.o \
-	common/strres.o common/textfile.o common/wavefile.o
+	xmil/common/_memory.o xmil/common/bmpdata.o xmil/common/lstarray.o xmil/common/milstr.o \
+	xmil/common/parts.o xmil/common/profile.o xmil/common/rect.o xmil/common/resize.o \
+	xmil/common/strres.o xmil/common/textfile.o xmil/common/wavefile.o
 
 EMBEDOBJS = \
-	embed/vramhdl.o embed/vrammix.o \
-	embed/menu/dlgabout.o embed/menu/dlgcfg.o embed/menu/filesel.o \
-	embed/menu/menustr.o \
-	embed/menubase/menubase.o embed/menubase/menudlg.o \
-	embed/menubase/menuicon.o embed/menubase/menumbox.o \
-	embed/menubase/menures.o embed/menubase/menusys.o \
-	embed/menubase/menuvram.o
+	xmil/embed/vramhdl.o xmil/embed/vrammix.o \
+	xmil/embed/menu/dlgabout.o xmil/embed/menu/dlgcfg.o xmil/embed/menu/filesel.o \
+	xmil/embed/menu/menustr.o \
+	xmil/embed/menubase/menubase.o xmil/embed/menubase/menudlg.o \
+	xmil/embed/menubase/menuicon.o xmil/embed/menubase/menumbox.o \
+	xmil/embed/menubase/menures.o xmil/embed/menubase/menusys.o \
+	xmil/embed/menubase/menuvram.o
 
 FDDOBJS = \
-	fdd/diskdrv.o fdd/fdd_2d.o fdd/fdd_d88.o fdd/fdd_ini.o \
-	fdd/fdd_mtr.o fdd/fddfile.o fdd/newdisk.o
+	xmil/fdd/diskdrv.o xmil/fdd/fdd_2d.o xmil/fdd/fdd_d88.o xmil/fdd/fdd_ini.o \
+	xmil/fdd/fdd_mtr.o xmil/fdd/fddfile.o xmil/fdd/newdisk.o
 
 FONTOBJS = \
-	font/font.o font/fontdata.o font/fontmake.o font/fontx1.o
+	xmil/font/font.o xmil/font/fontdata.o xmil/font/fontmake.o xmil/font/fontx1.o
 
 IOOBJS = \
-	io/cgrom.o io/cmt.o io/crtc.o io/ctc.o io/dipsw.o io/dmac.o \
-	io/fdc.o io/iocore.o io/memio.o io/pcg.o io/ppi.o io/sio.o \
-	io/sndboard.o io/subcpu.o io/vramio.o
+	xmil/io/cgrom.o xmil/io/cmt.o xmil/io/crtc.o xmil/io/ctc.o xmil/io/dipsw.o xmil/io/dmac.o \
+	xmil/io/fdc.o xmil/io/iocore.o xmil/io/memio.o xmil/io/pcg.o xmil/io/ppi.o xmil/io/sio.o \
+	xmil/io/sndboard.o xmil/io/subcpu.o xmil/io/vramio.o
 
 SOUNDOBJS = \
-	sound/opm.o sound/opmgenc.o sound/opmgeng.o sound/psg.o \
-	sound/psggenc.o sound/psggeng.o sound/sndcsec.o sound/sndctrl.o \
-	sound/sound.o sound/x1f.o
+	xmil/sound/opm.o xmil/sound/opmgenc.o xmil/sound/opmgeng.o xmil/sound/psg.o \
+	xmil/sound/psggenc.o xmil/sound/psggeng.o xmil/sound/sndcsec.o xmil/sound/sndctrl.o \
+	xmil/sound/sound.o xmil/sound/x1f.o
 
 # Z80 コアは C 版 (z80c)。z80x/z80a* は x86 asm のため PSP では使えない。
 Z80OBJS = \
-	z80c/z80c.o z80c/z80c_cb.o z80c/z80c_ix.o z80c/z80c_iy.o \
-	z80c/z80c_mn.o z80c/z80c_sb.o z80c/z80dmap.o z80c/z80mem.o
+	xmil/z80c/z80c.o xmil/z80c/z80c_cb.o xmil/z80c/z80c_ix.o xmil/z80c/z80c_iy.o \
+	xmil/z80c/z80c_mn.o xmil/z80c/z80c_sb.o xmil/z80c/z80dmap.o xmil/z80c/z80mem.o
 
 # vram は libretro/Makefile.common と同じ個別列挙 (x86 asm 版のある
 # ファイルを除いた C 実装のみ)。
 VRAMOBJS = \
-	vram/make15.o vram/make24.o vram/makeatr.o vram/makechr.o \
-	vram/makemix.o vram/makescrn.o vram/makesub.o vram/maketxth.o \
-	vram/maketxtl.o vram/palettes.o vram/sdraw.o vram/sdrawq16.o \
-	vram/scrndraw.o vram/vram.o
+	xmil/vram/make15.o xmil/vram/make24.o xmil/vram/makeatr.o xmil/vram/makechr.o \
+	xmil/vram/makemix.o xmil/vram/makescrn.o xmil/vram/makesub.o xmil/vram/maketxth.o \
+	xmil/vram/maketxtl.o xmil/vram/palettes.o xmil/vram/sdraw.o xmil/vram/sdrawq16.o \
+	xmil/vram/scrndraw.o xmil/vram/vram.o
 
 COREOBJS = \
 	$(ROOTOBJS) $(CODECNVOBJS) $(COMMONOBJS) $(EMBEDOBJS) $(FDDOBJS) \
@@ -93,8 +93,9 @@ SDL_LIB =	$(shell $(SDL_CONFIG) --libs | sed "s|-L/psp/|-L$(PSPDEV)/psp/|g")
 # soundmng.h sysmng.h fontmng.h taskmng.h timemng.h trace.h xmil.h など) を
 # 当面 libretro 版から借りる。統合時にフロントエンドが psp/ に同名ヘッダを
 # 置けばそちらが優先される。
-INCDIR = psp . codecnv common embed embed/menu embed/menubase fdd font io \
-	sound vram z80c libretro
+INCDIR = psp xmil xmil/codecnv xmil/common xmil/embed xmil/embed/menu \
+	xmil/embed/menubase xmil/fdd xmil/font xmil/io xmil/sound xmil/vram \
+	xmil/z80c xmil/libretro
 
 # -G0: libretro の PSP ターゲットに合わせる。px68k では -G8 (小データを
 # gp 相対で参照、約 -14%/frame) を使っているが、割り込みハンドラと $gp の

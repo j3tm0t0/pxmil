@@ -12,3 +12,5 @@ roms/
 EBOOT.PBP
 PARAM.SFO
 results/
+.DS_Store
+pgo/

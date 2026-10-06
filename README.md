@@ -3,6 +3,7 @@
 SHARP X1 エミュレータ **X millennium** の PSP 移植です。
 [xmil-libretro](https://github.com/libretro/xmil-libretro)（公式 SVN trunk のミラー）をベースに、
 PSP 用のフロントエンド（`psp/`）を追加しています。
+上流のソースツリーは `xmil/` 以下にあります。
 
 ![icon](assets/icon0.png)
 
@@ -74,6 +75,6 @@ make -f Makefile.psp PGO=use    # pgo/ のプロファイルを使った最適�
 ## ライセンス
 
 エミュレータ本体のライセンスは上流に従います。同梱の
-[LICENSE](LICENSE) / [readme.txt](readme.txt) を参照してください。
+[xmil/LICENSE](xmil/LICENSE) / [xmil/readme.txt](xmil/readme.txt) を参照してください。
 PSP フロントエンド（`psp/`）も同条件とします。
 ゲームのディスクイメージは含みません。各自が権利を有するものをご利用ください。
