@@ -1,16 +1,18 @@
 # TODO
 
-## 機能 (ユーザー要望、後回しで OK)
-- [ ] 連射機能 (○/× の autofire、レート切替)
-- [ ] ボタン左右入れ替えモード (○×⇔×○ スワップ)
+## 機能 (ユーザー要望)
+- [x] 連射機能 (L トリガーでトグル、○ 約 16 連/秒)
+- [x] ボタン左右入れ替えモード (L+R 同時でトグル)
+- [ ] 連射レート切替 / 設定の ini 保存
 
-## 性能 (進行中)
-- [ ] 計測基盤: exec/present の per-frame µs + 毎秒ログ → 終了時 pxmil.log
-- [ ] サウンド生成コスト (soft-double): samplingrate 22050 化 / NOSOUND 比較
-- [ ] MEMOPTIMIZE 2 → 0 の比較 (低メモリモードが遅いパスを選んでいる可能性)
-- [ ] -G8 (px68k で -14%/frame。GPREL16 オーバーフローが出たら extern 変数要調査)
-- [ ] present が重ければ GU 縮小転送 (px68k psp/gecomp.c の 512 分割を移植)
-- [ ] PGO (px68k tools/pgo-train.sh。デバッグポート未移植なので __gcov_dump() at exit + GCOV_PREFIX 方式を検討)
+## 性能
+実機ゲーム本編で 60fps 達成 (exec 10.4ms + present 6.3ms ≈ 16.3ms)。
+- [x] 計測基盤 (psp/perf.c、autotest、tools/device-test.sh で無人計測)
+- [x] GU 縮小転送 + 32px スライス (present 25ms → 6.3ms)
+- [x] -G8 (効果なしだが維持) / MEMOPTIMIZE 0 vs 2 (差なし、2 に戻した)
+- [ ] PGO: CPU 予算 98% で余裕がないので、音切れ等が出たら着手
+  (デバッグポート未移植なので __gcov_dump() at exit + GCOV_PREFIX 方式)
+- [ ] サウンド生成は per-sample 整数演算と確認済み (soft-double は init のみ)
 
 ## 機能 (その他)
 - [ ] メニュー UI (embed/menubase 連携、ディスク入替)
