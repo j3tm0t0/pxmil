@@ -6,12 +6,11 @@
  * (押している間キーも押しっぱなし)、× で閉じる。SHIFT/CTRL/KANA/GRPH
  * はロック式トグル。キーは keystat_keydown/keyup で X1 のキーマトリクス
  * に注入される。描画は present 時に合成バッファへ直接行う
- * (scrnmng.c の compose 経路)。ラベルは fontmng の ANK フォント。
+ * (scrnmng.c の compose 経路)。ラベルは自前の 3x5 ピクセルフォント。
  */
 
 #include	"compiler.h"
 #include	"keystat.h"
-#include	"fontmng.h"
 #include	"softkbd.h"
 
 /* NKEY コード (keystat.h の enum は #if 0 なので必要分をここで定義) */
@@ -54,18 +53,18 @@ static const SKEY row1[] = {
 static const SKEY row2[] = {
 	KW("CT",NKEY_CTRL,2), K("A",0x1d), K("S",0x1e), K("D",0x1f), K("F",0x20),
 	K("G",0x21), K("H",0x22), K("J",0x23), K("K",0x24), K("L",0x25),
-	K(";",0x26), K(":",0x27), K("]",0x28) };
+	K(";",0x26), K(":",0x27), KW("]",0x28,3) };
 static const SKEY row3[] = {
 	KW("SH",NKEY_SHIFT,2), K("Z",0x29), K("X",0x2a), K("C",0x2b), K("V",0x2c),
 	K("B",0x2d), K("N",0x2e), K("M",0x2f), K(",",0x30), K(".",0x31),
-	K("/",0x32), K("_",0x33), KW("SH",NKEY_SHIFT,2) };
+	K("/",0x32), K("_",0x33), KW("SH",NKEY_SHIFT,3) };
 static const SKEY row4[] = {
 	KW("KA",NKEY_KANA,2), KW("GR",NKEY_GRPH,2), KW("SPACE",NKEY_SPACE,6),
-	KW("HM",NKEY_HOMECLR,2), K("IN",NKEY_INS), K("DL",NKEY_DEL) };
+	KW("HM",NKEY_HOMECLR,2), K("IN",NKEY_INS), KW("DL",NKEY_DEL,3) };
 static const SKEY row5[] = {
 	KW("F1",0x62,2), KW("F2",0x63,2), KW("F3",0x64,2), KW("F4",0x65,2),
 	KW("F5",0x66,2), KW("<",NKEY_LEFT,1), KW("v",NKEY_DOWN,1),
-	KW("^",NKEY_UP,1), KW(">",NKEY_RIGHT,1) };
+	KW("^",NKEY_UP,1), KW(">",NKEY_RIGHT,3) };
 
 static const SKEY	*rows[] = {row0, row1, row2, row3, row4, row5};
 static const int	rowlen[] = {
@@ -73,16 +72,16 @@ static const int	rowlen[] = {
 	NELEMENTS(row3), NELEMENTS(row4), NELEMENTS(row5)};
 #define	NROWS	6
 
-#define	KEYW	36			/* セル幅 1 単位 (px) */
-#define	KEYH	22
-#define	KBD_H	(NROWS * KEYH)
+#define	KEYW	18			/* セル幅 1 単位 (px) */
+#define	KEYH	10
+#define	KBD_W	(16 * KEYW + 2)
+#define	KBD_H	(NROWS * KEYH + 2)
 #define	KBD_Y	(400 - KBD_H)
 
 static int		s_visible;
 static int		s_row, s_col;
 static UINT8	s_pressed = 0xff;		/* ○ で押下中のコード */
 static UINT8	s_locked[0x80];			/* ロック式モディファイアの状態 */
-static void		*s_font;
 
 int softkbd_isvisible(void) {
 
@@ -164,6 +163,23 @@ void softkbd_release(void) {
 #define	COL_TEXT	0xffff
 #define	COL_TEXTSEL	0x0000
 
+/* 3x5 ピクセルフォント (各行 3bit、上から 5 行)。fontmng は RESOURCE_US
+ * ビルドで使えないため自前で持つ。 */
+static const char skb_chars[] =
+	"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ-^\\@[];:,./_<>v";
+static const UINT8 skb_glyph[][5] = {
+	{7,5,5,5,7},{2,6,2,2,7},{7,1,7,4,7},{7,1,7,1,7},{5,5,7,1,1},
+	{7,4,7,1,7},{7,4,7,5,7},{7,1,1,1,1},{7,5,7,5,7},{7,5,7,1,7},
+	{2,5,7,5,5},{6,5,6,5,6},{3,4,4,4,3},{6,5,5,5,6},{7,4,6,4,7},
+	{7,4,6,4,4},{3,4,5,5,3},{5,5,7,5,5},{7,2,2,2,7},{1,1,1,5,2},
+	{5,6,4,6,5},{4,4,4,4,7},{5,7,5,5,5},{6,5,5,5,5},{2,5,5,5,2},
+	{6,5,6,4,4},{2,5,5,6,3},{6,5,6,6,5},{3,4,2,1,6},{7,2,2,2,2},
+	{5,5,5,5,7},{5,5,5,5,2},{5,5,5,7,5},{5,5,2,5,5},{5,5,2,2,2},
+	{7,1,2,4,7},{0,0,7,0,0},{2,5,0,0,0},{4,4,2,1,1},{2,5,7,4,3},
+	{3,2,2,2,3},{6,2,2,2,6},{0,2,0,2,4},{0,2,0,2,0},{0,0,0,2,4},
+	{0,0,0,0,2},{1,1,2,4,4},{0,0,0,0,7},{1,2,4,2,1},{4,2,1,2,4},
+	{0,5,5,5,2}};
+
 static void fillrect(UINT16 *dst, int x, int y, int w, int h, UINT16 c) {
 
 	int	i, j;
@@ -176,39 +192,29 @@ static void fillrect(UINT16 *dst, int x, int y, int w, int h, UINT16 c) {
 	}
 }
 
-/* psp/fontmng.c の fontmng_get は 1 文字ずつなので、ここで並べて描く */
 static void drawlabel(UINT16 *dst, int x, int y, const char *s, UINT16 c) {
 
-	FNTDAT	fd;
-	char	one[2];
+	for (; *s != '\0'; s++, x += 4) {
+		const char	*f;
+		const UINT8	*g;
+		int			row, col;
 
-	if (s_font == NULL) {
-		return;
-	}
-	for (; *s != '\0'; s++) {
-	one[0] = *s;
-	one[1] = '\0';
-	fd = fontmng_get(s_font, one);
-	if (fd == NULL) {
-		return;
-	}
-	{
-		/* ビットマップは fnt+1 から、行ストライドは width
-		 * (embed/vrammix.c の vramsub_txt8p と同じ解釈。pitch ではない) */
-		const UINT8	*src = (const UINT8 *)(fd + 1);
-		int			i, j;
-
-		for (j = 0; j < fd->height; j++) {
-			UINT16 *p = dst + (y + j) * 640 + x;
-			for (i = 0; i < fd->width; i++) {
-				if (src[i]) {
-					p[i] = c;
+		if (*s == ' ') {
+			continue;
+		}
+		f = strchr(skb_chars, *s);
+		if (f == NULL) {
+			continue;
+		}
+		g = skb_glyph[f - skb_chars];
+		for (row = 0; row < 5; row++) {
+			UINT16 *p = dst + (y + row) * 640 + x;
+			for (col = 0; col < 3; col++) {
+				if (g[row] & (4 >> col)) {
+					p[col] = c;
 				}
 			}
-			src += fd->width;
 		}
-	}
-	x += fd->width;
 	}
 }
 
@@ -219,16 +225,13 @@ void softkbd_draw(UINT16 *dst) {
 	if (!s_visible) {
 		return;
 	}
-	if (s_font == NULL) {
-		s_font = fontmng_create(12, 0, NULL);
-	}
-	fillrect(dst, 0, KBD_Y, 640, KBD_H, COL_BG);
+	fillrect(dst, 0, KBD_Y, KBD_W, KBD_H, COL_BG);
 	for (r = 0; r < NROWS; r++) {
-		int x = 2;
+		int x = 1;
 		for (c = 0; c < rowlen[r]; c++) {
 			const SKEY	*k = &rows[r][c];
-			int			w = k->w * KEYW - 4;
-			int			y = KBD_Y + r * KEYH + 2;
+			int			w = k->w * KEYW - 1;
+			int			y = KBD_Y + r * KEYH + 1;
 			UINT16		bg, fg;
 
 			if ((r == s_row) && (c == s_col)) {
@@ -243,8 +246,8 @@ void softkbd_draw(UINT16 *dst) {
 				bg = COL_KEY;
 				fg = COL_TEXT;
 			}
-			fillrect(dst, x, y, w, KEYH - 4, bg);
-			drawlabel(dst, x + 4, y + 3, k->label, fg);
+			fillrect(dst, x, y, w, KEYH - 1, bg);
+			drawlabel(dst, x + 2, y + 2, k->label, fg);
 			x += k->w * KEYW;
 		}
 	}
