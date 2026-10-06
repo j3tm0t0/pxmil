@@ -99,7 +99,7 @@ INCDIR = psp . codecnv common embed embed/menu embed/menubase fdd font io \
 # -G0: libretro の PSP ターゲットに合わせる。px68k では -G8 (小データを
 # gp 相対で参照、約 -14%/frame) を使っているが、割り込みハンドラと $gp の
 # 関係を監査してからでないと危険なので、まずは -G0 で始める。
-CFLAGS = -G0 -O2 -Wall $(SDL_INCLUDE)
+CFLAGS = -G8 -O2 -Wall $(SDL_INCLUDE)
 CXXFLAGS = $(CFLAGS) -fno-exceptions -fno-rtti
 ASFLAGS = $(CFLAGS)
 

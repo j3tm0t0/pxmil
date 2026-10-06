@@ -113,6 +113,9 @@ long GetTicks(void);
 
 /* SDL のオーディオコールバックは別スレッドで sound_pcmlock を呼ぶため
  * 必須 (無効だと SNDCSEC_* が空定義になり、エミュレーションスレッドの
- * ストリーム更新と競合してノイズや稀なクラッシュになる)。 */
+ * ストリーム更新と競合してノイズや稀なクラッシュになる)。
+ * sound/sndcsec.h は「SDL_mutex.h が include 済みか」で SDL 分岐を
+ * 選ぶため、ここで include してどの翻訳単位でも成立させる。 */
 #define	SOUND_CRITICAL
+#include	<SDL_mutex.h>
 #define	SOUNDRESERVE	100
