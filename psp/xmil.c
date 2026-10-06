@@ -30,6 +30,7 @@
 #include "sysmenu.h"
 #include "selfexec.h"
 #include "perf.h"
+#include "joymng.h"
 
 /* X1 のメモリ使用量は少ないので 16MB で十分 (PSP-1000 のユーザー空間は 24MB) */
 PSP_HEAP_SIZE_KB(16384);
@@ -165,8 +166,28 @@ int main(int argc, char *argv[]) {
 	while(taskmng_isavail()) {
 		taskmng_rol();
 		perf_tick();
-		if ((autotest_ms != 0) && ((GETTICK() - boot_tick) >= autotest_ms)) {
-			taskmng_exit();
+		if (autotest_ms != 0) {
+			UINT32 el = GETTICK() - boot_tick;
+			if (el >= autotest_ms) {
+				taskmng_exit();
+			}
+			/* 本編の負荷を測るための自動入力: 12-14s でトリガー連打して
+			 * ゲーム開始、16s 以降は移動 + 連射で遊んでいるふりをする。
+			 * (負論理: ビットを落とす = 押下。0x40=ボタン1 0x04=左 0x08=右) */
+			if ((el >= 12000) && (el < 14000)) {
+				joy_autoinput = ((el / 250) & 1) ? (BYTE)~0x40 : 0xff;
+			}
+			else if (el >= 16000) {
+				switch ((el / 400) % 4) {
+				case 0:  joy_autoinput = (BYTE)~(0x40 | 0x04); break;
+				case 1:  joy_autoinput = (BYTE)~0x08; break;
+				case 2:  joy_autoinput = (BYTE)~(0x40 | 0x08); break;
+				default: joy_autoinput = (BYTE)~0x04; break;
+				}
+			}
+			else {
+				joy_autoinput = 0xff;
+			}
 		}
 		scrnmng_dbgtick();
 		if (xmiloscfg.NOWAIT) {

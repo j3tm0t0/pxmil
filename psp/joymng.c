@@ -24,12 +24,15 @@
 
 #define	ANALOG_THRESHOLD	64
 
+/* autotest の自動入力 (負論理マスク、0xff = 入力なし)。xmil.c が設定 */
+BYTE	joy_autoinput = 0xff;
+
 BYTE joymng_getstat(void) {
 
 	SceCtrlData	pad;
 	BYTE		ret;
 
-	ret = 0xff;
+	ret = joy_autoinput;
 	if (sceCtrlPeekBufferPositive(&pad, 1) <= 0) {
 		return(ret);
 	}

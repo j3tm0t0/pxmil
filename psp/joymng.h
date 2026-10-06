@@ -9,3 +9,6 @@ BYTE joymng_getstat(void);
 }
 #endif
 
+
+/* autotest の自動入力 (負論理マスク、0xff = 入力なし) */
+extern BYTE joy_autoinput;
