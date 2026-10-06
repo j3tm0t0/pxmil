@@ -22,6 +22,10 @@
 #define	SCR_WIDTH	480
 #define	SCR_HEIGHT	272
 #define	FRAME_SIZE	(BUF_WIDTH * SCR_HEIGHT * 2)	/* RGB565 */
+/* ソース画像の VRAM ステージング先 (フレームバッファ 2 面の直後)。
+ * GE は RAM 上の非スウィズルテクスチャを読むのが遅いため、CopyImage で
+ * VRAM へ DMA してから VRAM をテクスチャとして描く。640x400x2=512KB。 */
+#define	TEXBUF_OFF	(2 * FRAME_SIZE)
 
 static unsigned int __attribute__((aligned(64))) s_list[4096];
 static int	s_init;
@@ -134,19 +138,27 @@ void pxgu_present(const UINT16 *src, int srcw, int srch,
 	sceGuClearColor(0);
 	sceGuClear(GU_COLOR_BUFFER_BIT);
 
+	/* ソースを VRAM へ GE DMA してから、VRAM をテクスチャに使う */
+	sceGuCopyImage(GU_PSM_5650, 0, 0, 640, srch, 640, (void *)src,
+					0, 0, 640, (void *)(0x04000000 + TEXBUF_OFF));
+	sceGuTexSync();
+
 	sx = (float)dstw / (float)srcw;
 	x0 = (float)dstx;
 	y0 = (float)dsty;
 	y1 = (float)(dsty + dsth);
-	if (srcw > 512) {
-		x1 = x0 + 512.0f * sx;
-		draw_strip(src, 512, srch, 0.0f, 512.0f, x0, x1, y0, y1);
-		draw_strip(src + 512, 128, srch, 0.0f, (float)(srcw - 512),
-					x1, (float)(dstx + dstw), y0, y1);
-	}
-	else {
-		draw_strip(src, 512, srch, 0.0f, (float)srcw,
-					x0, (float)(dstx + dstw), y0, y1);
+	{
+		const UINT16 *vtex = (const UINT16 *)(0x04000000 + TEXBUF_OFF);
+		if (srcw > 512) {
+			x1 = x0 + 512.0f * sx;
+			draw_strip(vtex, 512, srch, 0.0f, 512.0f, x0, x1, y0, y1);
+			draw_strip(vtex + 512, 128, srch, 0.0f, (float)(srcw - 512),
+						x1, (float)(dstx + dstw), y0, y1);
+		}
+		else {
+			draw_strip(vtex, 512, srch, 0.0f, (float)srcw,
+						x0, (float)(dstx + dstw), y0, y1);
+		}
 	}
 
 	sceGuFinish();
