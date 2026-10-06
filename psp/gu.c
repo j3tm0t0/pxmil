@@ -49,6 +49,9 @@ void pxgu_init(void) {
 	sceGuTexMode(GU_PSM_5650, 0, 0, GU_FALSE);
 	sceGuTexFunc(GU_TFX_REPLACE, GU_TCC_RGB);
 	sceGuTexFilter(GU_LINEAR, GU_LINEAR);
+	/* 既定の REPEAT だとバイリニアが左端で右端を回り込んでサンプリング
+	 * し、左 1 ラインにゴミが出る (実機で確認)。 */
+	sceGuTexWrap(GU_CLAMP, GU_CLAMP);
 	sceGuFinish();
 	sceGuSync(0, 0);
 	sceDisplayWaitVblankStart();
