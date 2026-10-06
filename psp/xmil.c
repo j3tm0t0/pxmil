@@ -105,6 +105,9 @@ int main(int argc, char *argv[]) {
 	}
 
 	initload();
+	/* PSP では 44100Hz のサウンド生成が CPU 予算を圧迫してテンポが
+	 * 揺れるため 22050Hz に固定する (生成・ミックスとも半減)。 */
+	xmilcfg.samplingrate = 22050;
 
 	TRACEINIT();
 
@@ -169,6 +172,28 @@ int main(int argc, char *argv[]) {
 	while(taskmng_isavail()) {
 		taskmng_rol();
 		perf_tick();
+
+		/* メニュー中はエミュレーションを一時停止 (音も止める)。
+		 * 再開時は timing をリセットして追いつきバーストを防ぐ。 */
+		{
+			static int paused;
+			if (pspmenu_isopen()) {
+				if (!paused) {
+					paused = 1;
+					soundmng_stop();
+				}
+				taskmng_sleep(10);
+				continue;
+			}
+			if (paused) {
+				paused = 0;
+				soundmng_play();
+				timing_reset();
+				timing_setcount(0);
+				framecnt = 0;
+				waitcnt = 0;
+			}
+		}
 		if (autotest_ms != 0) {
 			UINT32 el = GETTICK() - boot_tick;
 			if (el >= autotest_ms) {
