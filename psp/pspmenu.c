@@ -219,7 +219,11 @@ void pspmenu_draw(UINT16 *dst) {
 	skb_fillrect(dst, PX, PY, PW, PH, COL_PANEL);
 
 	if (s_page == PAGE_MAIN) {
-		skb_drawtext(dst, PX + 16, PY + 4, "X MILLENNIUM MENU", COL_TITLE, 2);
+#ifndef PXMIL_VER
+#define PXMIL_VER "dev"
+#endif
+		skb_drawtext(dst, PX + 16, PY + 4,
+					"X MILLENNIUM MENU  VER " PXMIL_VER, COL_TITLE, 2);
 		sprintf(buf, "FDD0: %s", (s_mounted[0][0]) ? s_mounted[0] : "<EMPTY>");
 		drawitem(dst, 1, buf, (s_sel == MID_FDD0), COL_ITEM);
 		sprintf(buf, "FDD1: %s", (s_mounted[1][0]) ? s_mounted[1] : "<EMPTY>");

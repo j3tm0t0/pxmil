@@ -110,7 +110,13 @@ PGOFLAGS = -fprofile-use=pgo -fprofile-prefix-path=$(PWD) \
 	-fprofile-correction -Wno-missing-profile
 endif
 
-CFLAGS = -G8 -O2 -Wall $(PGOFLAGS) $(SDL_INCLUDE)
+# バージョン文字列 (メニューに表示)
+PXMIL_VER := $(shell date +%Y%m%d)-$(shell git rev-parse --short HEAD 2>/dev/null || echo dev)
+
+CFLAGS = -G8 -O2 -Wall $(PGOFLAGS) $(SDL_INCLUDE) -DPXMIL_VER='"$(PXMIL_VER)"'
+
+# バージョンが変わったらメニューを作り直す
+psp/pspmenu.o: $(wildcard .git/HEAD .git/index)
 CXXFLAGS = $(CFLAGS) -fno-exceptions -fno-rtti
 ASFLAGS = $(CFLAGS)
 
