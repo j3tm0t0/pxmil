@@ -23,13 +23,17 @@
  * ゲーム速度そのままで描き替えが毎フレーム間に合うようになる。 */
 UINT8	pspcfg_clockmul = 2;
 
+/* Z80 コアが命令ごとに消費するサイクルへの倍率 (256 = 等倍)。
+ * フレーム構造・CTC・実時間は 4MHz ドメインのままなので、音楽テンポを
+ * 変えずに CPU だけ速くなる。z80c/z80c.mcr の Z80_COUNT が参照。 */
+UINT32	z80_cycmul = 256;
+
 void pspmenu_applyclock(void) {
 
 	if ((pspcfg_clockmul < 2) || (pspcfg_clockmul > 4)) {
 		pspcfg_clockmul = 2;
 	}
-	pccore.multiple = pspcfg_clockmul;
-	pccore.realclock = pccore.baseclock * pccore.multiple;
+	z80_cycmul = 512 / pspcfg_clockmul;	/* 2→256(4MHz) 3→170(6MHz) 4→128(8MHz) */
 }
 
 /* ---- 状態 ---- */

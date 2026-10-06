@@ -15,9 +15,11 @@ extern	UINT	pccnt3;
 extern	UINT	lastpc;
 #endif
 
+extern	UINT32	z80_cycmul;	/* 256 = 1x (PSP: CPU CLOCK menu) */
+
 #define Z80_COUNT(clock)												\
 	do {																\
-		R_Z80REMCLOCK -= (clock);										\
+		R_Z80REMCLOCK -= ((clock) * z80_cycmul) >> 8;										\
 	} while (/*CONSTCOND*/ 0)
 
 
