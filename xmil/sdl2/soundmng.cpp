@@ -4,7 +4,9 @@
 #include "parts.h"
 #include "sound.h"
 #if defined(SUPPORT_EXTERNALCHIP)
+#if !defined(NO_EXTERNALCHIP)
 #include "ext/externalchipmanager.h"
+#endif
 #endif
 
 #define	NSNDBUF				2
@@ -121,7 +123,9 @@ void soundmng_play(void)
 	{
 		SDL_PauseAudio(0);
 #if defined(SUPPORT_EXTERNALCHIP)
+#if !defined(NO_EXTERNALCHIP)
 		CExternalChipManager::GetInstance()->Mute(false);
+#endif
 #endif
 	}
 }
@@ -132,7 +136,9 @@ void soundmng_stop(void)
 	{
 		SDL_PauseAudio(1);
 #if defined(SUPPORT_EXTERNALCHIP)
+#if !defined(NO_EXTERNALCHIP)
 		CExternalChipManager::GetInstance()->Mute(true);
+#endif
 #endif
 	}
 }
@@ -143,13 +149,17 @@ void soundmng_stop(void)
 void soundmng_initialize()
 {
 #if defined(SUPPORT_EXTERNALCHIP)
+#if !defined(NO_EXTERNALCHIP)
 	CExternalChipManager::GetInstance()->Initialize();
+#endif
 #endif
 }
 
 void soundmng_deinitialize()
 {
 #if defined(SUPPORT_EXTERNALCHIP)
+#if !defined(NO_EXTERNALCHIP)
 	CExternalChipManager::GetInstance()->Deinitialize();
+#endif
 #endif
 }

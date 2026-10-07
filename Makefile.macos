@@ -1,0 +1,79 @@
+# Makefile.macos -- X millennium (xmil) Mac ネイティブビルド (SDL2)
+#
+#   make -f Makefile.macos          # ./xmilsdl2 を生成
+#   ./xmilsdl2 roms/Xevious.2d      # ディスクを指定して起動
+#
+# X1 ディスクを PPSSPP を介さず即テストするための開発用ビルド。
+# コア一式は Makefile.psp と同じ列挙、フロントエンドは xmil/sdl2/。
+# フォントは RESOURCE_US (ank12 ビットマップ) で TTF 依存なし。
+
+CC  = clang
+CXX = clang++
+
+SDL_CFLAGS = $(shell sdl2-config --cflags) -I$(shell sdl2-config --prefix)/include
+SDL_LIBS   = $(shell sdl2-config --libs)
+
+DEFS = -DSUPPORT_OPM -DNO_EXTERNALCHIP
+INCS = -Ixmil/sdl2/MacOSX/xmilsdl2 -Ixmil -Ixmil/codecnv -Ixmil/common \
+	-Ixmil/embed -Ixmil/embed/menu -Ixmil/embed/menubase -Ixmil/fdd \
+	-Ixmil/font -Ixmil/io -Ixmil/sound -Ixmil/vram -Ixmil/z80c -Ixmil/sdl2
+
+CFLAGS   = -O2 -g -Wno-everything $(DEFS) $(INCS) $(SDL_CFLAGS)
+CXXFLAGS = $(CFLAGS)
+
+# ---- コア (Makefile.psp と同一の列挙を xmil/ 配下で) ----
+ROOTOBJS = xmil/pccore.mo xmil/calendar.mo xmil/debugsub.mo xmil/ievent.mo \
+	xmil/keystat.mo xmil/nevent.mo xmil/statsave.mo xmil/timing.mo
+CODECNVOBJS = xmil/codecnv/eucsjis.mo xmil/codecnv/eucucs2.mo xmil/codecnv/sjiseuc.mo \
+	xmil/codecnv/sjisucs2.mo xmil/codecnv/tcswap16.mo xmil/codecnv/tcswap32.mo \
+	xmil/codecnv/textcnv.mo xmil/codecnv/ucs2sjis.mo xmil/codecnv/ucs2utf8.mo \
+	xmil/codecnv/utf8ucs2.mo
+COMMONOBJS = xmil/common/_memory.mo xmil/common/bmpdata.mo xmil/common/lstarray.mo \
+	xmil/common/milstr.mo xmil/common/parts.mo xmil/common/profile.mo xmil/common/rect.mo \
+	xmil/common/resize.mo xmil/common/strres.mo xmil/common/textfile.mo xmil/common/wavefile.mo
+EMBEDOBJS = xmil/embed/vramhdl.mo xmil/embed/vrammix.mo \
+	xmil/embed/menu/dlgabout.mo xmil/embed/menu/dlgcfg.mo xmil/embed/menu/filesel.mo \
+	xmil/embed/menu/menustr.mo xmil/embed/menubase/menubase.mo xmil/embed/menubase/menudlg.mo \
+	xmil/embed/menubase/menuicon.mo xmil/embed/menubase/menumbox.mo xmil/embed/menubase/menures.mo \
+	xmil/embed/menubase/menusys.mo xmil/embed/menubase/menuvram.mo
+FDDOBJS = xmil/fdd/diskdrv.mo xmil/fdd/fdd_2d.mo xmil/fdd/fdd_d88.mo xmil/fdd/fdd_ini.mo \
+	xmil/fdd/fdd_mtr.mo xmil/fdd/fddfile.mo xmil/fdd/newdisk.mo
+FONTOBJS = xmil/font/font.mo xmil/font/fontdata.mo xmil/font/fontmake.mo xmil/font/fontx1.mo
+IOOBJS = xmil/io/cgrom.mo xmil/io/cmt.mo xmil/io/crtc.mo xmil/io/ctc.mo xmil/io/dipsw.mo \
+	xmil/io/dmac.mo xmil/io/fdc.mo xmil/io/iocore.mo xmil/io/memio.mo xmil/io/pcg.mo xmil/io/ppi.mo \
+	xmil/io/sio.mo xmil/io/sndboard.mo xmil/io/subcpu.mo xmil/io/vramio.mo
+SOUNDOBJS = xmil/sound/opm.mo xmil/sound/opmgenc.mo xmil/sound/opmgeng.mo xmil/sound/psg.mo \
+	xmil/sound/psggenc.mo xmil/sound/psggeng.mo xmil/sound/sndcsec.mo xmil/sound/sndctrl.mo \
+	xmil/sound/sound.mo xmil/sound/x1f.mo
+Z80OBJS = xmil/z80c/z80c.mo xmil/z80c/z80c_cb.mo xmil/z80c/z80c_ix.mo xmil/z80c/z80c_iy.mo \
+	xmil/z80c/z80c_mn.mo xmil/z80c/z80c_sb.mo xmil/z80c/z80dmap.mo xmil/z80c/z80mem.mo
+VRAMOBJS = xmil/vram/make15.mo xmil/vram/make24.mo xmil/vram/makeatr.mo xmil/vram/makechr.mo \
+	xmil/vram/makemix.mo xmil/vram/makescrn.mo xmil/vram/makesub.mo xmil/vram/maketxth.mo \
+	xmil/vram/maketxtl.mo xmil/vram/palettes.mo xmil/vram/sdraw.mo xmil/vram/sdrawq16.mo \
+	xmil/vram/scrndraw.mo xmil/vram/vram.mo
+
+COREOBJS = $(ROOTOBJS) $(CODECNVOBJS) $(COMMONOBJS) $(EMBEDOBJS) $(FDDOBJS) \
+	$(FONTOBJS) $(IOOBJS) $(SOUNDOBJS) $(Z80OBJS) $(VRAMOBJS)
+
+# ---- フロントエンド (xmil/sdl2/) ----
+FEOBJS = xmil/sdl2/macglue.mo xmil/sdl2/xmil.mo xmil/sdl2/dosio.mo xmil/sdl2/fontmng.mo xmil/sdl2/ini.mo \
+	xmil/sdl2/joymng.mo xmil/sdl2/mousemng.mo xmil/sdl2/scrnmng.mo xmil/sdl2/sdlkbd.mo \
+	xmil/sdl2/sysmenu.mo xmil/sdl2/sysmng.mo xmil/sdl2/taskmng.mo xmil/sdl2/timemng.mo \
+	xmil/sdl2/trace.mo
+FECXXOBJS = xmil/sdl2/soundmng.mo
+
+OBJS = $(COREOBJS) $(FEOBJS) $(FECXXOBJS)
+
+xmilsdl2: $(OBJS)
+	$(CXX) $(CXXFLAGS) -o $@ $(OBJS) $(SDL_LIBS)
+
+%.mo: %.c
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+%.mo: %.cpp
+	$(CXX) $(CXXFLAGS) -c -o $@ $<
+
+clean:
+	rm -f $(OBJS) xmilsdl2
+
+.PHONY: clean

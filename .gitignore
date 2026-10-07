@@ -14,3 +14,8 @@ PARAM.SFO
 results/
 .DS_Store
 pgo/
+
+# macOS native build (Makefile.macos)
+*.mo
+/xmilsdl2
+FNT*.TMP

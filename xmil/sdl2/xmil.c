@@ -108,6 +108,7 @@ int xmil_main(int argc, char *argv[]) {
 
 	int		pos;
 	char	*p;
+	const char	*macdisk = NULL;
 
 	pos = 1;
 	while(pos < argc) {
@@ -117,8 +118,7 @@ int xmil_main(int argc, char *argv[]) {
 			goto np2main_err1;
 		}
 		else {
-			printf("error command: %s\n", p);
-			goto np2main_err1;
+			macdisk = p;		/* disk path (Makefile.macos) */
 		}
 	}
 
@@ -147,6 +147,12 @@ int xmil_main(int argc, char *argv[]) {
 	pccore_initialize();
 //	S98_init();
 
+	if (macdisk) {
+		diskdrv_setfdd(0, macdisk, 0);
+	}
+	/* desktop: draw every frame (auto-skip rarely draws -> black screen) */
+	xmiloscfg.NOWAIT = 1;
+	xmiloscfg.DRAW_SKIP = 1;
 	scrndraw_redraw();
 	pccore_reset();
 
