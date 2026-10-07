@@ -6,8 +6,13 @@
  * SDL_BlitScaled (CPU) の置き換え。テクスチャ幅は 2 のべき乗制限が
  * あるため、640 幅のソースは 512 + 128 の 2 ストリップに分けて描く
  * (px68k gecomp.c と同じ手法)。バッファ幅 (ストライド) は 640 のまま
- * でよい。バイリニア補間つきで、ダブルバッファを sceGuSwapBuffers で
- * アトミックに切り替えるため中間状態が画面に出ることはない。
+ * でよい。バイリニア補間つき。
+ *
+ * フレームバッファは 3 面を順に回し、表示切替は sceDisplaySetFrameBuf の
+ * NEXTFRAME (次の VBLANK で切替) で行う。sceGuSwapBuffers の既定は即時
+ * 切替で、実機 LCD の走査途中で切り替わり画面が横に裂ける (PPSSPP では
+ * 再現しない)。2 面で VBLANK 切替にすると、切替予約直後に描く面がまだ
+ * 表示中なので、3 面目に描くことで待ちなしにする。
  */
 
 #include	"compiler.h"
@@ -22,14 +27,15 @@
 #define	SCR_WIDTH	480
 #define	SCR_HEIGHT	272
 #define	FRAME_SIZE	(BUF_WIDTH * SCR_HEIGHT * 2)	/* RGB565 */
-/* ソース画像の VRAM ステージング先 (フレームバッファ 2 面の直後)。
+#define	NUM_FB		3
+/* ソース画像の VRAM ステージング先 (フレームバッファ 3 面の直後)。
  * GE は RAM 上の非スウィズルテクスチャを読むのが遅いため、CopyImage で
  * VRAM へ DMA してから VRAM をテクスチャとして描く。640x400x2=512KB。 */
-#define	TEXBUF_OFF	(2 * FRAME_SIZE)
+#define	TEXBUF_OFF	(NUM_FB * FRAME_SIZE)
 
 static unsigned int __attribute__((aligned(64))) s_list[4096];
 static int	s_init;
-static int	s_frame;			/* swap 回数 (描画バッファの判定用) */
+static int	s_draw;			/* 描画中のフレームバッファ番号 */
 static char	s_ovltext[16];		/* ネイティブ座標の固定サイズオーバーレイ */
 
 void pxgu_set_overlay(const char *text) {
@@ -57,11 +63,13 @@ void pxgu_flush(void) {
 	}
 	sceGuSync(0, 0);
 	if (s_ovltext[0]) {
-		UINT32 off = ((s_frame - 1) & 1) ? FRAME_SIZE : 0;
-		skb_drawtext_s((UINT16 *)(0x44000000 | off), BUF_WIDTH,
+		skb_drawtext_s((UINT16 *)(0x44000000 + s_draw * FRAME_SIZE), BUF_WIDTH,
 						2, 2, s_ovltext, 0xffff, 2);
 	}
-	sceGuSwapBuffers();
+	sceDisplaySetFrameBuf((void *)(0x44000000 + s_draw * FRAME_SIZE),
+						BUF_WIDTH, PSP_DISPLAY_PIXEL_FORMAT_565,
+						PSP_DISPLAY_SETBUF_NEXTFRAME);
+	s_draw = (s_draw + 1) % NUM_FB;
 	s_pending = 0;
 }
 
@@ -73,7 +81,7 @@ void pxgu_init(void) {
 	sceGuInit();
 	sceGuStart(GU_DIRECT, s_list);
 	sceGuDrawBuffer(GU_PSM_5650, (void *)0, BUF_WIDTH);
-	sceGuDispBuffer(SCR_WIDTH, SCR_HEIGHT, (void *)FRAME_SIZE, BUF_WIDTH);
+	sceGuDispBuffer(SCR_WIDTH, SCR_HEIGHT, (void *)(2 * FRAME_SIZE), BUF_WIDTH);
 	sceGuOffset(2048 - (SCR_WIDTH / 2), 2048 - (SCR_HEIGHT / 2));
 	sceGuViewport(2048, 2048, SCR_WIDTH, SCR_HEIGHT);
 	sceGuScissor(0, 0, SCR_WIDTH, SCR_HEIGHT);
@@ -152,6 +160,7 @@ void pxgu_present(const UINT16 *src, int srcw, int srch,
 	sceKernelDcacheWritebackRange(src, 640 * srch * 2);
 
 	sceGuStart(GU_DIRECT, s_list);
+	sceGuDrawBufferList(GU_PSM_5650, (void *)(s_draw * FRAME_SIZE), BUF_WIDTH);
 	/* CPU が書き換えたテクスチャを使うため GE のテクスチャキャッシュを
 	 * 破棄する。無いと実機で古いキャッシュラインが混ざってゴミになる
 	 * (PPSSPP はテクスチャキャッシュを再現しないので出ない)。 */
@@ -167,6 +176,13 @@ void pxgu_present(const UINT16 *src, int srcw, int srch,
 	sceGuCopyImage(GU_PSM_5650, 0, 0, 640, srch, 640, (void *)src,
 					0, 0, 640, (void *)(0x04000000 + TEXBUF_OFF));
 	sceGuTexSync();
+	/* コピーの完了だけはここで待つ。待たずに戻るとエミュレーションが
+	 * 次フレームを src に書き始め、GE がコピー途中の下の方で新しい絵を
+	 * 拾って画面が横に裂ける (ページ切替スクロールで実機で確認)。 */
+	sceGuFinish();
+	sceGuSync(0, 0);
+	sceGuStart(GU_DIRECT, s_list);
+	sceGuDrawBufferList(GU_PSM_5650, (void *)(s_draw * FRAME_SIZE), BUF_WIDTH);
 
 	sx = (float)dstw / (float)srcw;
 	x0 = (float)dstx;
@@ -187,7 +203,6 @@ void pxgu_present(const UINT16 *src, int srcw, int srch,
 	}
 
 	sceGuFinish();
-	s_frame++;
 	s_pending = 1;
 	/* sync と swap は次回の pxgu_present 冒頭 (または pxgu_flush) で行う */
 }
