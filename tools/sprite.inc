@@ -265,7 +265,7 @@ reticle_lock_update:
 	add	a, GOBJ_OFFSET
 	ld	c, a			; tilemap 列
 	ld	a, (ship_vy)
-	add	a, 6
+	add	a, 2			; 照準の縦中心(reticle_soff と揃える)
 	srl	a
 	srl	a			; セル行 = tilemap 行(非スクロール)
 	IFDEF	FORCE_RED
@@ -295,7 +295,7 @@ reticle_soff:
 	ld	a, COLS - 2		; 画面内にクランプ
 .cok:	ld	c, a			; cell col
 	ld	a, (ship_vy)
-	add	a, 6			; 自機中央
+	add	a, 2			; 着弾の縦中心=照準=自機中心(reticle と揃える)
 	srl	a
 	srl	a			; cell row
 	ld	h, 0
@@ -445,7 +445,7 @@ fire_blaster:
 	add	hl, de
 	ld	(hl), a
 	ld	a, (ship_vy)
-	add	a, 6			; 自機中央(照準と同じ高さ)
+	add	a, 2			; 照準2x2の縦中心を自機3x3の縦中心に合わせる(+2セル版)
 	ld	hl, bla_vy
 	add	hl, de
 	ld	(hl), a
