@@ -387,6 +387,12 @@ fire_check:
 	ld	(hl), 0xFF		; prev 無効(下位)
 	inc	hl
 	ld	(hl), 0xFF
+	ld	hl, bul_prev2		; [2窓削減] page1 スロットも無効化(スロット再利用対策)
+	add	hl, de
+	add	hl, de
+	ld	(hl), 0xFF
+	inc	hl
+	ld	(hl), 0xFF
 	ld	a, FIRE_DELAY
 	ld	(fire_tmr), a
 	ret
@@ -407,14 +413,7 @@ bullets_erase:
 .el1:	ld	a, (spr_i)
 	cp	MAX_BULLETS
 	ret	z
-	ld	e, a
-	ld	d, 0
-	ld	hl, bul_active
-	add	hl, de
-	ld	a, (hl)
-	or	a
-	jr	z, .en1
-	ld	a, (spr_i)
+	; 表示ページ slot = spr_pbase + 2*i
 	add	a, a
 	ld	e, a
 	ld	d, 0
@@ -423,11 +422,29 @@ bullets_erase:
 	ld	a, (hl)
 	inc	hl
 	ld	h, (hl)
-	ld	l, a
+	ld	l, a			; hl = cell
 	ld	a, h
 	cp	0xFF
-	jr	z, .en1
-	call	clr_cell
+	jr	z, .en1			; slot 無効 → 何も無い
+	call	clr_cell		; 表示ページの旧セルを消去
+	; 非アクティブ(画面外で消滅)なら slot を無効化してゴースト防止
+	ld	a, (spr_i)
+	ld	e, a
+	ld	d, 0
+	ld	hl, bul_active
+	add	hl, de
+	ld	a, (hl)
+	or	a
+	jr	nz, .en1		; active なら draw が slot を再設定
+	ld	a, (spr_i)
+	add	a, a
+	ld	e, a
+	ld	d, 0
+	ld	hl, (spr_pbase)
+	add	hl, de
+	ld	(hl), 0xFF
+	inc	hl
+	ld	(hl), 0xFF
 .en1:	ld	a, (spr_i)
 	inc	a
 	ld	(spr_i), a
@@ -741,6 +758,12 @@ enemy_spawn:
 	add	hl, de
 	ld	(hl), a
 	ld	hl, ene_prev
+	add	hl, de
+	add	hl, de
+	ld	(hl), 0xFF
+	inc	hl
+	ld	(hl), 0xFF
+	ld	hl, ene_prev2		; [2窓削減] page1 スロットも無効化
 	add	hl, de
 	add	hl, de
 	ld	(hl), 0xFF
@@ -1189,6 +1212,12 @@ expl_spawn:
 	ld	(hl), 0xFF
 	inc	hl
 	ld	(hl), 0xFF
+	ld	hl, exp_prev2		; [2窓削減] page1 スロットも無効化
+	add	hl, de
+	add	hl, de
+	ld	(hl), 0xFF
+	inc	hl
+	ld	(hl), 0xFF
 	ret
 
 ; 全爆発を前回位置(両窓, 2x2)から消去。
@@ -1206,14 +1235,7 @@ expls_erase:
 .el1:	ld	a, (spr_i)
 	cp	MAX_EXPL
 	ret	z
-	ld	e, a
-	ld	d, 0
-	ld	hl, exp_active
-	add	hl, de
-	ld	a, (hl)
-	or	a
-	jr	z, .en1
-	ld	a, (spr_i)
+	; 表示ページ slot = spr_pbase + 2*i
 	add	a, a
 	ld	e, a
 	ld	d, 0
@@ -1222,11 +1244,29 @@ expls_erase:
 	ld	a, (hl)
 	inc	hl
 	ld	h, (hl)
-	ld	l, a
+	ld	l, a			; hl = cell
 	ld	a, h
 	cp	0xFF
-	jr	z, .en1
-	call	ene_clr2x2
+	jr	z, .en1			; slot 無効
+	call	ene_clr2x2		; 表示ページの旧セルを消去
+	; 非アクティブ(消滅)なら slot を無効化
+	ld	a, (spr_i)
+	ld	e, a
+	ld	d, 0
+	ld	hl, exp_active
+	add	hl, de
+	ld	a, (hl)
+	or	a
+	jr	nz, .en1		; active なら draw が再設定
+	ld	a, (spr_i)
+	add	a, a
+	ld	e, a
+	ld	d, 0
+	ld	hl, (spr_pbase)
+	add	hl, de
+	ld	(hl), 0xFF
+	inc	hl
+	ld	(hl), 0xFF
 .en1:	ld	a, (spr_i)
 	inc	a
 	ld	(spr_i), a
