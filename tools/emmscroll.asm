@@ -34,15 +34,18 @@
 ;       probe ポート 0x00FE/0x00FF (エミュ XMIL_PROBE 時に stderr 出力) で取得。
 ;       -DM4_DISPLAY で画面左上に16進4桁オンスクリーン表示 (任意)。
 ;   8MHz 切替: エミュ環境変数 XMIL_CYCMUL=128 (256=4MHz)。
-;   M3: 背景を実地形 STRIP に変更。tools/xevi_x1strip.py で抽出マップを
-;       X1 8色 GRAM STRIP (roms/world.bin, W_CELLS 列) 化し incbin。
-;       起動時 fill_emm が 0/2/4/6px プリシフト版 x4 を EMM に展開し、
-;       毎フレームの新規右端列は EMM から読んで GRAM に撒く (EMM供給)。
-;       縦1列は GRAM ポート空間で不連続のため DMA直描不可=CPUスキャッタ
-;       (記事の「1列ループはCPUで転送」に相当)。ワールドは周期ループ。
+;   M3/M5: 背景を実地形 STRIP に変更。tools/xevi_x1strip.py で抽出マップ
+;       (map_native, エリア1帯 y0=292, bs0減少方向, 色別固定網点) を X1 8色
+;       GRAM STRIP (roms/world.bin, W_CELLS 列) 化し incbin。
+;       起動時 fill_emm が 0/2/4/6px プリシフト版 x4 を EMM に展開。
+;       毎フレームの新規右端列を EMM→DMA→メイン RAM(colbuf) に転送し
+;       (read_col_dma, 記事方式), CPU が colbuf から GRAM に展開(scatter_col)。
+;       縦1列は GRAM ポート空間で不連続のため GRAM 直描は不可=CPUスキャッタ
+;       (記事の「1列ループはCPUで転送」に相当)。ワールドは W_CELLS 周期ループ
+;       (継ぎ目が 512px ごとにスクロール; 全長無限化は FDC ストリーミングで次段)。
 ;
 ; ビルド前に world.bin を生成すること (roms/ は非コミット):
-;   python3 tools/xevi_x1strip.py --width 64 --y0 412
+;   python3 tools/xevi_x1strip.py --width 64 --y0 292
 
 	DEVICE	NOSLOT64K
 	ORG	0x0100
@@ -453,7 +456,7 @@ redraw_next:
 	ld	d, a
 	call	calc_emm_addr		; emm_a0/1/2 設定
 	call	set_emm_addr
-	call	read_col_emm		; EMM -> colbuf (600 bytes)
+	call	read_col_dma		; EMM -> colbuf (600 bytes)
 	; base = (coarse_n + off_np) - 1, &0x7FF
 	ld	hl, (coarsen)
 	ld	a, (npage)
@@ -595,7 +598,7 @@ set_emm_addr:
 	out	(c), a
 	ret
 
-; EMM (アドレス設定済) から COLBYTES バイトを colbuf に読む
+; EMM (アドレス設定済) から COLBYTES バイトを colbuf に読む (CPU/IN 版)
 read_col_emm:
 	ld	hl, colbuf
 	ld	de, COLBYTES
@@ -607,6 +610,20 @@ read_col_emm:
 	ld	a, d
 	or	e
 	jr	nz, .r
+	ret
+
+; EMM (アドレス設定済) から COLBYTES バイトを Z80 DMA で colbuf へ転送。
+;   port A = EMM データ 0x0D03 (I/O 固定), port B = colbuf (メモリ 増加)。
+;   記事方式の「EMM→DMA→メイン RAM」。CPU は colbuf から GRAM へ展開。
+read_col_dma:
+	ld	hl, dma_tbl
+	ld	bc, 0x1F80		; Z80 DMA
+	ld	e, dma_tbl_end - dma_tbl
+.d:	ld	a, (hl)
+	out	(c), a
+	inc	hl
+	dec	e
+	jr	nz, .d
 	ret
 
 ;=====================================================================
@@ -661,7 +678,7 @@ prefill:
 	ld	d, a
 	call	calc_emm_addr
 	call	set_emm_addr
-	call	read_col_emm
+	call	read_col_dma
 	; base = pf_base + wc - 40
 	ld	hl, (pf_base)
 	ld	a, (pf_wc)
@@ -875,6 +892,22 @@ npbase:
 	db	(SHIFTSZ*1)&0xFF, ((SHIFTSZ*1)>>8)&0xFF, ((SHIFTSZ*1)>>16)&0xFF
 	db	(SHIFTSZ*2)&0xFF, ((SHIFTSZ*2)>>8)&0xFF, ((SHIFTSZ*2)>>16)&0xFF
 	db	(SHIFTSZ*3)&0xFF, ((SHIFTSZ*3)>>8)&0xFF, ((SHIFTSZ*3)>>16)&0xFF
+
+; Z80 DMA コマンド列: EMM データ 0x0D03(I/O固定) -> colbuf(メモリ増加)
+;   emmtest.asm の GRAM 版との差: WR2 を 0x18(I/O) から 0x10(メモリ) に変更。
+dma_tbl:
+	db	0xC3			; WR6 リセット
+	db	0x7D			; WR0 A->B, A addr/len 続く
+	db	LOW EMM_DAT, HIGH EMM_DAT
+	db	LOW (COLBYTES - 1), HIGH (COLBYTES - 1)
+	db	0x2C			; WR1 port A = I/O 固定
+	db	0x10			; WR2 port B = メモリ 増加
+	db	0xAD			; WR4 連続, port B addr 続く
+	db	LOW colbuf, HIGH colbuf
+	db	0x82			; WR5
+	db	0xCF			; WR6 ロード
+	db	0x87			; WR6 開始
+dma_tbl_end:
 
 ; 地形 STRIP (unshifted, W_CELLS 列 x COLBYTES) を埋め込み
 worlddata:

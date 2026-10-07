@@ -31,24 +31,36 @@ ROWS = 25            # セル行数 (200px / 8)
 RASTERS = 8
 PLANES = 3           # B, R, G
 
+# 4x4 Bayer (色別固定網点用, xevi_x1reduce.py と同じ)
+BAYER4 = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]]
+
 
 def color_bits(rgb):
-    """RGB -> (B,R,G) ビット (各 0/1)。"""
+    """RGB -> (B,R,G) ビット (各 0/1)。最近傍8色。"""
     r, g, b = rgb[0], rgb[1], rgb[2]
     return (1 if b > 127 else 0,
             1 if r > 127 else 0,
             1 if g > 127 else 0)
 
 
-def build_strip(src_path, width_cells, y0):
+def dither_bits(rgb, x, y):
+    """色別固定網点 (絶対座標 x,y で位相固定) -> (B,R,G) ビット。"""
+    r, g, b = rgb[0], rgb[1], rgb[2]
+    lr, lg, lb = r * 16 // 256, g * 16 // 256, b * 16 // 256
+    t = BAYER4[y & 3][x & 3]
+    return (1 if lb > t else 0, 1 if lr > t else 0, 1 if lg > t else 0)
+
+
+def build_strip(src_path, width_cells, y0, dither=True, reverse=True):
     im = Image.open(src_path).convert("RGB")
     W, H = im.size
     px = im.load()
     wpx = width_cells * 8
     if y0 + 200 > H:
         y0 = max(0, H - 200)
+    bitfn = dither_bits if dither else (lambda rgb, x, y: color_bits(rgb))
     out = bytearray()
-    # plane ビットマスク: B=0, R=1, G=2
+    # world col 増加 = bs0 減少(=map x 減少)方向にする (reverse=True)
     for col in range(width_cells):
         for cellrow in range(ROWS):
             for plane in range(PLANES):       # 0=B,1=R,2=G
@@ -56,8 +68,12 @@ def build_strip(src_path, width_cells, y0):
                     y = y0 + cellrow * 8 + raster
                     byte = 0
                     for p in range(8):        # 8px 横 (bit7=左)
-                        x = (col * 8 + p) % wpx
-                        bit = color_bits(px[x, y])[plane]
+                        if reverse:
+                            # col 増加で map x を減らす (wpx-1 ... 0 を周期)
+                            x = (wpx - 1 - (col * 8 + p)) % wpx
+                        else:
+                            x = (col * 8 + p) % wpx
+                        bit = bitfn(px[x, y], x, y)[plane]
                         if bit:
                             byte |= (0x80 >> p)
                     out.append(byte)
@@ -91,15 +107,23 @@ def main(argv=None):
     ap = argparse.ArgumentParser()
     here = os.path.dirname(os.path.abspath(__file__))
     root = os.path.dirname(here)
-    ap.add_argument("--width", type=int, default=80, help="ワールド幅 (セル数)")
-    ap.add_argument("--y0", type=int, default=412, help="スライス開始Y")
+    ap.add_argument("--width", type=int, default=64, help="ワールド幅 (セル数)")
+    # エリア1: bs1_base=36, 中央25/28タイル -> y0=(36-1+1.5)*8=292, 200ライン
+    ap.add_argument("--y0", type=int, default=292, help="スライス開始Y (map_native)")
     ap.add_argument("--src", default=os.path.join(
-        root, "roms/arcade/xevious-out/map_x1_nearest.png"))
+        root, "roms/arcade/xevious-out/map_native.png"),
+        help="元マップ (bs0=水平=進行の向き)")
+    ap.add_argument("--no-dither", action="store_true",
+                    help="網点でなく最近傍で減色")
+    ap.add_argument("--no-reverse", action="store_true",
+                    help="bs0 増加方向 (既定は減少=反転)")
     ap.add_argument("--out", default=os.path.join(root, "roms/world.bin"))
     ap.add_argument("--preview", default=os.path.join(root, "roms/world_preview.png"))
     args = ap.parse_args(argv)
 
-    data, (wpx, y0) = build_strip(args.src, args.width, args.y0)
+    data, (wpx, y0) = build_strip(args.src, args.width, args.y0,
+                                  dither=not args.no_dither,
+                                  reverse=not args.no_reverse)
     with open(args.out, "wb") as f:
         f.write(data)
     render_preview(data, args.width, args.preview)
