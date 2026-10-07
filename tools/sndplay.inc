@@ -5,14 +5,17 @@
 ;   === API ===
 ;     snd_init                : 最初に1回。PSG 無音化 + ミキサ初期化。
 ;     snd_play_bgm (IX=BGMデータ): BGM開始(PSG A/B/C)。
-;     snd_play_se  (A=SE id)  : 効果音開始。caller が se_table(dw×N)を定義しておくこと。
-;                               PSG C を奪取(tone/noise)、終了後 BGM ch2 へ復帰。
+;     snd_play_se  (HL=SEデータ先頭): 効果音開始。PSG C を奪取(tone/noise)、終了後
+;                               BGM ch2 へ復帰。id→ptr 変換は caller 側(se_table 不要):
+;                                 ld hl, se_table : ld a, id : add a,a : ... ld hl,(se_table+2*id)
+;                               SEデータは RAM/EMM/バンクどこでも可(ポインタ渡し)。
 ;     snd_tick                : 毎フレーム更新(BGM全ch + SFX)。
 ;     snd_bgm_active          : A=BGMの残アクティブch数(0=BGM終了)。
 ;   破壊: AF,BC,DE,HL,IY(必要なら呼び出し側で退避)。
 ;
-;   === 最大サイクル(4MHz)===  snd_tick 最悪 ~4358T(BGM3ch+SFX同時にノート切替時)。
-;       予算5000T内(emm-scroll 最重フレーム79%の残り)。通常フレーム(hold)は ~1200T。
+;   === 最大サイクル(4MHz, 実測histogram)===  snd_tick 最悪 ~4048T。
+;       最頻~1700T、裾が4048Tまで滑らか(多voice同時ノート切替+エンベロープ更新)。
+;       予算5000T内(emm-scroll 最重フレーム79%の残り ~14000T)。
 ;
 ;   データ形式(xevi_sound.py 出力):
 ;     BGM:  ch_count(1B) + ch毎[offset:2B(LE), vmode:1B, attack:1B] + ストリーム群。
@@ -137,8 +140,11 @@ vl_ok:
 	ld	(iy+V_CNT), a		; cnt=0
 	ret
 
-; ---- period 書込み(IY=voice, cur_pch=PSG ch) ----
+; ---- period 書込み(IY=voice, cur_pch=PSG ch, cur_mute!=0 でPSG書込みスキップ) ----
 voice_wperiod:
+	ld	a, (cur_mute)
+	or	a
+	ret	nz
 	ld	a, (cur_pch)
 	add	a, a
 	ld	d, a			; reg = pch*2
@@ -152,8 +158,11 @@ voice_wperiod:
 	call	psg_set
 	ret
 
-; ---- vol 書込み(env_vol 算出, IY=voice, cur_pch)----
+; ---- vol 書込み(env_vol 算出, IY=voice, cur_pch, cur_mute!=0 でスキップ)----
 voice_wvol:
+	ld	a, (cur_mute)
+	or	a
+	ret	nz
 	call	env_vol
 	ld	e, a
 	ld	a, (cur_pch)
@@ -184,6 +193,9 @@ vt_wvol:
 	call	voice_wvol
 	ret
 vt_ended:
+	ld	a, (cur_mute)
+	or	a
+	ret	nz
 	xor	a			; 終了: vol 0
 	ld	e, a
 	ld	a, (cur_pch)
@@ -248,17 +260,8 @@ spb_nx:
 	jr	nz, spb_lp
 	ret
 
-; ---- SE 開始(A=id, caller の se_table を参照)----
+; ---- SE 開始(HL=SEデータ先頭)----
 snd_play_se:
-	add	a, a			; id*2
-	ld	l, a
-	ld	h, 0
-	ld	de, se_table
-	add	hl, de
-	ld	e, (hl)
-	inc	hl
-	ld	d, (hl)			; DE = se データ
-	ex	de, hl			; HL = se データ
 	ld	a, (hl)
 	inc	hl
 	or	a
@@ -319,6 +322,8 @@ sps_noise:
 
 ; ---- 毎フレーム更新 ----
 snd_tick:
+	xor	a
+	ld	(cur_mute), a		; voice0/1 は非mute
 	ld	a, (bgm_nch)
 	or	a
 	jr	z, st_sfx
@@ -337,11 +342,16 @@ snd_tick:
 	ld	a, (bgm_nch)
 	cp	3
 	jr	c, st_sfx
+	; voice2: SFX 稼働中は mute(状態は進めるが PSG C へ書かない)
+	ld	a, (sfx_type)
+	ld	(cur_mute), a
 	ld	iy, bgm_v2
 	ld	a, 2
 	ld	(cur_pch), a
 	call	voice_tick
 st_sfx:
+	xor	a
+	ld	(cur_mute), a		; SFX は非mute
 	ld	a, (sfx_type)
 	or	a
 	ret	z
@@ -425,6 +435,7 @@ n_dur:		db 0
 n_vol:		dw 0			; 8.8 固定小数
 n_step:		dw 0
 cur_pch:	db 0
+cur_mute:	db 0
 sp_hdr:		dw 0
 sp_cnt:		db 0
 sp_i:		db 0

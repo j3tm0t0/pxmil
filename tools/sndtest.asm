@@ -46,7 +46,16 @@ start:
 	jr	nz, .nose
 	ld	a, 90
 	ld	(se_timer), a
-	ld	a, (se_id)
+	ld	a, (se_id)		; id -> SEデータポインタ
+	add	a, a
+	ld	l, a
+	ld	h, 0
+	ld	de, se_table
+	add	hl, de
+	ld	e, (hl)
+	inc	hl
+	ld	d, (hl)
+	ex	de, hl			; HL = SEデータ
 	call	snd_play_se
 	ld	a, (se_id)
 	inc	a
@@ -55,7 +64,7 @@ start:
 	xor	a
 .idok:
 	ld	(se_id), a
-	ld	de, (max_cyc)		; SEトリガ毎に最大サイクル出力
+	ld	de, (max_cyc)		; SEトリガ毎に最大 snd_tick サイクル出力
 	call	probe16
 .nose:
 	; BGM 終了で再生
