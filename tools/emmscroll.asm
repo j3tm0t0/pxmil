@@ -70,10 +70,16 @@ PCG_B		EQU	0x1500		; PCG 定義 B プレーン (|(line<<1))
 PCG_R		EQU	0x1600		; R
 PCG_G		EQU	0x1700		; G
 PCG_DEFCELL	EQU	0x07FF		; PCG 定義に使うセル
-; 自機 PCG コード (2x2) と属性 (PCG=0x20 | プレーン B1 R2 G4 = 白0x07)
-SHIP_TL		EQU	0x80
+; 自機 PCG。2px スムーズ横移動のため 4 シフト版(0/2/4/6px) を持つ。
+;   各版 = 3列x2行 = 6セル。コード = SHIP_BASE + v*6 + row*3 + col。
+;   版 v の画面横オフセット = +2v px。計 4*6 = 24 セル (0x80..0x97)。
+SHIP_BASE	EQU	0x80		; 自機 PCG コード先頭
+SHIP_VSTRIDE	EQU	6		; 1版 = 6セル
 SHIP_ATR	EQU	0x20 | 0x02	; PCG + R プレーンのみ (赤, 地形に少なく視認性高)
-MOVE_DELAY	EQU	3		; 自機移動の間隔 (フレーム)。小さいほど速い
+;   ↑ 色付きスプライトに差し替える際は 0x20|0x07 (B/R/G 全プレーン) にする。
+SHIP_HXMAX	EQU	151		; ship_hx 上限 = 37*4+3 (col2 <= 39, 行内に収まる)
+MOVE_DELAY	EQU	3		; 縦移動の間隔(フレーム)。横は毎フレーム(2px/フレーム)
+SHIPGEN		EQU	0xC8A0		; シフト版生成バッファ 72バイト (3列x24, IDBUF後)
 ; ジョイスティック (PSG reg 0x0e, 負論理)
 PORT_PSGREG	EQU	0x1C00		; レジスタ選択
 PORT_PSGDAT	EQU	0x1B00		; 読み (sndboard_psgsta)
@@ -125,9 +131,9 @@ realstart:
 	ld	bc, PORT_SCRN
 	ld	a, SCRN_PCG		; bank0 + PCG
 	out	(c), a
-	call	define_ship
-	ld	a, 18
-	ld	(ship_col), a
+	call	gen_ship
+	ld	a, 18 * 4		; ship_hx = 列18, 位相0 (2px単位)
+	ld	(ship_hx), a
 	ld	a, 12
 	ld	(ship_row), a
 	ld	hl, 0xFFFF
@@ -141,7 +147,11 @@ realstart:
 	ENDIF
 
 	IFDEF	DBG_SHIP
-	; スクロール無し・page0・POS=0 で自機を左上(行0列0)に置いて halt。
+	; スクロール無し・page0・POS=0 で自機を ship_hx=DBG_SHIPHX に置き halt。
+	;   DBG_SHIPHX 未指定なら 72(列18位相0)。xmin が hx+1 ごと +4(2px)を検証。
+	IFNDEF	DBG_SHIPHX
+	DEFINE	DBG_SHIPHX 72
+	ENDIF
 	ld	bc, PORT_SCRN
 	ld	a, SCRN_PCG		; bank0 + PCG
 	out	(c), a
@@ -149,18 +159,19 @@ realstart:
 	ld	a, 13
 	out	(c), a
 	inc	c
-	ld	a, 50
-	out	(c), a			; POSL=50 (テキスト追従検証)
+	xor	a
+	out	(c), a			; POSL=0
 	ld	bc, CRTC_REG
 	ld	a, 12
 	out	(c), a
 	inc	c
 	xor	a
 	out	(c), a			; POSH=0
-	xor	a
-	ld	(ship_col), a
-	ld	(ship_row), a		; 行0列0
-	ld	hl, 50
+	ld	a, DBG_SHIPHX
+	ld	(ship_hx), a
+	ld	a, 12
+	ld	(ship_row), a
+	ld	hl, 0
 	ld	(cur_pos), hl
 	ld	hl, 0xFFFF
 	ld	(ship_prev), hl
@@ -349,10 +360,10 @@ mainloop:
 	ld	hl, (minspare)
 	ld	(idlecnt), hl
 	IFDEF	DBG_SHIPPOS
-	ld	a, (ship_col)
+	ld	a, (ship_hx)
 	ld	l, a
 	ld	a, (ship_row)
-	ld	h, a			; (row<<8)|col
+	ld	h, a			; (row<<8)|ship_hx
 	ENDIF
 	ld	bc, 0x00FE
 	out	(c), l
@@ -1066,27 +1077,125 @@ clear_tvram:
 
 	IFDEF	SHIP
 ;=====================================================================
-; [M6, 開発中] 自機(オリジナル機体)の PCG を定義。4セル(0x80..0x83)。
-;   PCG モードが有効な状態で呼ぶこと。
-define_ship:
+; [M6] 自機(オリジナル機体)の PCG を定義。base 16x16(shipdata) から
+;   4 シフト版(0/2/4/6px) を 24bit 右シフトで生成し、各版 3列x2行を定義。
+;   計 24 セル (0x80..0x97)。PCG モード有効時に呼ぶ。
+gen_ship:
+	xor	a
+	ld	(gs_v), a		; v = 0..3
+.vloop:
+	xor	a
+	ld	(gs_row), a		; row = 0,1
+.rloop:
+	call	gen_one_vr		; SHIPGEN に 3列ぶん生成
+	call	def_vr_cells		; 3 セル定義
+	ld	a, (gs_row)
+	inc	a
+	ld	(gs_row), a
+	cp	2
+	jr	nz, .rloop
+	ld	a, (gs_v)
+	inc	a
+	ld	(gs_v), a
+	cp	4
+	jr	nz, .vloop
+	ret
+
+; (gs_v,gs_row) の 1行(16px)を位相 p=2v で右シフトし 3列(24px)を SHIPGEN へ。
+;   SHIPGEN レイアウト: col0=[+0..23], col1=[+24..47], col2=[+48..71]
+;   各 24 バイト = B8,R8,G8 (plane*8+raster)。
+gen_one_vr:
+	; src 左セル = shipdata + row*48, 右セル = +24
 	ld	hl, shipdata
-	ld	a, SHIP_TL
-	ld	(ds_code), a
-	ld	b, 4
+	ld	a, (gs_row)
+	or	a
+	jr	z, .r0
+	ld	de, 48
+	add	hl, de
+.r0:	ld	(gs_lsrc), hl
+	ld	de, 24
+	add	hl, de
+	ld	(gs_rsrc), hl
+	ld	a, (gs_v)		; p = 2*v
+	add	a, a
+	ld	(gs_p), a
+	xor	a
+	ld	(gs_r), a		; idx 0..23 (= plane*8+raster)
+.loop:
+	ld	a, (gs_r)
+	ld	e, a
+	ld	d, 0
+	ld	hl, (gs_lsrc)
+	add	hl, de
+	ld	b, (hl)			; b0 = 左バイト
+	ld	hl, (gs_rsrc)
+	add	hl, de
+	ld	c, (hl)			; b1 = 右バイト
+	ld	d, 0			; b2 = 0
+	ld	a, (gs_p)
+	or	a
+	jr	z, .noshift
+.sh:	srl	b			; [b0 b1 b2] 24bit 論理右シフト = 画面右へ
+	rr	c
+	rr	d
+	dec	a
+	jr	nz, .sh
+.noshift:
+	ld	a, c
+	ld	(gs_c1), a
+	ld	a, d
+	ld	(gs_c2), a
+	ld	hl, SHIPGEN
+	ld	a, (gs_r)
+	ld	e, a
+	ld	d, 0
+	add	hl, de
+	ld	(hl), b			; col0
+	ld	de, 24
+	add	hl, de
+	ld	a, (gs_c1)
+	ld	(hl), a			; col1
+	add	hl, de
+	ld	a, (gs_c2)
+	ld	(hl), a			; col2
+	ld	a, (gs_r)
+	inc	a
+	ld	(gs_r), a
+	cp	24
+	jr	nz, .loop
+	ret
+
+; SHIPGEN の 3列を PCG セルに定義。code = SHIP_BASE + v*6 + row*3 + col。
+def_vr_cells:
+	ld	a, (gs_v)
+	add	a, a			; 2v
+	ld	e, a
+	add	a, a			; 4v
+	add	a, e			; 6v
+	ld	e, a
+	ld	a, (gs_row)
+	ld	d, a
+	add	a, a			; 2row
+	add	a, d			; 3row
+	add	a, e			; 6v + 3row
+	add	a, SHIP_BASE
+	ld	(gs_code), a
+	ld	hl, SHIPGEN
+	ld	b, 3			; 3 列
 .cl:
 	push	bc
-	ld	a, (ds_code)
-	call	pcg_select		; 定義セルに code をセット
+	ld	a, (gs_code)
+	call	pcg_select
 	ld	d, PCG_B >> 8
-	call	def_plane		; B 8ライン
+	call	def_plane		; B (hl += 8)
 	ld	d, PCG_R >> 8
-	call	def_plane
+	call	def_plane		; R
 	ld	d, PCG_G >> 8
-	call	def_plane
-	pop	bc
-	ld	a, (ds_code)
+	call	def_plane		; G (hl は次列 +24 へ)
+	ld	a, (gs_code)
 	inc	a
-	ld	(ds_code), a
+	ld	(gs_code), a
+	pop	bc
 	djnz	.cl
 	ret
 
@@ -1129,59 +1238,60 @@ read_joy:
 	ret
 
 ;=====================================================================
-; 自機移動。ジョイスティック方向で ship_col/ship_row を更新 (境界付き)。
-;   移動粒度は 1 セル(8px)。MOVE_DELAY フレームごとに 1 セル移動。
-;   --- 方向マッピング (X1 モニタを 90度回した向き前提。要調整は下記 bit 割当で) ---
+; 自機移動。横は ship_hx(2px単位) を毎フレーム ±1、縦は ship_row(8px) を
+;   MOVE_DELAY フレームごと ±1。いずれも境界付き。
+;   --- 方向マッピング (X1 モニタを 90度回した向き前提。bit 割当で調整可) ---
 ;     bit0=上, bit1=下, bit2=左, bit3=右 (X1 標準 PSG port A, 負論理)。
-;     既定: 上→行-1, 下→行+1, 左→列-1, 右→列+1 (画面そのまま)。
+;     既定: 上→行-1, 下→行+1, 左→hx-1(左2px), 右→hx+1(右2px)。
 ;     90度回転で実機の見た目に合わせる場合はここの対応を入れ替える。
 move_ship:
+	call	read_joy
+	ld	e, a			; e = joy (負論理)
+	; --- 横: 毎フレーム 2px ---
+	bit	2, e			; 左
+	jr	nz, .nl
+	ld	a, (ship_hx)
+	or	a
+	jr	z, .nl
+	dec	a
+	ld	(ship_hx), a
+.nl:	bit	3, e			; 右
+	jr	nz, .nr
+	ld	a, (ship_hx)
+	cp	SHIP_HXMAX
+	jr	nc, .nr
+	inc	a
+	ld	(ship_hx), a
+.nr:
+	; --- 縦: MOVE_DELAY フレームごと 1 行(8px) ---
 	ld	a, (move_dly)
 	or	a
-	jr	z, .go
+	jr	z, .vgo
 	dec	a
 	ld	(move_dly), a
 	ret
-.go:
-	call	read_joy
-	ld	e, a			; e = joy (負論理)
-	ld	d, 0			; d = 移動したか
+.vgo:
+	ld	d, 0			; d = 縦移動したか
 	bit	0, e			; 上
-	jr	nz, .n0
+	jr	nz, .nu
 	ld	a, (ship_row)
 	or	a
-	jr	z, .n0
+	jr	z, .nu
 	dec	a
 	ld	(ship_row), a
 	ld	d, 1
-.n0:	bit	1, e			; 下
-	jr	nz, .n1
+.nu:	bit	1, e			; 下
+	jr	nz, .nd
 	ld	a, (ship_row)
-	cp	ROWS - 2		; 行は 0..23 (2x2)
-	jr	nc, .n1
+	cp	ROWS - 2		; 行は 0..23 (2行ぶん)
+	jr	nc, .nd
 	inc	a
 	ld	(ship_row), a
 	ld	d, 1
-.n1:	bit	2, e			; 左
-	jr	nz, .n2
-	ld	a, (ship_col)
-	or	a
-	jr	z, .n2
-	dec	a
-	ld	(ship_col), a
-	ld	d, 1
-.n2:	bit	3, e			; 右
-	jr	nz, .n3
-	ld	a, (ship_col)
-	cp	COLS - 2		; 列は 0..38 (2x2)
-	jr	nc, .n3
-	inc	a
-	ld	(ship_col), a
-	ld	d, 1
-.n3:
+.nd:
 	ld	a, d
 	or	a
-	ret	z			; 移動無しなら遅延リセットしない
+	ret	z
 	ld	a, MOVE_DELAY
 	ld	(move_dly), a
 	ret
@@ -1195,11 +1305,11 @@ overlay_ship:
 	ld	a, h
 	cp	0xFF
 	jr	z, .noerase
-	call	erase_2x2
+	call	erase_3x2
 	ld	hl, (ship_prev2)
-	call	erase_2x2
+	call	erase_3x2
 .noerase:
-	; soff = ship_row*40 + ship_col (画面セルオフセット)
+	; soff = ship_row*40 + (ship_hx>>2) (画面セルオフセット)
 	ld	h, 0
 	ld	a, (ship_row)
 	ld	l, a
@@ -1211,19 +1321,31 @@ overlay_ship:
 	add	hl, hl
 	add	hl, hl			; *32
 	add	hl, de			; *40
-	ld	a, (ship_col)
+	ld	a, (ship_hx)
+	srl	a
+	srl	a			; cell列 = hx>>2
 	ld	e, a
 	ld	d, 0
 	add	hl, de
 	ld	(ship_soff), hl
+	; 版 v = ship_hx & 3 → 先頭コード = SHIP_BASE + v*6
+	ld	a, (ship_hx)
+	and	3
+	add	a, a			; 2v
+	ld	e, a
+	add	a, a			; 4v
+	add	a, e			; 4v + 2v = 6v
+	add	a, SHIP_BASE
+	ld	(ship_code), a
 	; 窓1: top-left = (cur_pos + soff) & 0x7FF
+	ld	hl, (ship_soff)
 	ld	de, (cur_pos)
 	add	hl, de
 	ld	a, h
 	and	0x07
 	ld	h, a
 	ld	(ship_prev), hl
-	call	write_ship_2x2
+	call	write_ship_3x2
 	; 窓2: top-left = ((cur_pos ^ 0x400) + soff) & 0x7FF  (+1024 側の窓)
 	ld	hl, (cur_pos)
 	ld	a, h
@@ -1235,28 +1357,43 @@ overlay_ship:
 	and	0x07
 	ld	h, a
 	ld	(ship_prev2), hl
-	call	write_ship_2x2
+	call	write_ship_3x2
 	ret
 
-; hl=top-left。2x2 (TL,TR,BL,BR = 0x80..0x83) を配置。
-write_ship_2x2:
+; hl=top-left。選択版の 3列x2行 (6セル) を配置。コードは ship_code から連番。
+;   row0: code+0,+1,+2  row1: code+3,+4,+5
+write_ship_3x2:
 	ld	(ws_tl), hl
-	ld	a, SHIP_TL
-	call	put_cell		; TL
-	ld	hl, (ws_tl)
+	ld	a, (ship_code)
+	ld	(ws_code), a
+	ld	hl, (ws_tl)		; row0
+	ld	b, 3
+.r0:	push	bc
+	push	hl
+	ld	a, (ws_code)
+	call	put_cell
+	pop	hl
 	inc	hl
-	ld	a, SHIP_TL + 1
-	call	put_cell		; TR
-	ld	hl, (ws_tl)
+	ld	a, (ws_code)
+	inc	a
+	ld	(ws_code), a
+	pop	bc
+	djnz	.r0
+	ld	hl, (ws_tl)		; row1 = top + COLS
 	ld	de, COLS
 	add	hl, de
-	ld	a, SHIP_TL + 2
-	call	put_cell		; BL
-	ld	hl, (ws_tl)
-	ld	de, COLS + 1
-	add	hl, de
-	ld	a, SHIP_TL + 3
-	call	put_cell		; BR
+	ld	b, 3
+.r1:	push	bc
+	push	hl
+	ld	a, (ws_code)
+	call	put_cell
+	pop	hl
+	inc	hl
+	ld	a, (ws_code)
+	inc	a
+	ld	(ws_code), a
+	pop	bc
+	djnz	.r1
 	ret
 
 ; hl=cell(要マスク), a=code。ANK=code, ATR=SHIP_ATR。
@@ -1276,21 +1413,28 @@ put_cell:
 	out	(c), a			; ATR
 	ret
 
-; hl=top-left。2x2 を消去(ANK=0,ATR=0)。
-erase_2x2:
+; hl=top-left。3列x2行 を消去(ANK=0,ATR=0)。
+erase_3x2:
 	ld	(ws_tl), hl
+	ld	b, 3			; row0
+.r0:	push	bc
+	push	hl
 	call	clr_cell
-	ld	hl, (ws_tl)
+	pop	hl
 	inc	hl
-	call	clr_cell
-	ld	hl, (ws_tl)
+	pop	bc
+	djnz	.r0
+	ld	hl, (ws_tl)		; row1 = top + COLS
 	ld	de, COLS
 	add	hl, de
+	ld	b, 3
+.r1:	push	bc
+	push	hl
 	call	clr_cell
-	ld	hl, (ws_tl)
-	ld	de, COLS + 1
-	add	hl, de
-	call	clr_cell
+	pop	hl
+	inc	hl
+	pop	bc
+	djnz	.r1
 	ret
 
 clr_cell:
@@ -1374,14 +1518,25 @@ prev_base:	dw	0
 	IFDEF	SHIP
 ; --- 自機 (M6, 開発中) ---
 cur_pos:	dw	0		; このフレームの表示開始セル
-ship_col:	db	0		; 自機 画面セル列 (0..38)
+ship_hx:	db	0		; 自機 横位置 (2px単位, 0..SHIP_HXMAX)
 ship_row:	db	0		; 自機 画面セル行 (0..23)
 ship_prev:	dw	0		; 前回の自機 top-left セル 窓1 (0xFFFF=無効)
 ship_prev2:	dw	0		; 窓2
 ship_soff:	dw	0		; 画面セルオフセット
+ship_code:	db	0		; このフレームの先頭 PCG コード (版選択後)
 ws_tl:		dw	0
-ds_code:	db	0
-move_dly:	db	0		; 自機移動の遅延カウンタ
+ws_code:	db	0		; write_ship_3x2 の連番コード作業用
+move_dly:	db	0		; 縦移動の遅延カウンタ
+; --- gen_ship 作業変数 ---
+gs_v:		db	0
+gs_row:		db	0
+gs_p:		db	0		; 位相 p=2v
+gs_r:		db	0		; idx 0..23 (plane*8+raster)
+gs_lsrc:	dw	0		; src 左セル先頭
+gs_rsrc:	dw	0		; src 右セル先頭
+gs_c1:		db	0		; シフト結果 col1
+gs_c2:		db	0		; シフト結果 col2
+gs_code:	db	0		; def_vr_cells 連番コード
 
 ; オリジナル機体 16x16 = 4セル(TL,TR,BL,BR). R プレーンのみ(赤, 視認性)。右向き。
 ;   チームが自前抽出スプライトに差し替える場合はここを置換。

@@ -89,6 +89,13 @@ static void dump_frame_ppm(SDL_Surface *surface) {
 	if (fp == NULL) {
 		return;
 	}
+#if defined(XMIL_PROBE_SUPPORT)
+	{
+		/* JOY/PROBE ログと突き合わせるため描画フレーム番号を出す */
+		extern UINT32 pxmil_frame;
+		fprintf(stderr, "PPM %s frame=%u\n", path, (unsigned)pxmil_frame);
+	}
+#endif
 	w = surface->w;
 	h = surface->h;
 	fprintf(fp, "P6\n%d %d\n255\n", w, h);
