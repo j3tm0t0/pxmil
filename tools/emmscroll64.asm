@@ -77,13 +77,12 @@ PORT_PSGREG	EQU	0x1C00		; ジョイスティック
 PORT_PSGDAT	EQU	0x1B00
 PORT_TPAL	EQU	0x1FB9		; テキストパレット先頭 (tc1..tc7 = 0x1FB9..0x1FBF)
 ; PCG の色は per-pixel: 有効プレーン(atr&7 のマスク)のビット合成 tc(0..7) が
-; テキストパレットのスロット番号になる(xevi-extract 訂正)。現機体は R プレーン
-; のみ描画 → 全ピクセル tc=2 → スロット2。よってプレーンマスク=0x02, 色は
-; スロット2(port 0x1FBA)に書く。多色化する場合は shipdata を B/R/G に描き分け、
-; SHIP_PLANES=0x07(全有効)にして各ピクセルの 3bit をスロット番号に合わせる。
-SHIP_PLANES	EQU	0x02		; 有効プレーン: 0x02=R のみ (現機体は単色赤/R)
-SHIP_SLOT	EQU	2		; 描画されるパレットスロット (R プレーン → tc=2)
-SHIP_ATR	EQU	0x20 | SHIP_PLANES	; PCG + プレーン有効化マスク
+; テキストパレットのスロット番号になる(xevi-extract 説明)。現機体は 2色:
+;   後方ボディ=R+G → tc6 → slot6(白)、前方ノーズ=R のみ → tc2 → slot2(赤)。
+; 全プレーン有効にして各ピクセルの 3bit をスロット番号に使う。色は A案 7色
+; (tpal_a)をテキストパレット slot1..7 に設定。
+SHIP_PLANES	EQU	0x07		; 全プレーン有効 (per-pixel でスロット選択=多色)
+SHIP_ATR	EQU	0x20 | SHIP_PLANES	; PCG + プレーン有効化マスク (=0x27)
 SHIP_HX0	EQU	18 * 4
 SHIP_ROW0	EQU	12
 MOVE_DELAY	EQU	3
@@ -131,11 +130,18 @@ realstart:
 	call	prefill
 
 	IFDEF	SHIP
-	; --- 自機(オリジナル機体)を定義・初期化 + テキストパレット色 (仮:赤) ---
+	; --- 自機(オリジナル機体)を定義・初期化 + テキストパレット A案 7色 ---
 	call	ship_init
-	ld	bc, PORT_TPAL + SHIP_SLOT - 1	; スロット SHIP_SLOT (= 0x1FB8|slot)
-	ld	a, (3 << 4) | (3 << 2) | 3	; G3 R3 B3 = 白 0x3F (仮。確定色が出たら差替)
+	ld	hl, tpal_a		; slot1..7 → port 0x1FB9..0x1FBF
+	ld	bc, PORT_TPAL
+	ld	d, 7
+.setpal:
+	ld	a, (hl)
 	out	(c), a
+	inc	hl
+	inc	c			; 次スロットの port (下位+1)
+	dec	d
+	jr	nz, .setpal
 	ENDIF
 
 	ld	hl, 0
@@ -1004,6 +1010,9 @@ vbl_seen:	dw	0		; 観測した VBLANK(DISP 1->0)エッジ総数
 prev_disp:	db	0		; 前回ポーリング時の DISP(0x80/0)
 
 	IFDEF	SHIP
+; テキストパレット A案 7色 (slot1..7 = port 0x1FB9..0x1FBF)。値=(G<<4)|(R<<2)|B。
+; 淡黄白/赤/緑/橙/暗灰/白/淡青。自機は slot6(白,R+G) と slot2(赤,R)を使用。
+tpal_a:	db	0x3E, 0x0C, 0x30, 0x2D, 0x15, 0x3F, 0x27
 	INCLUDE	"ship.inc"		; 自機(M6)共通モジュール。cur_pos/ship_* 等を定義
 	ENDIF
 
