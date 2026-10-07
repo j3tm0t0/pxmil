@@ -109,16 +109,31 @@ void pccore_reset(void) {
 #endif
 
 	pccore.ROM_TYPE = xmilcfg.ROM_TYPE;
+#if defined(XMIL_PROBE_SUPPORT)
+	/* pxmil: ヘッドレス(dummy/offscreen)検証で turboZ(RT3)を使うための ROM_TYPE
+	 *   上書き。IPL_TYPE の既定が 3 でない(ini の 4 列目は PFFLAG_MAX の上限値)ため
+	 *   xmil.cfg 無しだと RT2 になり turboZ 機能が無効になる。Mac 開発ビルド限定
+	 *   (PSP は XMIL_PROBE_SUPPORT 未定義)。例: XMIL_ROM_TYPE=3 ./xmilsdl2 ... */
+	{
+		const char *e = getenv("XMIL_ROM_TYPE");
+		if (e) {
+			int v = atoi(e);
+			if ((v >= 0) && (v <= 3)) {
+				pccore.ROM_TYPE = (UINT8)v;
+			}
+		}
+	}
+#endif
 #if defined(SUPPORT_TURBOZ) || defined(SUPPORT_OPM)
 	pccore.SOUND_SW = xmilcfg.SOUND_SW;
 	if ((xmilcfg.ROM_TYPE >= 3) && (pccore.SOUND_SW == 0))
 	{
-		pccore.SOUND_SW = 1;					/* ��������1���� */
+		pccore.SOUND_SW = 1;					/* ��������1���� */
 	}
 #endif
 	pccore.DIP_SW = xmilcfg.DIP_SW;
 
-	/* �X�N���[�����[�h�̕ύX... */
+	/* �X�N���[�����[�h�̕ύX... */
 #if defined(SUPPORT_TURBOZ)
 	if (pccore.ROM_TYPE >= 3) {
 		if (scrnmng_setcolormode(TRUE) != SUCCESS) {
