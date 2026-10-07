@@ -129,7 +129,10 @@ def main():
     rom = O.load_subrom(); ptrs = O.area_ptrs(rom)
     objs = O.extract_ground(rom, ptrs[0], ptrs[1])
     placements = []   # (col,row,type,crater_tid_2x2)
-    def col_of(t): return (t + 0xF2) & 0xFF
+    # 補正: get_map_row の bs0 = (trigger+0xF2) に +11 列、across は spriteY>>3 -2 行。
+    #   クリアリング中心合わせ(全10物の2x2=40/40 が tan タイルに乗る)で実測。
+    def col_of(t): return (t + 0xFD) & 0xFF      # 0xF2 + 11
+    def row_of(y): return (y >> 3) - 2
 
     def bake(col0, row0, over16):
         """16x16 over を (col0,row0) の 2x2 セルへ焼き込み、tid 4つを返す。"""
@@ -157,8 +160,8 @@ def main():
     obj_tiles_added_start = len(tiles)
     for trig,typ,off,y in objs:
         if typ not in GROUND_SPRITE:   # Grobda(動)/Sol(隠)は焼込まず
-            placements.append((col_of(trig), y>>3, typ, None)); continue
-        col0, row0 = col_of(trig), y>>3
+            placements.append((col_of(trig), row_of(y), typ, None)); continue
+        col0, row0 = col_of(trig), row_of(y)
         over = sprite_rgb16(ex, rgb, sp_pen, GROUND_SPRITE[typ], GROUND_COLOR[typ])
         oids = bake(col0, row0, over)
         placements.append((col0, row0, typ, ("baked", oids)))
