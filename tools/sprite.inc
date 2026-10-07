@@ -22,7 +22,8 @@ TRIG1		EQU	0x20		; PSG port A bit5 (トリガ1, 負論理)
 ENEMY_BASE	EQU	0xB0		; [M8] Toroid PCG (0xB0..0xBF, 4フレーム x 2x2)
 JARA_BASE	EQU	0xE0		; [M8④] Jara PCG (0xE0..0xEF, 4フレーム x 2x2)
 TORKAN_BASE	EQU	0xF0		; [M8④] Torkan PCG (0xF0..0xF7, 2フレーム x 2x2)
-MAX_ENEMIES	EQU	4		; 同時出現数
+MAX_ENEMIES	EQU	5		; [M8④] 最大同時数(num_flying が 3→4→5 と上昇)
+DIFF_INTERVAL	EQU	1800		; [M8④] 難易度1段の経過フレーム(≒30s@60Hz)
 ENEMY_SPEED	EQU	1		; 横移動(セル/移動tick) ※敵は8pxグリッド
 EN_NTYPES	EQU	3		; [M8④] 敵タイプ数 (Toroid/Jara/Torkan)
 TOROID_STOP	EQU	16		; [M8④] Toroid が停止する画面セル列(寄って停止)
@@ -1739,11 +1740,44 @@ gen_pcg_set:
 	djnz	.el
 	ret
 
+; [M8④] アクティブな敵数を数える → a。
+count_active:
+	ld	hl, ene_active
+	ld	b, MAX_ENEMIES
+	ld	c, 0
+.cal:	ld	a, (hl)
+	or	a
+	jr	z, .caz
+	inc	c
+.caz:	inc	hl
+	djnz	.cal
+	ld	a, c
+	ret
+
 ; 一定間隔で右端から敵出現(空きスロットがあれば)。ey は数行を循環。
 enemy_spawn:
 	IFDEF	NO_ENEMY
 	ret				; 検証用: 敵を出さない(弾/爆発のゴースト切り分け)
 	ENDIF
+	; [M8④] 難易度上昇(経過): difficulty<2 の間 diff_tmr を減らし 0 で +1。
+	;   num_flying=3+difficulty(3→4→5)。型解禁: type<=difficulty のみ(他はToroid)。
+	ld	a, (difficulty)
+	cp	2
+	jr	nc, .dskip
+	ld	hl, (diff_tmr)
+	dec	hl
+	ld	(diff_tmr), hl
+	ld	a, h
+	or	l
+	jr	nz, .dskip
+	ld	a, (difficulty)
+	inc	a
+	ld	(difficulty), a
+	add	a, 3
+	ld	(num_flying), a		; 3+difficulty
+	ld	hl, DIFF_INTERVAL
+	ld	(diff_tmr), hl
+.dskip:
 	ld	a, (spawn_tmr)
 	or	a
 	jr	z, .go
@@ -1753,6 +1787,11 @@ enemy_spawn:
 .go:
 	ld	a, ENEMY_SPAWN
 	ld	(spawn_tmr), a
+	; [M8④] 同時数制限: active >= num_flying なら出さない
+	call	count_active		; a = active 数
+	ld	hl, num_flying
+	cp	(hl)
+	ret	nc
 	; 空きスロット探索
 	xor	a
 	ld	(spr_i), a
@@ -1808,6 +1847,14 @@ enemy_spawn:
 	add	hl, de
 	ld	a, (hl)			; 出現タイプ
 	pop	de			; slot index
+	; [M8④] 型解禁: type > difficulty なら Toroid(0) に落とす
+	ld	c, a
+	ld	a, (difficulty)
+	cp	c
+	jr	nc, .tclamp		; difficulty >= type → そのまま
+	ld	c, 0			; 未解禁 → Toroid
+.tclamp:
+	ld	a, c
 	ld	hl, ene_type
 	add	hl, de
 	ld	(hl), a
@@ -2677,6 +2724,9 @@ ene_phase:	ds	MAX_ENEMIES		; [M8④] Toroid フェーズ(0=approach/1=pause/2=re
 ene_ptmr:	ds	MAX_ENEMIES		; [M8④] Toroid pause タイマー
 spawn_type:	db	0		; (旧)未使用
 spawn_idx:	db	0		; [M8④] spawn_seq のインデックス
+num_flying:	db	3		; [M8④] 現在の同時出現上限(3→4→5)
+difficulty:	db	0		; [M8④] 難易度(0..2)。経過で上昇、型解禁を制御
+diff_tmr:	dw	DIFF_INTERVAL	; [M8④] 次の難易度上昇までのフレーム
 ; [M8④] 出現タイプ列(エリア1≒Toroid主体, たまに Jara(1)/Torkan(2))。12個循環。
 SPAWN_SEQ_LEN	EQU	12
 spawn_seq:	db	0,0,0,0, 1,0,0,0, 2,0,0,1
