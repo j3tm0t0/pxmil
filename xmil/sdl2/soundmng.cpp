@@ -37,6 +37,22 @@ const SINT32	*src;
 	else {
 		ZeroMemory(dst, length);
 	}
+	/* pxmil: XMIL_WAVOUT が指すファイルへ生PCM(S16LE stereo)追記(デバッグ試聴検証) */
+	{
+		static int wo_init = 0;
+		static FILE *wo_fp = NULL;
+		if (!wo_init) {
+			wo_init = 1;
+			const char *wo = getenv("XMIL_WAVOUT");
+			if (wo) {
+				wo_fp = fopen(wo, "wb");
+			}
+		}
+		if (wo_fp) {
+			fwrite(dst, 1, length, wo_fp);
+			fflush(wo_fp);
+		}
+	}
 	SDL_memset(stream, 0, len);
 	SDL_MixAudio(stream, (UINT8 *)dst, length, SDL_MIX_MAXVOLUME);
 	soundmng.nsndbuf = (soundmng.nsndbuf + 1) % NSNDBUF;
@@ -85,6 +101,9 @@ UINT soundmng_create(UINT rate, UINT ms) {
 		return(FAILURE);
 	}
 	soundmng.opened = TRUE;
+	if (getenv("XMIL_WAVOUT")) {
+		fprintf(stderr, "WAVOUT rate=%u ch=2 fmt=S16LE\n", rate);
+	}
 	return(samples);
 
 smcre_err2:
