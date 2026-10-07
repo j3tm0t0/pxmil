@@ -396,6 +396,74 @@ def cmd_build(ex, rgb, sp_pen, gfx3):
     print("\nwrote images + aircolor_report.md to", OUT_DIR)
 
 
+# A案 7色(slot1..7)の port値・表示RGB。build の A_globalDE 結果(確定)。
+APLAN = [
+    (0x3E, (255, 255, 170)),
+    (0x0C, (255, 0, 0)),
+    (0x30, (0, 255, 0)),
+    (0x2D, (255, 170, 85)),
+    (0x15, (85, 85, 85)),
+    (0x3F, (255, 255, 255)),
+    (0x27, (85, 170, 255)),
+]
+
+
+def cmd_ship(ex, rgb, sp_pen, gfx3, tile=80, code=7):
+    """Solvalou を A案スロットに割り当て、png2ship 入力PNG + 表示プレビューを出す。
+    向きは地形と同じ rotate(-90)(xevi_extract の map_arcade_rot90 と同じ)。"""
+    os.makedirs(OUT_DIR, exist_ok=True)
+    out_root = os.path.join(ROOT, "roms", "arcade", "xevious-out")
+    slot_lab = srgb_to_lab(np.array([c for _, c in APLAN], dtype=float))
+
+    px = ex.decode_sprite(gfx3, tile)
+    # 16x16 の (slot or None)。slot は 1..7(= tc)。
+    enc = Image.new("RGBA", (16, 16), (0, 0, 0, 0))     # png2ship 入力(符号化)
+    prev = Image.new("RGBA", (16, 16), (0, 0, 0, 0))    # 表示プレビュー
+    pe, pp = enc.load(), prev.load()
+    usage = {}
+    for y in range(16):
+        for x in range(16):
+            pen = sp_pen[code * 8 + px[y][x]]
+            if pen == 0x80:
+                continue                                # 透明
+            c = rgb[pen]
+            lab = srgb_to_lab(np.array(c, dtype=float))
+            d = de2000(lab[None, :], slot_lab)
+            s = int(d.argmin()) + 1                     # slot 1..7 (= tc)
+            usage[s] = usage.get(s, 0) + 1
+            # 符号化: plane B=s&1, R=s&2, G=s&4 を各チャンネル 255/0 に
+            pe[x, y] = (255 if (s & 2) else 0,           # R chan = R plane
+                        255 if (s & 4) else 0,           # G chan = G plane
+                        255 if (s & 1) else 0, 255)      # B chan = B plane
+            pp[x, y] = (APLAN[s - 1][1][0], APLAN[s - 1][1][1],
+                        APLAN[s - 1][1][2], 255)
+    # 地形と同じ向き: rotate(-90)(時計回り)
+    enc_r = enc.rotate(-90, expand=True)
+    prev_r = prev.rotate(-90, expand=True)
+    enc_p = os.path.join(out_root, "solvalou_ship.png")
+    enc_r.save(enc_p)
+
+    # 表示プレビュー: 暗緑地形っぽい背景に合成(白機体が見えるように)。
+    #   左=回転前(arcade 上向き) 右=回転後(地形向き=rotate-90)
+    def on_bg(im):
+        bg = Image.new("RGBA", im.size, (40, 90, 40, 255))
+        bg.alpha_composite(im)
+        return bg.convert("RGB")
+    cmp = Image.new("RGB", (16 * 2 + 4, 16), (0, 0, 0))
+    cmp.paste(on_bg(prev), (0, 0))
+    cmp.paste(on_bg(prev_r), (16 + 4, 0))
+    cmp.resize((cmp.width * 12, cmp.height * 12), Image.NEAREST).save(
+        os.path.join(out_root, "solvalou_ship_preview.png"))
+    print("Solvalou tile=%d code=%d (白/灰/赤, 青なし)" % (tile, code))
+    print("slot 使用ピクセル数(= tc):")
+    for s in sorted(usage):
+        print("  slot%d port0x%02X %s x%d" % (s, APLAN[s - 1][0],
+                                              APLAN[s - 1][1], usage[s]))
+    print("使用スロット:", sorted(usage), " SHIP_PLANES=0x07(全プレーン)")
+    print("png2ship 入力:", enc_p)
+    print("プレビュー:", os.path.join(out_root, "solvalou_ship_preview.png"))
+
+
 def main(argv):
     ex = load_extract()
     gfx1, gfx2, gfx3, gfx4, proms = ex.build_regions()
@@ -408,6 +476,8 @@ def main(argv):
         cmd_codes(ex, rgb, sp_pen, gfx3, tiles)
     elif cmd == "build":
         cmd_build(ex, rgb, sp_pen, gfx3)
+    elif cmd == "ship":
+        cmd_ship(ex, rgb, sp_pen, gfx3)
     else:
         print("unknown cmd", cmd)
 
