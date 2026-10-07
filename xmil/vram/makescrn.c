@@ -10,7 +10,7 @@
 #include	"makesub.h"
 
 #if defined(XMIL_PROBE_SUPPORT)
-UINT32	pxmil_frame = 0;	/* 描画フレーム数 (joyscript/状態ダンプ用) */
+UINT32	pxmil_frame = 0;	/* drawn-frame counter (for joyscript / statedump) */
 #endif
 
 
@@ -191,8 +191,8 @@ static void changemodes(void) {
 
 #if defined(SUPPORT_TURBOZ)
 	if (dispmode & SCRN64_ENABLE) {
-		/* 64色/4096色は 2 バンク(6 プレーン)を同時使用。
-		   disp1=bank0, disp2=bank1 固定、両 VRAM の更新を監視する。 */
+		/* 64�F/4096�F�� 2 �o���N(6 �v���[��)�𓯎��g�p�B
+		   disp1=bank0, disp2=bank1 �Œ�A�� VRAM �̍X�V���Ď�����B */
 		makescrn.disp1 = gram + GRAM_BANK0;
 		makescrn.disp2 = gram + GRAM_BANK1;
 		makescrn.dispflag = UPDATE_TRAM + UPDATE_VRAM0 + UPDATE_VRAM1;
@@ -302,12 +302,12 @@ void scrnupdate(void) {
 	corestat.drawframe = 0;
 
 #if defined(XMIL_PROBE_SUPPORT)
-	/* pxmil: 描画フレーム数 (XMIL_JOYSCRIPT の台本再生や状態ダンプ用) */
+	/* pxmil: drawn-frame counter (for XMIL_JOYSCRIPT playback / statedump) */
 	pxmil_frame++;
 #endif
 
-	/* pxmil デバッグ: 状態差分用 (Mac 開発ビルド XMIL_PROBE_SUPPORT 限定,
-	   環境変数 XMIL_STATEDUMP 有効時のみ stderr へ)。描画状態の比較用。 */
+	/* pxmil debug: state diff (Mac dev build only, inside XMIL_PROBE_SUPPORT;
+	   dumped to stderr only when env XMIL_STATEDUMP is set). */
 #if defined(XMIL_PROBE_SUPPORT)
 	{
 		static int sd_init = 0;
@@ -321,7 +321,7 @@ void scrnupdate(void) {
 					sd_n, crtc.s.SCRN_BITS, crtc.s.rgbp[CRTC_PLY],
 					crtc.e.pos, makescrn.dispmode);
 			for (i = 0; i < 18; i++) fprintf(stderr, "%02x ", crtc.s.reg[i]);
-			/* PCG セル (属性 bit5) を走査: addr, ank, atr を最初の8個 */
+			/* scan PCG cells (attr bit5): print addr, ank, atr for the first 8 */
 			for (i = 0; i < 0x800; i++) {
 				if (TRAM_ATR(i) & 0x20) {
 					if (pcgcells < 8) {

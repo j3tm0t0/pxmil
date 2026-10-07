@@ -5,14 +5,14 @@
 #include	<stdlib.h>
 #include	<string.h>
 
-/* makescrn.c: 描画フレーム数 */
+/* makescrn.c: drawn-frame counter */
 extern UINT32 pxmil_frame;
 
-/* pxmil: native で実機ジョイスティックに頼らず移動検証するための台本再生。
- *   環境変数 XMIL_JOYSCRIPT="frame:value,frame:value,..." を指定すると、
- *   各 frame 以降その value (PSG port A, 負論理バイト) を返す。
- *   例: "60:0xFE,120:0xFF" = frame60 で bit0(上)押下, frame120 で解放。
- *   未指定なら 0xFF (入力無し)。 */
+/* pxmil: scripted joystick for native testing without a real pad.
+ *   Env XMIL_JOYSCRIPT="frame:value,frame:value,..." makes joymng return
+ *   that value (PSG port A, negative logic) from the given frame onward.
+ *   e.g. "60:0xFE,120:0xFF" = press bit0(up) at frame 60, release at 120.
+ *   Unset -> 0xFF (no input). */
 #define	JS_MAX	64
 static int	js_init = 0;
 static int	js_n = 0;

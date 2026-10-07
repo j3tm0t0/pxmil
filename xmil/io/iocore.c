@@ -250,9 +250,9 @@ void IOOUTCALL iocore_out(UINT port, REG8 dat) {
 	UINT	msb;
 
 #if defined(XMIL_PROBE_SUPPORT)
-	/* pxmil デバッグプローブ (XMIL_PROBE 有効時のみ):
-	 *   OUT 0x00FE,lo ; OUT 0x00FF,hi で (hi<<8)|lo を stderr に出す。
-	 *   X1 で未使用のポートなので通常動作に影響しない。 */
+	/* pxmil debug probe (only when XMIL_PROBE is set):
+	 *   OUT 0x00FE,lo ; OUT 0x00FF,hi -> print (hi<<8)|lo to stderr.
+	 *   Uses ports unused on X1, so normal operation is unaffected. */
 	{
 		static int probe_init = 0;
 		static int probe_on = 0;

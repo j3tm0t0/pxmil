@@ -32,11 +32,11 @@ static	SCRNMNG		scrnmng;
 static	SCRNSTAT	scrnstat;
 static	SCRNSURF	scrnsurf;
 
-/* --- デバッグ用: SDL サーフェス(RGB565)を PPM にダンプ (画面ロック無関係) ---
-   環境変数:
-     XMIL_DUMP       出力パス接頭辞 (未設定ならダンプしない)
-     XMIL_DUMP_N     連番で出すフレーム数 (未設定/<=1 なら <prefix>.ppm に毎フレーム上書き)
-     XMIL_DUMP_SKIP  先頭 N present をスキップ (ブート画面を飛ばす)                 */
+/* --- debug: dump SDL surface (RGB565) to PPM (independent of screen lock) ---
+   env:
+     XMIL_DUMP       output path prefix (unset = no dump)
+     XMIL_DUMP_N     count of sequential frames (unset/<=1 = overwrite <prefix>.ppm each frame)
+     XMIL_DUMP_SKIP  skip first N presents (to skip the boot screen)                 */
 static void dump_frame_ppm(SDL_Surface *surface) {
 
 	static int		inited = 0;
@@ -91,7 +91,7 @@ static void dump_frame_ppm(SDL_Surface *surface) {
 	}
 #if defined(XMIL_PROBE_SUPPORT)
 	{
-		/* JOY/PROBE ログと突き合わせるため描画フレーム番号を出す */
+		/* emit the drawn-frame number to correlate with JOY/PROBE logs */
 		extern UINT32 pxmil_frame;
 		fprintf(stderr, "PPM %s frame=%u\n", path, (unsigned)pxmil_frame);
 	}
