@@ -32,6 +32,84 @@ static	SCRNMNG		scrnmng;
 static	SCRNSTAT	scrnstat;
 static	SCRNSURF	scrnsurf;
 
+/* --- デバッグ用: SDL サーフェス(RGB565)を PPM にダンプ (画面ロック無関係) ---
+   環境変数:
+     XMIL_DUMP       出力パス接頭辞 (未設定ならダンプしない)
+     XMIL_DUMP_N     連番で出すフレーム数 (未設定/<=1 なら <prefix>.ppm に毎フレーム上書き)
+     XMIL_DUMP_SKIP  先頭 N present をスキップ (ブート画面を飛ばす)                 */
+static void dump_frame_ppm(SDL_Surface *surface) {
+
+	static int		inited = 0;
+	static const char *prefix = NULL;
+	static long		maxn = 1;
+	static long		skip = 0;
+	static long		every = 1;
+	static long		present = 0;
+	static long		counter = 0;
+	char			path[1024];
+	FILE			*fp;
+	const UINT16	*px;
+	int				pitch16;
+	int				w, h, x, y;
+	unsigned char	rgb[3];
+	UINT16			v;
+
+	if (!inited) {
+		const char *s;
+		inited = 1;
+		prefix = getenv("XMIL_DUMP");
+		s = getenv("XMIL_DUMP_N");
+		if (s) { maxn = atol(s); }
+		if (maxn <= 0) { maxn = 1; }
+		s = getenv("XMIL_DUMP_SKIP");
+		if (s) { skip = atol(s); }
+		s = getenv("XMIL_DUMP_EVERY");
+		if (s) { every = atol(s); }
+		if (every <= 0) { every = 1; }
+	}
+	if ((prefix == NULL) || (surface == NULL)) {
+		return;
+	}
+	if (present++ < skip) {
+		return;
+	}
+	if (((present - 1 - skip) % every) != 0) {
+		return;
+	}
+	if ((maxn > 1) && (counter >= maxn)) {
+		return;
+	}
+	if (maxn > 1) {
+		snprintf(path, sizeof(path), "%s_%05ld.ppm", prefix, counter);
+	}
+	else {
+		snprintf(path, sizeof(path), "%s.ppm", prefix);
+	}
+	fp = fopen(path, "wb");
+	if (fp == NULL) {
+		return;
+	}
+	w = surface->w;
+	h = surface->h;
+	fprintf(fp, "P6\n%d %d\n255\n", w, h);
+	px = (const UINT16 *)surface->pixels;
+	pitch16 = surface->pitch / 2;
+	for (y = 0; y < h; y++) {
+		for (x = 0; x < w; x++) {
+			v = px[y * pitch16 + x];
+			rgb[0] = (unsigned char)(((v >> 11) & 0x1f) << 3);
+			rgb[1] = (unsigned char)(((v >> 5) & 0x3f) << 2);
+			rgb[2] = (unsigned char)((v & 0x1f) << 3);
+			rgb[0] = (unsigned char)(rgb[0] | (rgb[0] >> 5));
+			rgb[1] = (unsigned char)(rgb[1] | (rgb[1] >> 6));
+			rgb[2] = (unsigned char)(rgb[2] | (rgb[2] >> 5));
+			fwrite(rgb, 1, 3, fp);
+		}
+	}
+	fclose(fp);
+	counter++;
+}
+
 typedef struct {
 	int		xalign;
 	int		yalign;
@@ -305,6 +383,7 @@ void scrnmng_surfunlock(const SCRNSURF *surf) {
 				scrnmng.surface = NULL;
 				SDL_UnlockSurface(surface);
 
+				dump_frame_ppm(surface);
 				SDL_UpdateTexture(s_texture, NULL, surface->pixels, surface->pitch);
 				SDL_RenderClear(s_renderer);
 				SDL_RenderCopy(s_renderer, s_texture, NULL, NULL);
