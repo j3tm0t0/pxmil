@@ -176,6 +176,23 @@ realstart:
 	ENDM
 	ENDIF
 
+; [既定昇格] スプライトは既定で「毎フレーム更新(SPR_SMOOTH)+表示窓のみ描画
+;   (SPR_1WIN)」= 60Hz 滑らか・4MHz dropped=0(chunk 高速化後)。
+;   -DSPR_EVERY8: 旧方式(8フレーム刻み・2窓, 6f25b3f 相当。guard 残置)。
+;   -DSPR_FRAMESEP: 案4(chunk/sprite フレーム分離, 約22Hz)。
+	IFDEF	SHIP
+	IFNDEF	SPR_EVERY8
+	IFNDEF	SPR_FRAMESEP
+	IFNDEF	SPR_SMOOTH
+	DEFINE	SPR_SMOOTH
+	ENDIF
+	ENDIF
+	IFNDEF	SPR_1WIN
+	DEFINE	SPR_1WIN
+	ENDIF
+	ENDIF
+	ENDIF
+
 mainloop:
 	call	wait_vblank
 	; adv = framecnt >> SPEED
