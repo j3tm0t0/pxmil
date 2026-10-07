@@ -14,6 +14,9 @@ void pspmenu_applyclock(void);
 extern UINT8 pspcfg_clockmul;
 extern UINT8 pspcfg_keymode;
 void keypad_releaseall(void);
+BOOL pspmenu_mountlast(void);
+extern char pspcfg_fdd0[32];
+extern char pspcfg_fdd1[32];
 
 #ifdef __cplusplus
 }

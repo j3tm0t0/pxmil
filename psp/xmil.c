@@ -136,9 +136,9 @@ int main(int argc, char *argv[]) {
 	taskmng_initialize();
 	pccore_initialize();
 
-	/* disk/ にある最初のディスクイメージを FDD0 にマウントして起動する
-	 * (メニュー UI 実装までのつなぎ)。 */
-	{
+	/* 前回使っていたディスクがあればそれを、なければ disk/ の最初の
+	 * イメージを FDD0 にマウントして起動する。 */
+	if (!pspmenu_mountlast()) {
 		FLINFO	fli;
 		FLISTH	flh;
 

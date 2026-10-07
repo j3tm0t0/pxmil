@@ -73,6 +73,10 @@ static int		s_nfiles;
 
 static char		s_mounted[2][NAMELEN];	/* 表示用のマウント中ファイル名 */
 
+/* 最後に使っていたディスク (ini に保存され、次回起動時に自動マウント) */
+char	pspcfg_fdd0[NAMELEN];
+char	pspcfg_fdd1[NAMELEN];
+
 /* ---- 操作 ---- */
 
 int pspmenu_isopen(void) {
@@ -119,12 +123,14 @@ static void mount(int drive, const char *name) {
 	milstr_ncat(path, name, sizeof(path));
 	diskdrv_setfdd((REG8)drive, path, 0);
 	milstr_ncpy(s_mounted[drive], name, NAMELEN);
+	milstr_ncpy((drive == 0) ? pspcfg_fdd0 : pspcfg_fdd1, name, NAMELEN);
 }
 
 static void eject(int drive) {
 
 	diskdrv_setfdd((REG8)drive, NULL, 0);
 	s_mounted[drive][0] = '\0';
+	((drive == 0) ? pspcfg_fdd0 : pspcfg_fdd1)[0] = '\0';
 }
 
 static void decide_main(void) {
@@ -315,4 +321,35 @@ void pspmenu_draw(UINT16 *dst) {
 void pspmenu_setmounted(int drive, const char *name) {
 
 	milstr_ncpy(s_mounted[drive], name, NAMELEN);
+	milstr_ncpy((drive == 0) ? pspcfg_fdd0 : pspcfg_fdd1, name, NAMELEN);
+}
+
+/* ini に保存された「最後に使っていたディスク」をマウントする。
+ * 1 本でも成功したら TRUE (その場合は先頭イメージの自動マウントはしない) */
+BOOL pspmenu_mountlast(void) {
+
+	BOOL	done = FALSE;
+	int		d;
+
+	for (d = 0; d < 2; d++) {
+		const char *name = (d == 0) ? pspcfg_fdd0 : pspcfg_fdd1;
+		char path[MAX_PATH];
+		FILEH fh;
+
+		if (name[0] == '\0') {
+			continue;
+		}
+		milstr_ncpy(path, file_getcd("disk"), sizeof(path));
+		file_setseparator(path, sizeof(path));
+		milstr_ncat(path, name, sizeof(path));
+		fh = file_open_rb(path);
+		if (fh == FILEH_INVALID) {
+			continue;			/* 消えたファイルは無視 */
+		}
+		file_close(fh);
+		diskdrv_setfdd((REG8)d, path, 0);
+		milstr_ncpy(s_mounted[d], name, NAMELEN);
+		done = TRUE;
+	}
+	return(done);
 }

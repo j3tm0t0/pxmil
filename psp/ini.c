@@ -49,7 +49,9 @@ static const PFTBL iniitem[] = {
 	{"PSP_Aspc", PFMAX_UINT8,		&pspcfg_aspect,			2},
 	{"PSPFpsOn", PFTYPE_BOOL,		&pspcfg_overlay,		0},
 	{"PSPClkMl", PFMAX_UINT8,		&pspcfg_clockmul,		4},
-	{"PSPKeyPd", PFTYPE_BOOL,		&pspcfg_keymode,		0}};
+	{"PSPKeyPd", PFTYPE_BOOL,		&pspcfg_keymode,		0},
+	{"PSPFdd0_", PFTYPE_STR,		 pspcfg_fdd0,			32},
+	{"PSPFdd1_", PFTYPE_STR,		 pspcfg_fdd1,			32}};
 
 void initload(void) {
 
