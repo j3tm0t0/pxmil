@@ -74,7 +74,7 @@ PCG_DEFCELL	EQU	0x07FF		; PCG 定義に使うセル
 ; ship.inc が要求する自機設定 EQU は呼び出し側 (ここ) で定義する:
 PORT_PSGREG	EQU	0x1C00		; ジョイスティック: レジスタ選択
 PORT_PSGDAT	EQU	0x1B00		; 読み (sndboard_psgsta)
-SHIP_ATR	EQU	0x20 | 0x02	; PCG + R プレーン (赤)。色付きは 0x20|0x07
+SHIP_ATR	EQU	0x20 | 0x07	; PCG + 全プレーン有効 (per-pixel でプレーン色/スロット)
 SHIPGEN		EQU	0xC8A0		; 版生成バッファ 216バイト (IDBUF後 〜0xC978)
 SHIP_HX0	EQU	18 * 4		; 自機初期横位置 (2px単位, 列18 位相0)
 SHIP_VY0	EQU	12 * 4		; 自機初期縦位置 (2ライン単位, 行12 位相0)

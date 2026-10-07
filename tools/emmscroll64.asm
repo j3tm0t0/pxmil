@@ -1012,10 +1012,11 @@ prev_disp:	db	0		; 前回ポーリング時の DISP(0x80/0)
 ; テキストパレット A案 7色 (slot1..7 = port 0x1FB9..0x1FBF)。値=(G<<4)|(R<<2)|B。
 ; 淡黄白/赤/緑/橙/暗灰/白/淡青。自機は slot6(白,R+G) と slot2(赤,R)を使用。
 ; テキストパレット D案 7色 (slot1..7 = port 0x1FB9..0x1FBF)。値=(G<<4)|(R<<2)|B。
-; 色: 白0x3F 明灰0x2A 暗灰0x15 黒0x00 赤0x0C 青0x27 橙0x2D。
-; スロット割当は暫定(自機が slot6=白/slot2=赤 を使う前提で配置)。xevi-extract の
-; 正式割当が来たら並びを差し替える。tpal_d[0]=slot1 ... [6]=slot7。
-tpal_a:	db	0x2A, 0x0C, 0x15, 0x27, 0x2D, 0x3F, 0x00
+; 公式スロット割当(xevi-extract/team-lead 確定):
+;   slot1=白0x3F slot2=明灰0x2A slot3=暗灰0x15 slot4=黒0x00 slot5=赤0x0C
+;   slot6=青0x27 slot7=橙0x2D
+; 自機: ボディ=slot1(白), ノーズ=slot5(赤)。敵=明灰/暗灰+赤, 弾=青/白。
+tpal_a:	db	0x3F, 0x2A, 0x15, 0x00, 0x0C, 0x27, 0x2D
 	INCLUDE	"ship.inc"		; 自機(M6)共通モジュール。cur_pos/ship_* 等を定義
 	ENDIF
 
