@@ -10,8 +10,8 @@
 出力(非コミット, roms/arcade/xevious-out/allareas/):
   common_tiles.bin  : 共通タイル表(48B/タイル)
   common_pal.bin    : 共通パレット(xpal64 形式, 64エントリ×5B=320B)
-  areaNN_used.bin    : local_idx 順の「共通表 index」一覧(2B/エントリ)。
-                       engine は common[used[i]] を RAM[TB+i*48] へ DMA。
+  areaNN_used.bin    : 先頭2B=タイル数 n、続いて local_idx 順の「共通表 index」
+                       一覧(2B×n)。engine は common[used[i]] を RAM[TB+i*48] へ集約コピー。
   areaNN_map.bin     : ローカルIDタイルマップ(256列×25行×2B = RAM アドレス TB+local_idx*48)
   areaNN_gobj.bin    : 地上物リスト。gobj_count(1B)+ 1件[col:2B,row:1B,type:1B,
                        size:1B, crater_addr[(2*size)^2]:各2B]。
@@ -180,6 +180,7 @@ def main():
                 for row in range(25):
                     f.write(struct.pack("<H", TB + lmap[col][row]*48))
         with open(os.path.join(OUT, "area%02d_used.bin" % a), "wb") as f:
+            f.write(struct.pack("<H", len(local)))   # 先頭2B: タイル数(エリア切替DMAのループ回数)
             for ci in local:
                 f.write(struct.pack("<H", ci))
         with open(os.path.join(OUT, "area%02d_gobj.bin" % a), "wb") as f:
