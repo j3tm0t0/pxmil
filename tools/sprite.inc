@@ -76,6 +76,10 @@ sprite_init:
 	call	gen_reticle
 	call	gen_reticle_red		; [M8-3] ロック点滅用の赤版照準 PCG
 	call	gen_blaster
+	IFDEF	GROBDA_EXTDATA
+	call	gen_grobda		; [M8⑥] Grobda PCG
+	call	grobda_init		; Grobda 初期配置
+	ENDIF
 	ld	hl, 0xFFFF		; 照準 prev 無効化
 	ld	(ret_prev), hl
 	ld	(ret_prev2), hl
@@ -1257,6 +1261,9 @@ sprite_update:
 	call	bullets_move
 	call	blaster_move		; 前進+着弾(expl_spawn)
 	call	enemies_move
+	IFDEF	GROBDA_EXTDATA
+	call	grobda_move		; [M8⑥] Grobda 移動(道vy + スクロール追従)
+	ENDIF
 	call	expls_anim
 	; 衝突判定(弾vs敵, 敵vs自機) → 当たった弾/敵を非アクティブ化 + 爆発発生
 	call	collision_check
@@ -1266,12 +1273,18 @@ sprite_update:
 	call	reticle_erase
 	call	expls_erase
 	call	enemies_erase
+	IFDEF	GROBDA_EXTDATA
+	call	grobda_erase		; [M8⑥]
+	ENDIF
 	call	bullets_erase
 	call	blaster_erase
 	; 全描画(アクティブのみ)。照準は最後=最前面。
 	call	bullets_draw
 	call	blaster_draw
 	call	enemies_draw
+	IFDEF	GROBDA_EXTDATA
+	call	grobda_draw		; [M8⑥]
+	ENDIF
 	call	expls_draw
 	call	reticle_draw
 	ret
@@ -2317,6 +2330,342 @@ ene_put2x2:
 	call	put_cell		; BR
 	ret
 
+	IFDEF	GROBDA_EXTDATA
+;=====================================================================
+; [M8⑥] Grobda(動く地上戦車, 動的スプライト)。world列 grob_wcol でスクロール追従
+;   (screen_ex=(wcol-coarse_lo)&0xFF, <COLS で表示)。道沿いに vy(6..18)上下移動。
+;   PCG=GROBDA_BASE(0xF8, 2コマ)。[次段] 照準接近で前進(flee) + ブラスター被弾で爆発。
+GROBDA_BASE	EQU	0xF8
+MAX_GROBDA	EQU	3
+GROB_MOVE	EQU	12		; vy 1歩の間隔(フレーム)
+GROB_AMOVE	EQU	16		; アニメ間隔
+grob_wtab:	db	94, 91, 88	; 初期 world列(xevi type5, row9)
+
+gen_grobda:
+	ld	hl, grobda_data
+	ld	a, GROBDA_BASE
+	ld	b, 8
+	jp	gen_pcg_set
+
+grobda_init:
+	xor	a
+	ld	(spr_i), a
+.il:	ld	a, (spr_i)
+	cp	MAX_GROBDA
+	ret	z
+	ld	e, a
+	ld	d, 0
+	ld	hl, grob_active
+	add	hl, de
+	ld	(hl), 1
+	ld	hl, grob_wtab
+	add	hl, de
+	ld	a, (hl)
+	ld	hl, grob_wcol
+	add	hl, de
+	ld	(hl), a
+	ld	hl, grob_vy
+	add	hl, de
+	ld	(hl), 9
+	ld	hl, grob_frm
+	add	hl, de
+	ld	(hl), 0
+	ld	hl, grob_dir
+	add	hl, de
+	ld	(hl), 0
+	ld	a, (spr_i)
+	inc	a
+	ld	hl, grob_mtmr
+	add	hl, de
+	ld	(hl), a
+	ld	hl, grob_atmr
+	add	hl, de
+	ld	(hl), a
+	ld	a, (spr_i)
+	add	a, a
+	ld	e, a
+	ld	d, 0
+	ld	hl, grob_prev
+	add	hl, de
+	ld	(hl), 0xFF
+	inc	hl
+	ld	(hl), 0xFF
+	ld	hl, grob_prev2
+	add	hl, de
+	ld	(hl), 0xFF
+	inc	hl
+	ld	(hl), 0xFF
+	ld	a, (spr_i)
+	inc	a
+	ld	(spr_i), a
+	jr	.il
+
+; 毎フレーム: アニメ(2コマ) + 道(vy)移動 + screen_ex 計算。
+grobda_move:
+	xor	a
+	ld	(spr_i), a
+.ml:	ld	a, (spr_i)
+	cp	MAX_GROBDA
+	ret	z
+	ld	e, a
+	ld	d, 0
+	ld	hl, grob_active
+	add	hl, de
+	ld	a, (hl)
+	or	a
+	jp	z, .mn
+	ld	hl, grob_wcol		; grob_ex = (wcol - coarse_lo) & 0xFF
+	add	hl, de
+	ld	a, (hl)
+	push	de
+	ld	hl, coarse
+	sub	(hl)
+	pop	de
+	ld	hl, grob_ex
+	add	hl, de
+	ld	(hl), a
+	ld	hl, grob_dirty		; dirty=0 初期
+	add	hl, de
+	ld	(hl), 0
+	ld	hl, grob_atmr		; アニメ
+	add	hl, de
+	dec	(hl)
+	jr	nz, .amv
+	ld	(hl), GROB_AMOVE
+	ld	hl, grob_frm
+	add	hl, de
+	ld	a, (hl)
+	inc	a
+	and	1
+	ld	(hl), a
+	ld	hl, grob_dirty		; アニメ変化 → dirty
+	add	hl, de
+	ld	(hl), 1
+.amv:
+	ld	hl, grob_mtmr		; 道(vy)移動
+	add	hl, de
+	dec	(hl)
+	jp	nz, .mn
+	ld	(hl), GROB_MOVE
+	ld	hl, grob_dirty		; 移動 → dirty
+	add	hl, de
+	ld	(hl), 1
+	ld	hl, grob_dir
+	add	hl, de
+	ld	a, (hl)
+	or	a
+	jr	nz, .gup
+	ld	hl, grob_vy		; dir=0 下
+	add	hl, de
+	ld	a, (hl)
+	inc	a
+	ld	(hl), a
+	cp	18
+	jp	c, .mn
+	ld	hl, grob_dir
+	add	hl, de
+	ld	(hl), 1
+	jp	.mn
+.gup:	ld	hl, grob_vy		; dir=1 上
+	add	hl, de
+	ld	a, (hl)
+	dec	a
+	ld	(hl), a
+	cp	6
+	jp	nc, .mn
+	ld	hl, grob_dir
+	add	hl, de
+	ld	(hl), 0
+.mn:	ld	a, (spr_i)
+	inc	a
+	ld	(spr_i), a
+	jp	.ml
+
+; grobda_soff: de=slot。on-screen(grob_ex<COLS)なら spr_soff 設定+scf、off は nc。
+grobda_soff:
+	ld	hl, grob_ex
+	add	hl, de
+	ld	a, (hl)
+	cp	COLS
+	ret	nc
+	ld	c, a			; ex
+	ld	hl, grob_vy
+	add	hl, de
+	ld	a, (hl)
+	ld	h, 0
+	ld	l, a
+	add	hl, hl
+	add	hl, hl
+	add	hl, hl			; *8
+	ld	d, h
+	ld	e, l
+	add	hl, hl
+	add	hl, hl			; *32
+	add	hl, de			; *40
+	ld	a, c
+	ld	e, a
+	ld	d, 0
+	add	hl, de
+	ld	(spr_soff), hl
+	scf
+	ret
+
+grobda_erase:
+	xor	a
+	ld	(spr_i), a
+.el:	ld	a, (spr_i)
+	cp	MAX_GROBDA
+	ret	z
+	; idle-skip: scroll 不変かつ不動なら消さない
+	ld	a, (scroll_moved)
+	or	a
+	jr	nz, .edo
+	ld	a, (spr_i)
+	ld	e, a
+	ld	d, 0
+	ld	hl, grob_dirty
+	add	hl, de
+	ld	a, (hl)
+	or	a
+	jr	z, .en
+.edo:
+	ld	a, (spr_i)
+	add	a, a
+	ld	e, a
+	ld	d, 0
+	ld	hl, grob_prev
+	add	hl, de
+	ld	a, (hl)
+	inc	hl
+	ld	h, (hl)
+	ld	l, a
+	ld	a, h
+	cp	0xFF
+	jr	z, .en
+	call	ene_clr2x2
+	ld	a, (spr_i)
+	add	a, a
+	ld	e, a
+	ld	d, 0
+	ld	hl, grob_prev2
+	add	hl, de
+	ld	a, (hl)
+	inc	hl
+	ld	h, (hl)
+	ld	l, a
+	call	ene_clr2x2
+.en:	ld	a, (spr_i)
+	inc	a
+	ld	(spr_i), a
+	jr	.el
+
+grobda_draw:
+	xor	a
+	ld	(spr_i), a
+.dl:	ld	a, (spr_i)
+	cp	MAX_GROBDA
+	ret	z
+	ld	e, a
+	ld	d, 0
+	ld	hl, grob_active
+	add	hl, de
+	ld	a, (hl)
+	or	a
+	jp	z, .dinv
+	; idle-skip: scroll 不変かつ不動なら描き直さない(prev 維持)
+	ld	a, (scroll_moved)
+	or	a
+	jr	nz, .ddo
+	ld	hl, grob_dirty
+	add	hl, de
+	ld	a, (hl)
+	or	a
+	jp	z, .dnx
+.ddo:
+	ld	a, (spr_i)
+	ld	e, a
+	ld	d, 0
+	call	grobda_soff		; de=slot → spr_soff / Cフラグ
+	jp	nc, .dinv		; off-screen → 描かず prev 無効化
+	ld	a, (spr_i)
+	ld	e, a
+	ld	d, 0
+	ld	hl, grob_frm
+	add	hl, de
+	ld	a, (hl)
+	add	a, a
+	add	a, a
+	add	a, GROBDA_BASE
+	ld	(spr_code), a
+	; 窓1
+	ld	hl, (spr_soff)
+	ld	de, (cur_pos)
+	add	hl, de
+	ld	a, h
+	and	0x07
+	ld	h, a
+	ld	(spr_cell), hl
+	ld	a, (spr_i)
+	add	a, a
+	ld	e, a
+	ld	d, 0
+	ld	hl, grob_prev
+	add	hl, de
+	ld	a, (spr_cell)
+	ld	(hl), a
+	inc	hl
+	ld	a, (spr_cell + 1)
+	ld	(hl), a
+	ld	hl, (spr_cell)
+	ld	a, (spr_code)
+	call	ene_put2x2
+	; 窓2
+	ld	hl, (cur_pos)
+	ld	a, h
+	xor	0x04
+	ld	h, a
+	ld	de, (spr_soff)
+	add	hl, de
+	ld	a, h
+	and	0x07
+	ld	h, a
+	ld	(spr_cell), hl
+	ld	a, (spr_i)
+	add	a, a
+	ld	e, a
+	ld	d, 0
+	ld	hl, grob_prev2
+	add	hl, de
+	ld	a, (spr_cell)
+	ld	(hl), a
+	inc	hl
+	ld	a, (spr_cell + 1)
+	ld	(hl), a
+	ld	hl, (spr_cell)
+	ld	a, (spr_code)
+	call	ene_put2x2
+	jr	.dnx
+.dinv:
+	ld	a, (spr_i)
+	add	a, a
+	ld	e, a
+	ld	d, 0
+	ld	hl, grob_prev
+	add	hl, de
+	ld	(hl), 0xFF
+	inc	hl
+	ld	(hl), 0xFF
+	ld	hl, grob_prev2
+	add	hl, de
+	ld	(hl), 0xFF
+	inc	hl
+	ld	(hl), 0xFF
+.dnx:	ld	a, (spr_i)
+	inc	a
+	ld	(spr_i), a
+	jp	.dl
+	ENDIF
+
 ; hl=top-left セル。2x2 を消去。
 ene_clr2x2:
 	ld	(ene_tl), hl
@@ -2727,6 +3076,19 @@ spawn_idx:	db	0		; [M8④] spawn_seq のインデックス
 num_flying:	db	3		; [M8④] 現在の同時出現上限(3→4→5)
 difficulty:	db	0		; [M8④] 難易度(0..2)。経過で上昇、型解禁を制御
 diff_tmr:	dw	DIFF_INTERVAL	; [M8④] 次の難易度上昇までのフレーム
+	IFDEF	GROBDA_EXTDATA
+grob_active:	ds	MAX_GROBDA	; [M8⑥] Grobda 生存
+grob_wcol:	ds	MAX_GROBDA	; world列(8bit, スクロール追従)
+grob_vy:	ds	MAX_GROBDA	; 行(道位置 6..18)
+grob_frm:	ds	MAX_GROBDA	; アニメ(0/1)
+grob_dir:	ds	MAX_GROBDA	; 道振動方向
+grob_mtmr:	ds	MAX_GROBDA	; 移動タイマー
+grob_atmr:	ds	MAX_GROBDA	; アニメタイマー
+grob_ex:	ds	MAX_GROBDA	; 今フレームの screen列(>=COLS=off)
+grob_dirty:	ds	MAX_GROBDA	; [M8⑥] 今フレーム移動/アニメしたか(idle-skip用)
+grob_prev:	ds	MAX_GROBDA * 2	; 前回 top-left 窓1
+grob_prev2:	ds	MAX_GROBDA * 2	; 窓2
+	ENDIF
 ; [M8④] 出現タイプ列(エリア1≒Toroid主体, たまに Jara(1)/Torkan(2))。12個循環。
 SPAWN_SEQ_LEN	EQU	12
 spawn_seq:	db	0,0,0,0, 1,0,0,0, 2,0,0,1
@@ -2854,6 +3216,11 @@ torkan_data:
 	INCLUDE	"roms/torkan_ext.inc"
 	ELSE
 torkan_data	EQU	enemy_data
+	ENDIF
+; [M8⑥] Grobda PCG データ(2コマ=8セル=192B)。-DGROBDA_EXTDATA で有効。
+	IFDEF	GROBDA_EXTDATA
+grobda_data:
+	INCLUDE	"roms/grobda_ext.inc"
 	ENDIF
 
 ;=====================================================================
