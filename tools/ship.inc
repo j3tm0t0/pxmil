@@ -609,11 +609,19 @@ gs_code:	db	0		; 版の先頭コード
 ;   生成/差し替えは tools/png2ship.py (16x16 RGB PNG -> この db ブロック)。
 ;   8色版はこのビットがそのまま色。turboZ 64色版はテキストパレットで色を
 ;   付けるので、色は呼び出し側で選び、ここはシルエット(例:全部R)でよい。
-; 現機体 = オリジナルの矢印型(著作権配慮)。右向き。2色: 後方ボディ=白(R+G),
+; 自機ベースデータ (96バイト)。差し替えフック:
+;   -DSHIP_EXTDATA 指定時は外部ファイル tools/shipdata_ext.inc を使う。
+;   (抽出スプライト等の差し替え用。外部データはコミットしない方針=各自用意。
+;    png2ship.py で 16x16 PNG から shipdata_ext.inc(db ブロック)を生成できる。)
+;   未指定(既定)は下のオリジナル矢印機体を使う。
+shipdata:
+	IFDEF	SHIP_EXTDATA
+	INCLUDE	"shipdata_ext.inc"	; 外部提供の 96バイト db ブロック (gitignore)
+	ELSE
+; オリジナルの矢印型(著作権配慮)。右向き。2色: 後方ボディ=白(R+G),
 ;   前方ノーズ(TR/BR)=赤(R のみ)。各ピクセルの有効プレーン合成 tc がスロット番号:
 ;   R+G → tc6 → slot6(白), R のみ → tc2 → slot2(赤)。
 ;   ※8色版は SHIP_ATR=0x22(R のみ有効)なので G は無視され全体が赤(従来通り)。
-shipdata:
 	db	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00	; TL B
 	db	0x00,0x00,0x3F,0x3F,0x3F,0x3F,0x3F,0x3F	; TL R
 	db	0x00,0x00,0x3F,0x3F,0x3F,0x3F,0x3F,0x3F	; TL G (=R → 白 slot6)
@@ -626,3 +634,4 @@ shipdata:
 	db	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00	; BR B
 	db	0x00,0x00,0x0C,0x3C,0xFC,0x3C,0x0C,0x00	; BR R
 	db	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00	; BR G
+	ENDIF

@@ -1011,7 +1011,11 @@ prev_disp:	db	0		; 前回ポーリング時の DISP(0x80/0)
 	IFDEF	SHIP
 ; テキストパレット A案 7色 (slot1..7 = port 0x1FB9..0x1FBF)。値=(G<<4)|(R<<2)|B。
 ; 淡黄白/赤/緑/橙/暗灰/白/淡青。自機は slot6(白,R+G) と slot2(赤,R)を使用。
-tpal_a:	db	0x3E, 0x0C, 0x30, 0x2D, 0x15, 0x3F, 0x27
+; テキストパレット D案 7色 (slot1..7 = port 0x1FB9..0x1FBF)。値=(G<<4)|(R<<2)|B。
+; 色: 白0x3F 明灰0x2A 暗灰0x15 黒0x00 赤0x0C 青0x27 橙0x2D。
+; スロット割当は暫定(自機が slot6=白/slot2=赤 を使う前提で配置)。xevi-extract の
+; 正式割当が来たら並びを差し替える。tpal_d[0]=slot1 ... [6]=slot7。
+tpal_a:	db	0x2A, 0x0C, 0x15, 0x27, 0x2D, 0x3F, 0x00
 	INCLUDE	"ship.inc"		; 自機(M6)共通モジュール。cur_pos/ship_* 等を定義
 	ENDIF
 
