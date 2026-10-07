@@ -105,6 +105,9 @@ def main():
     g1,g2,g3,g4,pr = ex.build_regions(); gfx3_cache = g3
     rgb,bg_pen,sp_pen,fg_pen = ex.build_palette(pr)
     area = 1
+    for i, a in enumerate(sys.argv):
+        if a == "--area" and i+1 < len(sys.argv):
+            area = int(sys.argv[i+1])
     area_off = T.load_area_table()[area-1]
     bs1_list = [(area_off - 1 + T.ACROSS_SKIP + k) & 0x7f for k in range(T.ACROSS_USE)]
 
