@@ -87,6 +87,7 @@ SHIP_HX0	EQU	18 * 4
 SHIP_VY0	EQU	12 * 4
 SHIPGEN		EQU	0xCB00		; COLBUF(〜0xCAB0)の後の空き RAM (216B 〜0xCBD8)
 SHIP_SCRN_BASE	EQU	SCRN_15K	; ship_init の PCGMODE 書込は 15kHz を保つ
+SPRGEN		EQU	0xCBE0		; スプライト生成バッファ 8バイト (SHIPGEN後)
 	ENDIF
 
 ; PORT_SCRN 書込マクロ: SHIP 時は PCGMODE 付き(scrn_out)、非SHIP は従来通り
@@ -141,6 +142,7 @@ realstart:
 	inc	c			; 次スロットの port (下位+1)
 	dec	d
 	jr	nz, .setpal
+	call	sprite_init		; M7: 弾/敵/爆発の PCG 生成 + テーブル初期化
 	ENDIF
 
 	ld	hl, 0
@@ -206,6 +208,7 @@ mainloop:
 	call	setpos
 	IFDEF	SHIP
 	call	ship_update		; ジョイスティック移動 + 自機描画 (vblank 中)
+	call	sprite_update		; M7: 弾の発射/移動/描画
 	ENDIF
 	call	start_redraw		; np col39 の再描画を開始 (DMA+合成準備)
 .nowork:
@@ -1018,6 +1021,7 @@ prev_disp:	db	0		; 前回ポーリング時の DISP(0x80/0)
 ; 自機: ボディ=slot1(白), ノーズ=slot5(赤)。敵=明灰/暗灰+赤, 弾=青/白。
 tpal_a:	db	0x3F, 0x2A, 0x15, 0x00, 0x0C, 0x27, 0x2D
 	INCLUDE	"ship.inc"		; 自機(M6)共通モジュール。cur_pos/ship_* 等を定義
+	INCLUDE	"sprite.inc"		; M7 弾/敵/爆発 (ship.inc の後=read_joy等を使うため)
 	ENDIF
 
 	END
