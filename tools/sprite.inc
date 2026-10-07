@@ -19,10 +19,12 @@
 BULLET_BASE	EQU	0xA0		; 弾 PCG 先頭 (0xA0..0xAF)
 MAX_BULLETS	EQU	6		; 同時存在数 (ザッパー2発 x 3組)。PCG は共有16版で不変
 TRIG1		EQU	0x20		; PSG port A bit5 (トリガ1, 負論理)
-ENEMY_BASE	EQU	0xB0		; 敵 PCG 先頭 (0xB0..0xBF, 4フレーム x 2x2)
+ENEMY_BASE	EQU	0xB0		; [M8] Toroid PCG (0xB0..0xBF, 4フレーム x 2x2)
+JARA_BASE	EQU	0xE0		; [M8④] Jara PCG (0xE0..0xEF, 4フレーム x 2x2)
+TORKAN_BASE	EQU	0xF0		; [M8④] Torkan PCG (0xF0..0xF7, 2フレーム x 2x2)
 MAX_ENEMIES	EQU	4		; 同時出現数
 ENEMY_SPEED	EQU	1		; 横移動(セル/移動tick) ※敵は8pxグリッド
-EN_NTYPES	EQU	2		; [M8] 敵タイプ数 (足場: type0=直進/type1=斜め)
+EN_NTYPES	EQU	3		; [M8④] 敵タイプ数 (Toroid/Jara/Torkan)
 EXPL_BASE	EQU	0xC0		; 爆発 PCG 先頭 (0xC0..0xCB, 3フレーム x 2x2)
 MAX_EXPL	EQU	2		; 同時爆発数 (ピーク負荷削減)
 RETICLE_BASE	EQU	0xCC		; [M8] 照準 PCG (0xCC..0xCF, 2x2 の角ブラケット)
@@ -1700,13 +1702,25 @@ bullets_draw:
 	jp	.dl
 
 ;=====================================================================
-; 敵 PCG 生成: enemy_data(4フレーム×96B = 16セル×24B, TL/TR/BL/BR順)を
-;   ENEMY_BASE から 16 セル連番で定義。
+; [M8④] 敵 PCG 生成: 3タイプ分を各 base から連番定義。各セル=24B(B/R/G×8)。
+;   Toroid(16セル=4コマ) / Jara(16セル=4コマ) / Torkan(8セル=2コマ)。
 gen_enemy:
-	ld	hl, enemy_data
+	ld	hl, enemy_data		; Toroid
 	ld	a, ENEMY_BASE
-	ld	(ene_code), a
 	ld	b, 16
+	call	gen_pcg_set
+	ld	hl, jara_data		; Jara
+	ld	a, JARA_BASE
+	ld	b, 16
+	call	gen_pcg_set
+	ld	hl, torkan_data		; Torkan
+	ld	a, TORKAN_BASE
+	ld	b, 8
+	call	gen_pcg_set
+	ret
+; gen_pcg_set: hl=データ先頭, a=先頭PCGコード, b=セル数。連番で定義。
+gen_pcg_set:
+	ld	(ene_code), a
 .el:	push	bc
 	ld	a, (ene_code)
 	call	pcg_select
@@ -1899,7 +1913,7 @@ enemies_move:
 	add	hl, de
 	ld	a, (hl)
 	or	a
-	jr	z, .mn
+	jp	z, .mn
 	ld	hl, ene_dirty		; dirty = 0 (初期)
 	add	hl, de
 	ld	(hl), 0
@@ -1913,7 +1927,29 @@ enemies_move:
 	add	hl, de
 	ld	a, (hl)
 	inc	a
-	and	3
+	; [M8④] nframes でクランプ(タイプ毎にコマ数が違う)
+	push	hl			; ene_frm ptr
+	push	de			; slot index
+	push	af			; 新フレーム
+	ld	hl, ene_type
+	add	hl, de
+	ld	a, (hl)			; type
+	ld	c, a
+	add	a, a
+	add	a, c			; type*3
+	inc	a			; +1 = nframes オフセット
+	ld	e, a
+	ld	d, 0
+	ld	hl, entype_tab
+	add	hl, de
+	ld	b, (hl)			; nframes
+	pop	af			; 新フレーム
+	cp	b
+	jr	c, .fok
+	xor	a			; nframes 到達 → 0 へ
+.fok:
+	pop	de			; slot index
+	pop	hl			; ene_frm ptr
 	ld	(hl), a
 	ld	hl, ene_dirty		; アニメ変化 → dirty
 	add	hl, de
@@ -1933,7 +1969,7 @@ enemies_move:
 	ld	a, (hl)
 	sub	ENEMY_SPEED
 	ld	(hl), a
-	; [M8] 軌道ディスパッチ: type の traj_id で縦移動 (足場。0=直進/1=斜め)
+	; [M8④] 軌道ディスパッチ: 0=Toroid(直進) / 1=Jara(下へ漂う) / 2=Torkan(下+横加速ダイブ)
 	push	af			; ene_ex(新) を off-screen 判定用に保存
 	ld	a, (spr_i)
 	ld	e, a
@@ -1951,18 +1987,29 @@ enemies_move:
 	ld	hl, entype_tab
 	add	hl, de
 	ld	a, (hl)			; traj_id
-	cp	1
-	jr	nz, .trajdone		; 0=直進は縦移動なし
-	ld	a, (spr_i)		; traj1=斜め: ene_ey を 1 増やす(clamp 22)
+	or	a
+	jr	z, .trajdone		; 0=Toroid: 縦移動なし
+	ld	b, a			; traj_id 退避
+	ld	a, (spr_i)		; 1/2: ene_ey を下へ(clamp 22)
 	ld	e, a
 	ld	d, 0
 	ld	hl, ene_ey
 	add	hl, de
 	ld	a, (hl)
 	cp	22
-	jr	nc, .trajdone
+	jr	nc, .edone
 	inc	a
 	ld	(hl), a
+.edone:
+	ld	a, b
+	cp	2
+	jr	nz, .trajdone		; 1=Jara はここまで
+	ld	a, (spr_i)		; 2=Torkan: 横を追加で1速く(ダイブ)
+	ld	e, a
+	ld	d, 0
+	ld	hl, ene_ex
+	add	hl, de
+	dec	(hl)
 .trajdone:
 	pop	af			; ene_ex 復帰
 	ld	e, a			; ene_ex 退避
@@ -2550,11 +2597,12 @@ ene_ey:		ds	MAX_ENEMIES		; セル行
 ene_frm:	ds	MAX_ENEMIES		; アニメフレーム 0..3
 ene_type:	ds	MAX_ENEMIES		; [M8] 敵タイプ index (0..EN_NTYPES-1)
 spawn_type:	db	0		; 次に出す敵タイプ(循環)
-; [M8] 敵タイプ記述子: per type = (pcg_base, nframes, traj_id)。
-;   traj_id: 0=直進(左)/1=斜め(左下に漂う)。PCG は distinct データ到着まで共用。
+; [M8④] 敵タイプ記述子: per type = (pcg_base, nframes, traj_id)。
+;   traj_id: 0=Toroid(直進) / 1=Jara(縦振動) / 2=Torkan(斜めダイブ)。
 entype_tab:
-	db	ENEMY_BASE, 4, 0	; type0: 円盤・直進
-	db	ENEMY_BASE, 4, 1	; type1: 円盤・斜め(オリジナル軌道。PCGは後で差替)
+	db	ENEMY_BASE,  4, 0	; type0: Toroid(円盤, 直進)
+	db	JARA_BASE,   4, 1	; type1: Jara(縦振動+左進)
+	db	TORKAN_BASE, 2, 2	; type2: Torkan(斜めダイブ, 高速)
 ene_atmr:	ds	MAX_ENEMIES
 ene_mtmr:	ds	MAX_ENEMIES
 ene_prev:	ds	MAX_ENEMIES * 2		; 前回 top-left セル 窓1
@@ -2655,6 +2703,24 @@ enemy_data:
 	db	0x80,0x00,0x00,0x00,0x00,0x00,0x00,0x00
 	db	0x7F,0xFE,0xFC,0xF8,0xF0,0xE0,0xC0,0x80
 	db	0x80,0x00,0x00,0x00,0x00,0x00,0x00,0x00
+	ENDIF
+
+;=====================================================================
+; [M8④] Jara(4コマ=16セル=384B)。-DJARA_EXTDATA で roms/jara_ext.inc。
+;   未指定は Toroid を流用(汎用円盤)。
+	IFDEF	JARA_EXTDATA
+jara_data:
+	INCLUDE	"roms/jara_ext.inc"
+	ELSE
+jara_data	EQU	enemy_data
+	ENDIF
+; [M8④] Torkan(2コマ=8セル=192B)。-DTORKAN_EXTDATA で roms/torkan_ext.inc。
+;   未指定は Toroid 先頭2コマを流用。
+	IFDEF	TORKAN_EXTDATA
+torkan_data:
+	INCLUDE	"roms/torkan_ext.inc"
+	ELSE
+torkan_data	EQU	enemy_data
 	ENDIF
 
 ;=====================================================================
