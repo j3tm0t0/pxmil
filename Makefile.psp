@@ -114,7 +114,7 @@ endif
 # バージョン文字列 (メニューに表示)
 PXMIL_VER := $(shell date +%Y%m%d)-$(shell git rev-parse --short HEAD 2>/dev/null || echo dev)
 
-CFLAGS = -G8 -O2 -Wall $(PGOFLAGS) $(SDL_INCLUDE) -DPXMIL_VER='"$(PXMIL_VER)"'
+CFLAGS = -G8 -O2 -Wall $(PGOFLAGS) $(SDL_INCLUDE) -DPXMIL_VER='"$(PXMIL_VER)"' $(XCFLAGS)
 
 CXXFLAGS = $(CFLAGS) -fno-exceptions -fno-rtti
 ASFLAGS = $(CFLAGS)

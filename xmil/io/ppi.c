@@ -4,7 +4,7 @@
 #include	"iocore.h"
 
 
-/* 8255 PPI` */
+/* 8255 PPIï¿½` */
 
 static REG8 getportb(void) {
 
@@ -24,6 +24,16 @@ static REG8 getportb(void) {
 	}
 #endif	/* 0 */
 
+#if defined(PXMIL_PROFPC)
+	{
+		extern UINT8 profpc_enable;
+		extern UINT32 profpc_portb;
+		if (profpc_enable) {
+			profpc_portb++;
+		}
+	}
+#endif
+
 	ppib = iocore.s.ppib;
 	ret = ppib;
 
@@ -39,8 +49,8 @@ static REG8 getportb(void) {
 		ret |= 0x80;						/* 1:DISP */
 	}
 
-	/* ŽÀ‹@‚Ì“®‚«‚ðŒ©‚é‚Æ@‚Ç‚¤‚à “Ç‚Ýž‚ñ‚¾‚çƒŠƒZƒbƒg‚³‚ê‚é‚æ‚¤‚¾H */
-	/* —LŒø”ÍˆÍ‚ªi‚ê‚é‚È‚ç‚»‚¤‚·‚×‚«(VSYNC‚ðŽæ‚è‚±‚Ú‚·ƒ\ƒtƒg‚ª‚ ‚é) */
+	/* ï¿½ï¿½ï¿½@ï¿½Ì“ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Æ@ï¿½Ç‚ï¿½ï¿½ï¿½ ï¿½Ç‚Ýï¿½ï¿½ñ‚¾‚çƒŠï¿½Zï¿½bï¿½gï¿½ï¿½ï¿½ï¿½ï¿½æ‚¤ï¿½ï¿½ï¿½H */
+	/* ï¿½Lï¿½ï¿½ï¿½ÍˆÍ‚ï¿½ï¿½iï¿½ï¿½ï¿½È‚ç‚»ï¿½ï¿½ï¿½ï¿½ï¿½×‚ï¿½(VSYNCï¿½ï¿½ï¿½ï¿½è‚±ï¿½Ú‚ï¿½ï¿½\ï¿½tï¿½gï¿½ï¿½ï¿½ï¿½ï¿½ï¿½) */
 	clock -= iocore.e.vsyncstart;
 	if ((clock >= 0) && (clock < iocore.e.vpulseclock)) {
 		ret |= 0x04;						/* 1:V-SYNC */

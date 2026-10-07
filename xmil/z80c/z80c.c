@@ -18,6 +18,28 @@
 	Z80CORE	z80core;
 	UINT8	mainmem[0x10000];
 
+#if defined(PXMIL_PROFPC)
+/* PC プロファイラ (ゲームのメインループ特定用。常用ビルドには入らない)
+ * - profpc_hist: 命令開始 PC ごとの実行回数
+ * - profpc_trace: 直近の PC リングトレース (周期・バックエッジの特定用)
+ * - profpc_portb: 8255 ポート B (VBLANK) の読み取り回数 (ppi.c が加算) */
+#define	PXMIL_PROFPC_TRACELEN	(1 << 20)
+	UINT32	profpc_hist[0x10000];
+	UINT16	profpc_trace[PXMIL_PROFPC_TRACELEN];
+	UINT32	profpc_tracepos;
+	UINT8	profpc_enable;
+	UINT32	profpc_portb;
+#define	PROFPC_SAMPLE()												\
+		if (profpc_enable) {										\
+			profpc_hist[R_Z80PC]++;									\
+			profpc_trace[profpc_tracepos & (PXMIL_PROFPC_TRACELEN - 1)] \
+												= (UINT16)R_Z80PC;	\
+			profpc_tracepos++;										\
+		}
+#else
+#define	PROFPC_SAMPLE()
+#endif
+
 	UINT8 	z80inc_flag2[256];
 	UINT8	z80dec_flag2[256];
 	UINT8	z80szc_flag[512];
@@ -180,6 +202,7 @@ void CPUCALL z80c_execute(void) {
 #endif
 	{
 		do {
+			PROFPC_SAMPLE();
 			R_Z80R++;
 			GET_PC_BYTE(op);
 			Z80_COUNT(cycles_main[op]);
@@ -188,6 +211,7 @@ void CPUCALL z80c_execute(void) {
 	}
 	else {
 		do {
+			PROFPC_SAMPLE();
 			R_Z80R++;
 			GET_PC_BYTE(op);
 			Z80_COUNT(cycles_main[op]);

@@ -49,6 +49,39 @@ static	UINT		framemax = 1;
 
 #define	framereset(cnt)		framecnt = 0
 
+#if defined(PXMIL_PROFPC)
+/* PC プロファイラ (z80c.c 実装)。autotest のゲーム中区間だけ有効化し、
+ * 終了時に EBOOT の隣へダンプを書き出す */
+extern UINT32	profpc_hist[0x10000];
+extern UINT16	profpc_trace[1 << 20];
+extern UINT32	profpc_tracepos;
+extern UINT8	profpc_enable;
+extern UINT32	profpc_portb;
+extern UINT8	mainmem[0x10000];
+
+static void profpc_writefile(const char *name, const void *buf, UINT len) {
+
+	FILEH fh = file_create(file_getcd((char *)name));
+	if (fh != FILEH_INVALID) {
+		file_write(fh, buf, len);
+		file_close(fh);
+	}
+}
+
+static void profpc_dump(void) {
+
+	char	txt[128];
+
+	profpc_enable = 0;
+	profpc_writefile("pchist.bin", profpc_hist, sizeof(profpc_hist));
+	profpc_writefile("pctrace.bin", profpc_trace, sizeof(profpc_trace));
+	profpc_writefile("ramdump.bin", mainmem, sizeof(mainmem));
+	sprintf(txt, "tracepos=%u portb=%u\n",
+			(unsigned)profpc_tracepos, (unsigned)profpc_portb);
+	profpc_writefile("profstat.txt", txt, (UINT)strlen(txt));
+}
+#endif
+
 /* pccore_exec を計測付きで呼ぶ */
 static void exec_frame(BOOL draw) {
 
@@ -209,6 +242,12 @@ int main(int argc, char *argv[]) {
 			else {
 				joy_autoinput = 0xff;
 			}
+#if defined(PXMIL_PROFPC)
+			/* 終了前 3 秒間だけ記録 (autotest の秒数で計測区間を選べる) */
+			if (el + 3000 >= autotest_ms) {
+				profpc_enable = 1;
+			}
+#endif
 		}
 		scrnmng_dbgtick();
 		/* メニュー中はエミュレーションを一時停止 (音も止める)。
@@ -305,6 +344,9 @@ int main(int argc, char *argv[]) {
 		extern void __gcov_dump(void);
 		__gcov_dump();		/* PGO 訓練: pgo/ に gcda を書き出す */
 	}
+#endif
+#if defined(PXMIL_PROFPC)
+	profpc_dump();
 #endif
 	pspmenu_savegamecfg();	/* ゲームごとの設定も保存 */
 	initsave();		/* 設定 (連射・入替・アスペクト等) を保存 */
