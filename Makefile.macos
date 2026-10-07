@@ -13,7 +13,7 @@ CXX = clang++
 SDL_CFLAGS = $(shell sdl2-config --cflags) -I$(shell sdl2-config --prefix)/include
 SDL_LIBS   = $(shell sdl2-config --libs)
 
-DEFS = -DSUPPORT_OPM -DNO_EXTERNALCHIP
+DEFS = -DSUPPORT_OPM -DNO_EXTERNALCHIP -DXMIL_PROBE_SUPPORT
 INCS = -Ixmil/sdl2/MacOSX/xmilsdl2 -Ixmil -Ixmil/codecnv -Ixmil/common \
 	-Ixmil/embed -Ixmil/embed/menu -Ixmil/embed/menubase -Ixmil/fdd \
 	-Ixmil/font -Ixmil/io -Ixmil/sound -Ixmil/vram -Ixmil/z80c -Ixmil/sdl2

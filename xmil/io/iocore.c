@@ -249,6 +249,7 @@ void IOOUTCALL iocore_out(UINT port, REG8 dat) {
 
 	UINT	msb;
 
+#if defined(XMIL_PROBE_SUPPORT)
 	/* pxmil デバッグプローブ (XMIL_PROBE 有効時のみ):
 	 *   OUT 0x00FE,lo ; OUT 0x00FF,hi で (hi<<8)|lo を stderr に出す。
 	 *   X1 で未使用のポートなので通常動作に影響しない。 */
@@ -269,6 +270,7 @@ void IOOUTCALL iocore_out(UINT port, REG8 dat) {
 			}
 		}
 	}
+#endif
 
 	msb = port >> 8;
 	if (iocore.s.mode) {
