@@ -62,9 +62,20 @@ PAL_R		EQU	0x1100
 PAL_G		EQU	0x1200
 PAL_PLY		EQU	0x1300
 PORT_SCRN	EQU	0x1FD0		; bit3=表示bank bit4=accessbank bit0=24kHz
+SCRN_PCG	EQU	0x20		; PCG モード (0x1FD0 bit5)
 PORT_PPIB	EQU	0x1A01		; bit7=DISP (VBLANK判定)
 TVRAM		EQU	0x3000
 TATTR		EQU	0x2000
+PCG_B		EQU	0x1500		; PCG 定義 B プレーン (|(line<<1))
+PCG_R		EQU	0x1600		; R
+PCG_G		EQU	0x1700		; G
+PCG_DEFCELL	EQU	0x07FF		; PCG 定義に使うセル
+; 自機 PCG コード (2x2) と属性 (PCG=0x20 | プレーン B1 R2 G4 = 白0x07)
+SHIP_TL		EQU	0x80
+SHIP_ATR	EQU	0x20 | 0x02	; PCG + R プレーンのみ (赤, 地形に少なく視認性高)
+; ジョイスティック (PSG reg 0x0e, 負論理)
+PORT_PSGREG	EQU	0x1C00		; レジスタ選択
+PORT_PSGDAT	EQU	0x1B00		; 読み (sndboard_psgsta)
 
 COLS		EQU	40
 ROWS		EQU	25
@@ -108,9 +119,53 @@ realstart:
 	call	fill_emm_map
 	call	build_tables
 
+	IFDEF	SHIP
+	; --- PCG モードを有効にして自機(オリジナル機体)を定義 [M6, 開発中] ---
+	ld	bc, PORT_SCRN
+	ld	a, SCRN_PCG		; bank0 + PCG
+	out	(c), a
+	call	define_ship
+	ld	a, 18
+	ld	(ship_col), a
+	ld	a, 12
+	ld	(ship_row), a
+	ld	hl, 0xFFFF
+	ld	(ship_prev), hl
+	ld	(ship_prev2), hl
+	ENDIF
+
 	IFNDEF	DBG_STATIC
 	; --- 初期プリフィル: pg0..3 の表示窓(列0..39)を埋める ---
 	call	prefill
+	ENDIF
+
+	IFDEF	DBG_SHIP
+	; スクロール無し・page0・POS=0 で自機を左上(行0列0)に置いて halt。
+	ld	bc, PORT_SCRN
+	ld	a, SCRN_PCG		; bank0 + PCG
+	out	(c), a
+	ld	bc, CRTC_REG
+	ld	a, 13
+	out	(c), a
+	inc	c
+	ld	a, 50
+	out	(c), a			; POSL=50 (テキスト追従検証)
+	ld	bc, CRTC_REG
+	ld	a, 12
+	out	(c), a
+	inc	c
+	xor	a
+	out	(c), a			; POSH=0
+	xor	a
+	ld	(ship_col), a
+	ld	(ship_row), a		; 行0列0
+	ld	hl, 50
+	ld	(cur_pos), hl
+	ld	hl, 0xFFFF
+	ld	(ship_prev), hl
+	call	overlay_ship
+.shiphalt:
+	jr	.shiphalt
 	ENDIF
 
 	IFDEF	DBG_POS
@@ -262,6 +317,9 @@ mainloop:
 	rlca
 	rlca				; (np>>1)<<4
 	or	d
+	IFDEF	SHIP
+	or	SCRN_PCG		; PCG モード有効 (自機オーバーレイ用)
+	ENDIF
 	ld	bc, PORT_SCRN
 	out	(c), a
 	; --- 表示 POS = (coarse + (phase&1?1024:0)) & 0x7FF ---
@@ -275,10 +333,17 @@ mainloop:
 	ld	a, h
 	and	0x07
 	ld	h, a
+	IFDEF	SHIP
+	ld	(cur_pos), hl		; このフレームの表示開始セル (自機配置用)
+	ENDIF
 	call	setpos
 	; --- 再描画: np の col39 ---
 	IFNDEF	DBG_NOREDRAW
 	call	redraw_next
+	ENDIF
+	; --- 自機 (PCG) を現 POS に合わせて配置 (スクロール追従) ---
+	IFDEF	SHIP
+	call	overlay_ship
 	ENDIF
 	; --- M4: フレーム作業後の空き時間を計測して表示 ---
 	;   アクティブ表示期間 (DISP=1) に idle カウンタを回し、DISP=0 に
@@ -899,6 +964,183 @@ clear_tvram:
 	jr	nz, .c
 	ret
 
+	IFDEF	SHIP
+;=====================================================================
+; [M6, 開発中] 自機(オリジナル機体)の PCG を定義。4セル(0x80..0x83)。
+;   PCG モードが有効な状態で呼ぶこと。
+define_ship:
+	ld	hl, shipdata
+	ld	a, SHIP_TL
+	ld	(ds_code), a
+	ld	b, 4
+.cl:
+	push	bc
+	ld	a, (ds_code)
+	call	pcg_select		; 定義セルに code をセット
+	ld	d, PCG_B >> 8
+	call	def_plane		; B 8ライン
+	ld	d, PCG_R >> 8
+	call	def_plane
+	ld	d, PCG_G >> 8
+	call	def_plane
+	pop	bc
+	ld	a, (ds_code)
+	inc	a
+	ld	(ds_code), a
+	djnz	.cl
+	ret
+
+; a=code を PCG 定義セル(0x7FF)に選択 (ANK=code, ATR=PCG)
+pcg_select:
+	ld	e, a			; code
+	ld	b, (TVRAM >> 8) | (PCG_DEFCELL >> 8)	; 0x37
+	ld	c, PCG_DEFCELL & 0xFF			; 0xFF
+	out	(c), e			; ANK[0x7FF]=code
+	ld	b, (TATTR >> 8) | (PCG_DEFCELL >> 8)	; 0x27
+	ld	a, 0x20
+	out	(c), a			; ATR[0x7FF]=PCG
+	ret
+
+; d=プレーンポート上位(0x15/16/17), hl->8バイト。port=(d<<8)|(line<<1)
+def_plane:
+	ld	e, 0
+.l:	ld	a, e
+	add	a, a			; line<<1
+	ld	c, a
+	ld	b, d
+	ld	a, (hl)
+	out	(c), a
+	inc	hl
+	inc	e
+	ld	a, e
+	cp	8
+	jr	nz, .l
+	ret
+
+;=====================================================================
+; 自機を現フレームの表示 POS に合わせてテキストVRAMに配置 (スクロール追従)。
+;   前回位置を消去し、新位置(cur_pos + 画面オフセット)に 2x2 を書く。
+overlay_ship:
+	; 前回消去 (両窓)
+	ld	hl, (ship_prev)
+	ld	a, h
+	cp	0xFF
+	jr	z, .noerase
+	call	erase_2x2
+	ld	hl, (ship_prev2)
+	call	erase_2x2
+.noerase:
+	; soff = ship_row*40 + ship_col (画面セルオフセット)
+	ld	h, 0
+	ld	a, (ship_row)
+	ld	l, a
+	add	hl, hl
+	add	hl, hl
+	add	hl, hl			; *8
+	ld	d, h
+	ld	e, l
+	add	hl, hl
+	add	hl, hl			; *32
+	add	hl, de			; *40
+	ld	a, (ship_col)
+	ld	e, a
+	ld	d, 0
+	add	hl, de
+	ld	(ship_soff), hl
+	; 窓1: top-left = (cur_pos + soff) & 0x7FF
+	ld	de, (cur_pos)
+	add	hl, de
+	ld	a, h
+	and	0x07
+	ld	h, a
+	ld	(ship_prev), hl
+	call	write_ship_2x2
+	; 窓2: top-left = ((cur_pos ^ 0x400) + soff) & 0x7FF  (+1024 側の窓)
+	ld	hl, (cur_pos)
+	ld	a, h
+	xor	0x04			; 0x0400 = +1024 窓
+	ld	h, a
+	ld	de, (ship_soff)
+	add	hl, de
+	ld	a, h
+	and	0x07
+	ld	h, a
+	ld	(ship_prev2), hl
+	call	write_ship_2x2
+	ret
+
+; hl=top-left。2x2 (TL,TR,BL,BR = 0x80..0x83) を配置。
+write_ship_2x2:
+	ld	(ws_tl), hl
+	ld	a, SHIP_TL
+	call	put_cell		; TL
+	ld	hl, (ws_tl)
+	inc	hl
+	ld	a, SHIP_TL + 1
+	call	put_cell		; TR
+	ld	hl, (ws_tl)
+	ld	de, COLS
+	add	hl, de
+	ld	a, SHIP_TL + 2
+	call	put_cell		; BL
+	ld	hl, (ws_tl)
+	ld	de, COLS + 1
+	add	hl, de
+	ld	a, SHIP_TL + 3
+	call	put_cell		; BR
+	ret
+
+; hl=cell(要マスク), a=code。ANK=code, ATR=SHIP_ATR。
+put_cell:
+	ld	e, a			; code
+	ld	a, h
+	and	0x07
+	ld	h, a
+	or	(TVRAM >> 8)
+	ld	b, a
+	ld	c, l
+	out	(c), e			; ANK=code
+	ld	a, h
+	or	(TATTR >> 8)
+	ld	b, a
+	ld	a, SHIP_ATR
+	out	(c), a			; ATR
+	ret
+
+; hl=top-left。2x2 を消去(ANK=0,ATR=0)。
+erase_2x2:
+	ld	(ws_tl), hl
+	call	clr_cell
+	ld	hl, (ws_tl)
+	inc	hl
+	call	clr_cell
+	ld	hl, (ws_tl)
+	ld	de, COLS
+	add	hl, de
+	call	clr_cell
+	ld	hl, (ws_tl)
+	ld	de, COLS + 1
+	add	hl, de
+	call	clr_cell
+	ret
+
+clr_cell:
+	ld	a, h
+	and	0x07
+	ld	h, a
+	or	(TVRAM >> 8)
+	ld	b, a
+	ld	c, l
+	xor	a
+	out	(c), a			; ANK=0
+	ld	a, h
+	or	(TATTR >> 8)
+	ld	b, a
+	xor	a
+	out	(c), a			; ATR=0
+	ret
+	ENDIF	; SHIP
+
 ;=====================================================================
 ; データ
 crtc_tbl:			; 40桁x25行 15kHz (defreg と同一)
@@ -952,5 +1194,32 @@ bt_shrpg:	db	0
 si_base:	dw	0
 si_idx:		db	0
 prev_base:	dw	0
+	IFDEF	SHIP
+; --- 自機 (M6, 開発中) ---
+cur_pos:	dw	0		; このフレームの表示開始セル
+ship_col:	db	0		; 自機 画面セル列 (0..38)
+ship_row:	db	0		; 自機 画面セル行 (0..23)
+ship_prev:	dw	0		; 前回の自機 top-left セル 窓1 (0xFFFF=無効)
+ship_prev2:	dw	0		; 窓2
+ship_soff:	dw	0		; 画面セルオフセット
+ws_tl:		dw	0
+ds_code:	db	0
+
+; オリジナル機体 16x16 = 4セル(TL,TR,BL,BR). R プレーンのみ(赤, 視認性)。右向き。
+;   チームが自前抽出スプライトに差し替える場合はここを置換。
+shipdata:
+	db	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00	; TL B
+	db	0x00,0x00,0x3F,0x3F,0x3F,0x3F,0x3F,0x3F	; TL R
+	db	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00	; TL G
+	db	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00	; TR B
+	db	0x00,0x0C,0x3C,0xFC,0x3C,0x0C,0x00,0x00	; TR R
+	db	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00	; TR G
+	db	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00	; BL B
+	db	0x3F,0x3F,0x3F,0x3F,0x3F,0x00,0x00,0x00	; BL R
+	db	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00	; BL G
+	db	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00	; BR B
+	db	0x00,0x00,0x0C,0x3C,0xFC,0x3C,0x0C,0x00	; BR R
+	db	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00	; BR G
+	ENDIF	; SHIP
 
 	END
