@@ -373,6 +373,7 @@ CST_FRAME	EQU	3040		; coarse=190 → col211 は画面 col21 に表示
 	or	a
 	sbc	hl, de
 	jr	nz, .cst_skip
+	; gobj_list[0] に crater を強制(crater_gram の回帰テスト用)。
 	ld	hl, gobj_list
 	ld	(gc_ptr), hl
 	call	crater_write_obj

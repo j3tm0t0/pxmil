@@ -621,8 +621,11 @@ blaster_draw:
 ;   地上物は xevi が地形タイルに焼き込み、破壊時にクレータータイルで上書きする。
 ;   当たり判定は「ワールド(tilemap)座標リスト」を参照する。実データ(リスト+クレータ
 ;   タイル)は -DGOBJ_EXTDATA で roms/ から読む。未指定時は空リスト(当たり無し)。
-;   画面セル列 X ↔ tilemap列: tilemap_col = coarse + X + GOBJ_OFFSET (xevi と共同確認中)。
-GOBJ_OFFSET	EQU	40		; prefill の -COLS 由来(実測確認予定)
+;   画面セル列 X ↔ tilemap列: tilemap_col = coarse + X (実測: screen_col = tile_col - coarse)。
+;   行はスクロールしないので tile_row = 画面セル行 col_ey。
+;   実測根拠(crater_gram self-test): tile col211 を coarse191 で screen col20,
+;   coarse198 で col13 に描画 => screen_col = tile_col - coarse, OFFSET=0。
+GOBJ_OFFSET	EQU	0		; screen_col = tile_col - coarse (実測確定)
 MAX_GOBJ	EQU	16		; エリアあたり地上物の最大(破壊フラグ用)
 
 ; crater_write_emm: EMM のタイルマップ(col,row)を crater_id で上書き(再展開で反映)。
