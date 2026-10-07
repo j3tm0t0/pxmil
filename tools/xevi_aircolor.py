@@ -125,11 +125,12 @@ def cmd_codes(ex, rgb, sp_pen, gfx3, tiles):
 #   当初の Toroid=緑(code24) / Solvalou=白青赤(code35) は誤り。
 #   code 7 = 白/灰/赤(金属色)を多くの敵が共有。黒球=code44。爆発=code12(炎)。
 AERIAL = [
-    ("Solvalou(自機)",    162,  7),   # 白/灰/赤 (tile160-165, 中央赤コックピット)
+    ("Solvalou(自機)",    162,  1),   # 灰ボディ+赤2点+青翼端 (code1。実機スクショ一致)
     ("Toroid(トーロイド)",  10,  7),   # 銀灰リング+中心赤 (緑ではない)
     ("Bacura(バキュラ)",   216,  2),   # 銀/クリーム 回転板
     ("AndorGenesis",      200,  7),   # 銀灰ボディ+赤
     ("Zakato/Brag(黒球)",  184, 44),   # 黒球+灰 (ザカート/ブラグザカート)
+    ("Blaster照準/弾",     240, 35),   # 青 (ブラスター照準/ギドスパリオ弾)
     ("爆発(explosion)",    104, 12),   # 赤/橙/黄(炎)
 ]
 
@@ -306,6 +307,10 @@ def cmd_build(ex, rgb, sp_pen, gfx3):
     # 案C: 色相保持(手置き7色)
     C_idx = [idx_of(3, 3, 3), idx_of(3, 0, 0), idx_of(0, 3, 0),
              idx_of(0, 0, 3), idx_of(3, 3, 0), idx_of(3, 1, 0), idx_of(2, 2, 2)]
+    # 案D(推奨): 実機=金属。白/明灰/暗灰/黒 + 赤 + 青(弾/翼端) + 橙(炎)。
+    #   純ΔE(A)は低pixelの青を落とすが、弾/照準の視認性のため意味的に青を残す。
+    D_idx = [idx_of(3, 3, 3), idx_of(2, 2, 2), idx_of(1, 1, 1), idx_of(0, 0, 0),
+             idx_of(3, 0, 0), idx_of(1, 2, 3), idx_of(3, 2, 1)]
 
     def metrics(sel):
         D = de2000(tgt_lab[:, None, :], cand_lab[None, sel, :]).min(axis=1)
@@ -313,7 +318,7 @@ def cmd_build(ex, rgb, sp_pen, gfx3):
         return wsum, float(D.max())
 
     proposals = [("A_globalDE", A_idx), ("B_anchored", B_idx),
-                 ("C_hue", C_idx)]
+                 ("C_hue", C_idx), ("D_recommended", D_idx)]
 
     # 検証: 爆発/弾の黄・橙・赤が各案でどの色に写るか(緑化アーティファクト検出)
     for key, sel in [("A", A_idx), ("B", B_idx), ("C", C_idx)]:
@@ -354,19 +359,20 @@ def cmd_build(ex, rgb, sp_pen, gfx3):
     # 全敵 x 3案 を1枚に: original | A | B | C
     scale = 4
     cw = 16 * scale + 6
-    allimg = Image.new("RGB", (cw * 4 + 12, cw * len(AERIAL) + 20), (18, 18, 22))
+    allimg = Image.new("RGB", (cw * 5 + 16, cw * len(AERIAL) + 20), (18, 18, 22))
     dr = ImageDraw.Draw(allimg)
-    for col, lab in enumerate(["original", "A", "B", "C"]):
+    for col, lab in enumerate(["original", "A", "B", "C", "D(推奨)"]):
         dr.text((col * (cw + 4) + 4, 2), lab, fill=(230, 230, 230))
     palmap = {"A": [cols[i] for i in A_idx], "B": [cols[i] for i in B_idx],
-              "C": [cols[i] for i in C_idx]}
-    lmap = {"A": cand_lab[A_idx], "B": cand_lab[B_idx], "C": cand_lab[C_idx]}
+              "C": [cols[i] for i in C_idx], "D": [cols[i] for i in D_idx]}
+    lmap = {"A": cand_lab[A_idx], "B": cand_lab[B_idx], "C": cand_lab[C_idx],
+            "D": cand_lab[D_idx]}
     for r, (name, tile, cs, hist) in enumerate(per):
         px = ex.decode_sprite(gfx3, tile)
         y = 18 + r * cw
         allimg.paste(render_tile(rgb, sp_pen, px, cs, scale, (28, 28, 34)),
                      (4, y))
-        for ci, key in enumerate(["A", "B", "C"]):
+        for ci, key in enumerate(["A", "B", "C", "D"]):
             rem = remap_sprite_img(ex, rgb, sp_pen, px, cs, palmap[key],
                                    lmap[key], scale)
             allimg.paste(rem, ((ci + 1) * (cw + 4) + 4, y))
