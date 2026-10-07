@@ -79,6 +79,7 @@ SHIPGEN		EQU	0xC8A0		; シフト版生成バッファ 72バイト (IDBUF後)
 SHIP_HX0	EQU	18 * 4		; 自機初期横位置 (2px単位, 列18 位相0)
 SHIP_ROW0	EQU	12		; 自機初期行
 MOVE_DELAY	EQU	3		; 縦移動の間隔(フレーム)。横は毎フレーム 2px
+SHIP_SCRN_BASE	EQU	0		; ship_init の PCGMODE 書込ベース (8色は0でよい)
 
 COLS		EQU	40
 ROWS		EQU	25

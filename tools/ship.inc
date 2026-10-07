@@ -22,6 +22,8 @@
 ;     SHIP_HX0             初期横位置 (2px単位。列18 位相0 = 18*4=72)
 ;     SHIP_ROW0            初期行 (12)
 ;     MOVE_DELAY           縦移動の間隔フレーム (3)。横は毎フレーム 2px
+;     SHIP_SCRN_BASE       ship_init で PCGMODE を立てる際の 0x1FD0 ベース
+;                          (8色=0, 64色=SCRN_15K[0x02] など画面モードを保つ値)
 ;   変数: cur_pos (dw) — 現フレームの表示開始セル。呼び出し側が毎フレーム設定。
 ;
 ; --- 公開ルーチン ---
@@ -59,8 +61,8 @@ scrn_out:
 ;=====================================================================
 ; 起動時 1 回。PCGMODE を立て、シフト版を生成し、位置を初期化。
 ship_init:
-	xor	a
-	call	scrn_out		; bank0 + PCGMODE
+	ld	a, SHIP_SCRN_BASE	; 画面モードのベースビット (8色=0, 64色=SCRN_15K)
+	call	scrn_out		; ベース + PCGMODE
 	call	gen_ship
 	ld	a, SHIP_HX0
 	ld	(ship_hx), a
