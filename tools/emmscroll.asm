@@ -315,9 +315,9 @@ mainloop:
 	rlca
 	rlca				; (np>>1)<<4
 	or	d
-	; 注: PCG 表示は属性ビット(TRAM_ATR&0x20)のみで決まる(makechr8)。
-	;     SCRN_PCGMODE は定義(pcg_o)時のみ必要で、表示中に立てると GRAM
-	;     スクロールが崩れるため mainloop では立てない。
+	IFDEF	SHIP
+	or	SCRN_PCG		; PCG 表示には PCGMODE が必要 (状態差分で確認)
+	ENDIF
 	ld	bc, PORT_SCRN
 	out	(c), a
 	; --- POS = (coarse + (phase&1?1024:0)) & 0x7FF ---

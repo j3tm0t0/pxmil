@@ -55,7 +55,7 @@ static void flashupdatetmp(void) {
 			udt = udtbase;
 			if (!y2) {
 				if (atr & (TRAMATR_Yx2 << 8)) {
-					udt |= (UPDATE_TRAM | 1) << 8;		// ¶’×‚êc”{Šp
+					udt |= (UPDATE_TRAM | 1) << 8;		// ï¿½ï¿½ï¿½×‚ï¿½cï¿½{ï¿½p
 				}
 				else {
 					y2 = TRUE;
@@ -63,16 +63,16 @@ static void flashupdatetmp(void) {
 			}
 			if (!y2) {
 				if (atr & (TRAMATR_Yx2 << 0)) {
-					udt |= (UPDATE_TRAM | 1) << 0;		// ‰E’×‚êc”{Šp
+					udt |= (UPDATE_TRAM | 1) << 0;		// ï¿½Eï¿½×‚ï¿½cï¿½{ï¿½p
 				}
 				else {
 					y2 = TRUE;
 				}
 			}
-			if (atr & (TRAMATR_Xx2 << 8)) {				// ¶‘¤”{Šp?
+			if (atr & (TRAMATR_Xx2 << 8)) {				// ï¿½ï¿½ï¿½ï¿½ï¿½{ï¿½p?
 				udt |= 0x0812;
 			}
-			if (atr & (TRAMATR_Xx2 << 0)) {				// ‰E‘¤”{Šp?
+			if (atr & (TRAMATR_Xx2 << 0)) {				// ï¿½Eï¿½ï¿½ï¿½{ï¿½p?
 				udt |= 0x0008;
 			}
 			if ((TRAMUPDATE(posl) ^ (udt >> 8)) & 0x1f) {
@@ -262,9 +262,9 @@ static void changecrtc(void) {
 	}
 
 	surfsy = charcy * surfcy * 2;
-	// ƒnƒCƒhƒ‰ƒCƒh‚R‚Å‰æ–Ê‚ªÁ‚¦‚È‚¢‚Ì‚ÅƒƒWƒbƒN‚ğC³‚·‚×‚µ
+	// ï¿½nï¿½Cï¿½hï¿½ï¿½ï¿½Cï¿½hï¿½Rï¿½Å‰ï¿½Ê‚ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½È‚ï¿½ï¿½Ì‚Åƒï¿½ï¿½Wï¿½bï¿½Nï¿½ï¿½ï¿½Cï¿½ï¿½ï¿½ï¿½ï¿½×‚ï¿½
 	x = min(scrnxmax, makescrn.surfcx);
-	if (surfcx < x) {								// ¬‚³‚­‚È‚Á‚½
+	if (surfcx < x) {								// ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½È‚ï¿½ï¿½ï¿½
 		x = (x - surfcx) * 8;
 		p = screenmap + (surfcx * 8);
 		y = surfsy;
@@ -296,6 +296,36 @@ void scrnupdate(void) {
 		return;
 	}
 	corestat.drawframe = 0;
+
+	/* pxmil ãƒ‡ãƒãƒƒã‚°: çŠ¶æ…‹å·®åˆ†ç”¨ (Mac é–‹ç™ºãƒ“ãƒ«ãƒ‰ XMIL_PROBE_SUPPORT é™å®š,
+	   ç’°å¢ƒå¤‰æ•° XMIL_STATEDUMP æœ‰åŠ¹æ™‚ã®ã¿ stderr ã¸)ã€‚æç”»çŠ¶æ…‹ã®æ¯”è¼ƒç”¨ã€‚ */
+#if defined(XMIL_PROBE_SUPPORT)
+	{
+		static int sd_init = 0;
+		static int sd_on = 0;
+		static long sd_n = 0;
+		if (!sd_init) { sd_init = 1; sd_on = (getenv("XMIL_STATEDUMP") != NULL); }
+		if (sd_on) sd_n++;
+		if (sd_on && (sd_n >= 300) && (sd_n < 340)) {
+			int i, pcgcells = 0;
+			fprintf(stderr, "STATE[%ld] SCRN=%02x PLY=%02x pos=%04x dispmode=%02x CRTC=",
+					sd_n, crtc.s.SCRN_BITS, crtc.s.rgbp[CRTC_PLY],
+					crtc.e.pos, makescrn.dispmode);
+			for (i = 0; i < 18; i++) fprintf(stderr, "%02x ", crtc.s.reg[i]);
+			/* PCG ã‚»ãƒ« (å±æ€§ bit5) ã‚’èµ°æŸ»: addr, ank, atr ã‚’æœ€åˆã®8å€‹ */
+			for (i = 0; i < 0x800; i++) {
+				if (TRAM_ATR(i) & 0x20) {
+					if (pcgcells < 8) {
+						fprintf(stderr, "| PCG@%03x ank=%02x atr=%02x",
+								i, TRAM_ANK(i), TRAM_ATR(i));
+					}
+					pcgcells++;
+				}
+			}
+			fprintf(stderr, " |pcgcnt=%d\n", pcgcells);
+		}
+	}
+#endif	/* XMIL_PROBE_SUPPORT */
 
 	flag = makescrn.nextdraw;
 	if (crtc.e.scrnflash) {
