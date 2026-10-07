@@ -210,9 +210,24 @@ mainloop:
 	call	ship_update		; ジョイスティック移動 + 自機描画 (vblank 中)
 	call	sprite_update		; M7: 弾の発射/移動/描画
 	ENDIF
-	call	start_redraw		; np col39 の再描画を開始 (DMA+合成準備)
+	; 4MHz 取りこぼし対策: スクロールステップフレームでは重いエンジン処理
+	; (start_redraw の DMA + do_redraw_chunk の列展開) を走らせない。
+	; sr_pending を立てて次の非ステップフレームへ回し、chunk は非ステップ
+	; 7 フレームに配分する (CHUNK=4 * 7 = 28 >= 25)。自機/弾/敵の描画と
+	; 重ならないようにして最悪フレームの余裕を確保する。
+	ld	a, 1
+	ld	(sr_pending), a
+	jr	.framesync
 .nowork:
-	call	do_redraw_chunk		; 毎フレーム K 行ずつ展開 (負荷分散, 内部で VBLANK エッジ監視)
+	ld	a, (sr_pending)		; 非ステップ: 保留の start_redraw を1回だけ
+	or	a
+	jr	z, .dochunk
+	xor	a
+	ld	(sr_pending), a
+	call	start_redraw		; np col39 の再描画を開始 (DMA+合成準備)
+.dochunk:
+	call	do_redraw_chunk		; K 行ずつ展開 (非ステップ7フレームに配分)
+.framesync:
 	; --- フレーム同期 + 取りこぼし(スリップ)検出 ---
 	; VBLANK は極小で再描画がアクティブ表示に食い込むのは正常(非表示窓へ書く)。
 	; 真の取りこぼし = 1反復の作業が1フレームを超え VBLANK を跨ぐこと。
@@ -1010,6 +1025,7 @@ chunk_start:	db	0
 chunk_cnt:	db	0
 vbl_seen:	dw	0		; 観測した VBLANK(DISP 1->0)エッジ総数
 prev_disp:	db	0		; 前回ポーリング時の DISP(0x80/0)
+sr_pending:	db	0		; start_redraw 保留フラグ(ステップフレームで立て翌フレーム実行)
 
 	IFDEF	SHIP
 ; テキストパレット A案 7色 (slot1..7 = port 0x1FB9..0x1FBF)。値=(G<<4)|(R<<2)|B。
