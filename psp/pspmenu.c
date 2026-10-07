@@ -11,6 +11,7 @@
 #include	"compiler.h"
 #include	"dosio.h"
 #include	"pccore.h"
+#include	"profile.h"
 #include	"diskdrv.h"
 #include	"milstr.h"
 #include	"taskmng.h"
@@ -77,6 +78,48 @@ static char		s_mounted[2][NAMELEN];	/* 表示用のマウント中ファイル�
 char	pspcfg_fdd0[NAMELEN];
 char	pspcfg_fdd1[NAMELEN];
 
+/* ---- ゲームごとの設定 (FDD0 のイメージ名で識別し、
+ * disk/<イメージ名>.cfg に保存) ---- */
+
+static char	s_game[NAMELEN];		/* 設定を紐づけている FDD0 名 */
+
+static const PFTBL gametbl[] = {
+	{"PSPKeyPd", PFTYPE_BOOL,				&pspcfg_keymode,	0},
+	{"btnRAPID", PFTYPE_BOOL,				&xmilcfg.BTN_RAPID,	0},
+	{"btn_MODE", PFTYPE_BOOL,				&xmilcfg.BTN_MODE,	0},
+	{"PSPClkMl", PFTYPE_UINT8 + PFFLAG_MAX,	&pspcfg_clockmul,	4}};
+
+static void gamecfg_path(char *path, int size, const char *name) {
+
+	milstr_ncpy(path, file_getcd("disk"), size);
+	file_setseparator(path, size);
+	milstr_ncat(path, name, size);
+	milstr_ncat(path, ".cfg", size);
+}
+
+/* 現在のゲームの設定を書き出す */
+void pspmenu_savegamecfg(void) {
+
+	char	path[MAX_PATH];
+
+	if (s_game[0] == '\0') {
+		return;
+	}
+	gamecfg_path(path, sizeof(path), s_game);
+	profile_iniwrite(path, "pxmil", gametbl, NELEMENTS(gametbl), NULL);
+}
+
+static void gamecfg_load(const char *name) {
+
+	char	path[MAX_PATH];
+
+	milstr_ncpy(s_game, name, NAMELEN);
+	gamecfg_path(path, sizeof(path), name);
+	profile_iniread(path, "pxmil", gametbl, NELEMENTS(gametbl), NULL);
+	pspmenu_applyclock();
+	keypad_releaseall();
+}
+
 /* ---- 操作 ---- */
 
 int pspmenu_isopen(void) {
@@ -124,6 +167,10 @@ static void mount(int drive, const char *name) {
 	diskdrv_setfdd((REG8)drive, path, 0);
 	milstr_ncpy(s_mounted[drive], name, NAMELEN);
 	milstr_ncpy((drive == 0) ? pspcfg_fdd0 : pspcfg_fdd1, name, NAMELEN);
+	if (drive == 0) {
+		pspmenu_savegamecfg();		/* 直前のゲームぶんを保存してから */
+		gamecfg_load(name);
+	}
 }
 
 static void eject(int drive) {
@@ -131,6 +178,10 @@ static void eject(int drive) {
 	diskdrv_setfdd((REG8)drive, NULL, 0);
 	s_mounted[drive][0] = '\0';
 	((drive == 0) ? pspcfg_fdd0 : pspcfg_fdd1)[0] = '\0';
+	if (drive == 0) {
+		pspmenu_savegamecfg();
+		s_game[0] = '\0';
+	}
 }
 
 static void decide_main(void) {
@@ -349,6 +400,9 @@ BOOL pspmenu_mountlast(void) {
 		file_close(fh);
 		diskdrv_setfdd((REG8)d, path, 0);
 		milstr_ncpy(s_mounted[d], name, NAMELEN);
+		if (d == 0) {
+			gamecfg_load(name);
+		}
 		done = TRUE;
 	}
 	return(done);

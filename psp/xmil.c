@@ -306,6 +306,7 @@ int main(int argc, char *argv[]) {
 		__gcov_dump();		/* PGO 訓練: pgo/ に gcda を書き出す */
 	}
 #endif
+	pspmenu_savegamecfg();	/* ゲームごとの設定も保存 */
 	initsave();		/* 設定 (連射・入替・アスペクト等) を保存 */
 	perf_dump();	/* pxmil.log に毎秒の計測値を書き出す */
 
