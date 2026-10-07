@@ -100,11 +100,11 @@ realstart:
 
 	ld	hl, 0
 	ld	(framecnt), hl
+	ld	(vbl_seen), hl
 	ld	hl, 0xFFFF
 	ld	(last_adv), hl		; 強制再描画
 	xor	a
-	ld	(dropped), a
-	ld	(dropped+1), a
+	ld	(prev_disp), a
 
 mainloop:
 	call	wait_vblank
@@ -160,11 +160,12 @@ mainloop:
 	call	setpos
 	call	start_redraw		; np col39 の再描画を開始 (DMA+合成準備)
 .nowork:
-	call	do_redraw_chunk		; 毎フレーム K 行ずつ展開 (負荷分散)
-	; --- idle 計測 + 取りこぼし検出 ---
-	; VBLANK は極小で、再描画がアクティブ表示に食い込むのは正常(非表示窓へ書くので
-	; 乱れない)。真の取りこぼし = フレームの作業がアクティブ期間を使い切り、
-	; 次フレームに食い込むこと = idle(アクティブ中の空きループ回数)が 0。
+	call	do_redraw_chunk		; 毎フレーム K 行ずつ展開 (負荷分散, 内部で VBLANK エッジ監視)
+	; --- フレーム同期 + 取りこぼし(スリップ)検出 ---
+	; VBLANK は極小で再描画がアクティブ表示に食い込むのは正常(非表示窓へ書く)。
+	; 真の取りこぼし = 1反復の作業が1フレームを超え VBLANK を跨ぐこと。
+	; VBLANK(DISP 1->0)エッジ総数 vbl_seen を数え、反復数 framecnt と比較。
+	; 1反復=1エッジ(spin の end-active)が正常。chunk 内で余計なエッジを拾えば slip。
 	call	wait_active		; DISP=1 (アクティブ開始) まで
 	ld	de, 0
 	ld	bc, PORT_PPIB
@@ -175,23 +176,25 @@ mainloop:
 	jr	.spin
 .spindone:
 	ld	(idlecnt), de
-	; idle==0 なら取りこぼし
-	ld	a, d
-	or	e
-	jr	nz, .okframe
-	ld	hl, (dropped)
+	; spin 脱出 = この表示フレーム末尾の VBLANK(1->0)
+	ld	hl, (vbl_seen)
 	inc	hl
-	ld	(dropped), hl
-.okframe:
-	; probe: 下位=dropped, その後 idle (交互でなく、まず dropped を単調に見る)
-	ld	hl, (dropped)
+	ld	(vbl_seen), hl
+	xor	a
+	ld	(prev_disp), a		; DISP=0
+	; framecnt++
+	ld	hl, (framecnt)
+	inc	hl
+	ld	(framecnt), hl
+	; dropped = vbl_seen - framecnt (= 跨いだ余分な VBLANK 数)
+	ld	de, (vbl_seen)
+	ex	de, hl
+	or	a
+	sbc	hl, de			; hl = vbl_seen - framecnt
 	ld	bc, 0x00FE
 	out	(c), l
 	ld	bc, 0x00FF
 	out	(c), h
-	ld	hl, (framecnt)
-	inc	hl
-	ld	(framecnt), hl
 	jp	mainloop
 
 ;=====================================================================
@@ -304,6 +307,27 @@ do_redraw_chunk:
 	inc	a
 	ld	(chunk_cnt), a
 	pop	bc
+	; VBLANK エッジ監視 (重い展開中に VBLANK を跨いだら slip): DISP 1->0 で vbl_seen++
+	push	bc
+	ld	bc, PORT_PPIB
+	in	a, (c)
+	and	0x80			; now DISP
+	pop	bc
+	ld	e, a			; now
+	ld	a, (prev_disp)
+	ld	d, a			; prev
+	ld	a, e
+	ld	(prev_disp), a
+	ld	a, e
+	or	a
+	jr	nz, .noedge		; now!=0
+	ld	a, d
+	or	a
+	jr	z, .noedge		; prev=0
+	ld	hl, (vbl_seen)
+	inc	hl
+	ld	(vbl_seen), hl
+.noedge:
 	djnz	.cl
 .composed:
 	; 散布: chunk_cnt 行 (chunk_start から) を bank0/bank1 へ
@@ -946,5 +970,7 @@ palcnt:		db	0
 rd_active:	db	0
 chunk_start:	db	0
 chunk_cnt:	db	0
+vbl_seen:	dw	0		; 観測した VBLANK(DISP 1->0)エッジ総数
+prev_disp:	db	0		; 前回ポーリング時の DISP(0x80/0)
 
 	END
