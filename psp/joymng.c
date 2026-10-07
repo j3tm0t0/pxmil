@@ -38,7 +38,7 @@ BYTE joymng_getstat(void) {
 	BYTE		ret;
 
 	ret = joy_autoinput;
-	if (pspmenu_isopen() || softkbd_isvisible()) {
+	if (pspmenu_isopen() || softkbd_isvisible() || pspcfg_keymode) {
 		return(0xff);			/* メニュー/ソフトキーボード中はパッド入力を渡さない */
 	}
 	if (sceCtrlPeekBufferPositive(&pad, 1) <= 0) {

@@ -22,6 +22,7 @@
  * ゼビウス等は VSYNC 待ちでペースを取るため、クロックを上げると
  * ゲーム速度そのままで描き替えが毎フレーム間に合うようになる。 */
 UINT8	pspcfg_clockmul = 2;
+UINT8	pspcfg_keymode = 0;		/* 0=JOYSTICK 1=KEYPAD (パッド→キーボード割当) */
 
 /* Z80 コアが命令ごとに消費するサイクルへの倍率 (256 = 等倍)。
  * フレーム構造・CTC・実時間は 4MHz ドメインのままなので、音楽テンポを
@@ -52,6 +53,7 @@ enum {
 	MID_ASPECT,
 	MID_OVERLAY,
 	MID_CLOCK,
+	MID_PADMODE,
 	MID_CLOSE,
 	MID_EXIT,
 	MID_MAX
@@ -157,6 +159,10 @@ static void decide_main(void) {
 			pspcfg_clockmul = (UINT8)((pspcfg_clockmul - 1) % 3 + 2);
 			pspmenu_applyclock();
 			break;
+		case MID_PADMODE:
+			pspcfg_keymode ^= 1;
+			keypad_releaseall();
+			break;
 		case MID_CLOSE:
 			s_open = 0;
 			break;
@@ -183,6 +189,10 @@ void pspmenu_input(int dx, int dy, int decide, int back) {
 			if (s_sel == MID_CLOCK) {
 				pspcfg_clockmul = (UINT8)((pspcfg_clockmul - 1) % 3 + 2);
 				pspmenu_applyclock();
+			}
+			if (s_sel == MID_PADMODE) {
+				pspcfg_keymode ^= 1;
+				keypad_releaseall();
 			}
 		}
 		if (decide) {
@@ -268,8 +278,10 @@ void pspmenu_draw(UINT16 *dst) {
 		drawitem(dst, 7, buf, (s_sel == MID_OVERLAY), COL_ITEM);
 		sprintf(buf, "CPU CLOCK: < %dMHZ >", pspcfg_clockmul * 2);
 		drawitem(dst, 8, buf, (s_sel == MID_CLOCK), COL_ITEM);
-		drawitem(dst, 9, "CLOSE MENU", (s_sel == MID_CLOSE), COL_ITEM);
-		drawitem(dst, 10, "EXIT EMULATOR", (s_sel == MID_EXIT), COL_ITEM);
+		sprintf(buf, "PAD MODE: < %s >", (pspcfg_keymode) ? "KEYPAD" : "JOYSTICK");
+		drawitem(dst, 9, buf, (s_sel == MID_PADMODE), COL_ITEM);
+		drawitem(dst, 10, "CLOSE MENU", (s_sel == MID_CLOSE), COL_ITEM);
+		drawitem(dst, 11, "EXIT EMULATOR", (s_sel == MID_EXIT), COL_ITEM);
 		skb_drawtext(dst, PX + 16, PY + PH - 14,
 			"UP/DOWN:MOVE  O:OK  X:CLOSE", COL_DIM, 2);
 	}

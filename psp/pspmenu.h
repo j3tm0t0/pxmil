@@ -12,6 +12,8 @@ void pspmenu_draw(UINT16 *dst);
 void pspmenu_setmounted(int drive, const char *name);
 void pspmenu_applyclock(void);
 extern UINT8 pspcfg_clockmul;
+extern UINT8 pspcfg_keymode;
+void keypad_releaseall(void);
 
 #ifdef __cplusplus
 }

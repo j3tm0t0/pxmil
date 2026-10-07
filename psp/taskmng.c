@@ -24,6 +24,75 @@
 #include	"joymng.h"
 #include	"pspmenu.h"
 #include	"softkbd.h"
+#include	"keystat.h"
+
+/* ---- KEYPAD モード: パッドをキーボードに割り当てる ----
+ * D-pad/アナログ = テンキー (斜めは 1379)、□=Z ×=SPACE ○=X
+ * △=CTRL+W (Brain Breaker のワープエンジン)。 */
+
+#define	NKEY_W		0x11
+#define	NKEY_Z		0x29
+#define	NKEY_X_	0x2a
+#define	NKEY_SPACE	0x34
+#define	NKEY_CTRL	0x74
+static const UINT8 kp_dir[16] = {	/* bit0=上 bit1=下 bit2=左 bit3=右 */
+	0x00, 0x43, 0x4b, 0x00, 0x46, 0x42, 0x4a, 0x46,
+	0x48, 0x44, 0x4c, 0x48, 0x00, 0x43, 0x4b, 0x00 };
+
+static	UINT8	kp_curdir;			/* 押下中のテンキーコード (0=なし) */
+static	UINT32	kp_buttons;			/* 押下中のボタン (PSP ビット) */
+
+static void keypad_key(UINT32 btn, UINT32 now, UINT8 code) {
+
+	UINT32 was = kp_buttons & btn;
+	if ((now & btn) && !was) {
+		keystat_keydown(code);
+	}
+	else if (!(now & btn) && was) {
+		keystat_keyup(code);
+	}
+}
+
+static void keypad_input(const SceCtrlData *pad) {
+
+	UINT32	now = pad->Buttons;
+	UINT	d = 0;
+	UINT8	code;
+
+	if ((pad->Buttons & PSP_CTRL_UP) || (pad->Ly < 64)) d |= 1;
+	if ((pad->Buttons & PSP_CTRL_DOWN) || (pad->Ly > 192)) d |= 2;
+	if ((pad->Buttons & PSP_CTRL_LEFT) || (pad->Lx < 64)) d |= 4;
+	if ((pad->Buttons & PSP_CTRL_RIGHT) || (pad->Lx > 192)) d |= 8;
+	code = kp_dir[d];
+	if (code != kp_curdir) {
+		if (kp_curdir) {
+			keystat_keyup(kp_curdir);
+		}
+		if (code) {
+			keystat_keydown(code);
+		}
+		kp_curdir = code;
+	}
+
+	keypad_key(PSP_CTRL_SQUARE, now, NKEY_Z);
+	keypad_key(PSP_CTRL_CROSS, now, NKEY_SPACE);
+	keypad_key(PSP_CTRL_CIRCLE, now, NKEY_X_);
+	/* △ = CTRL+W */
+	keypad_key(PSP_CTRL_TRIANGLE, now, NKEY_CTRL);
+	keypad_key(PSP_CTRL_TRIANGLE, now, NKEY_W);
+	kp_buttons = now;
+}
+
+/* モード切替/メニュー遷移時に押しっぱなしを解放する */
+void keypad_releaseall(void) {
+
+	if (kp_curdir) {
+		keystat_keyup(kp_curdir);
+		kp_curdir = 0;
+	}
+	kp_buttons = 0;
+	keystat_allrelease();
+}
 
 	BOOL	task_avail;
 
@@ -124,6 +193,10 @@ void taskmng_rol(void) {
 			scrnmng_menupresent();
 		}
 		return;
+	}
+
+	if (pspcfg_keymode) {
+		keypad_input(&pad);
 	}
 
 	if (pressed & PSP_CTRL_START) {
