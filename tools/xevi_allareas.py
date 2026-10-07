@@ -14,12 +14,19 @@
                        engine は common[used[i]] を RAM[TB+i*48] へ DMA。
   areaNN_map.bin     : ローカルIDタイルマップ(256列×25行×2B = RAM アドレス TB+local_idx*48)
   areaNN_gobj.bin    : 地上物リスト。gobj_count(1B)+ 1件[col:2B,row:1B,type:1B,
-                       crater_addr[4]:各2B]。続いて sol_count(1B)+
+                       size:1B, crater_addr[(2*size)^2]:各2B]。
+                       size=1 → 2x2(16x16), size=2 → 4x4(32x32)。
+                       続いて sol_count(1B)+
                        1件[col:2B,row:1B, frame[4]の各[TL,TR,BL,BR]addr:2B×16]。
 座標: col=(trigger+0xFD)&0xFF, row=(spriteY>>3)-2 (エリア1で検証, 全エリア共通式)。
-地上物焼込: Barra(0x1E)/Zolbak(0x1F)/Logram(0x26)/GaruBarra(0x20=Barra同形)。
+地上物焼込: Barra(0x1E)/Zolbak(0x1F)/Logram(0x26)/GaruBarra(0x20=Barra同形)/
+  BozaLogram(0x2D=Logram同形)=16x16(検証済)。
   Grobda(動)=PCGスプライト別, Sol(0x1D)=命中時上書き。
-  ※GaruDerota(0x21, 32x32)/BozaLogram(0x2D) は別サイズのため未対応(TODO, 全16で計6個)。
+  ※GaruDerota(0x21)=32x32 は暫定(PROVISIONAL)。handler が多部品(2x2本体+
+    中央砲塔 code0x27 の1x1 next-object)で、単純 2x2(tile0x24-0x27)合成は
+    非コヒーレント(0x27は砲塔で BR 隅ではなく中央に乗るべき)。位置も terrain
+    クリアリング非依存(spriteX/Yのみ)で pad 照合不可。アート・位置とも要実機照合。
+    4x4 焼込インフラ(size=2, 16クレーターaddr)は本物。実データは暫定タイルで出力。
 クレジット: tcdev42/re (tcdev/jotd)。ROM/出力は非コミット。
 """
 import os, sys, struct
@@ -32,9 +39,33 @@ import xevi_objtbl as O
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT = os.path.join(ROOT, "roms", "arcade", "xevious-out", "allareas")
 TB = 0x0103                               # ローカル RAM タイルベース
-GS = {0x1E: 0x17, 0x1F: 0x1F, 0x26: 0x2C, 0x20: 0x17}   # 焼込 16x16 地上物 -> sprite tile
-TID = {0x1E: 1, 0x1F: 2, 0x26: 3, 0x20: 1}
+GS = {0x1E: 0x17, 0x1F: 0x1F, 0x26: 0x2C, 0x20: 0x17, 0x2D: 0x2C}   # 焼込 16x16 -> tile
+GS32 = {0x21: 0x24}                                    # 焼込 32x32(2x2 sprite base tile)
+TID = {0x1E: 1, 0x1F: 2, 0x26: 3, 0x20: 1, 0x2D: 3, 0x21: 6}
 SOL_FRAMES = (168, 169, 170, 171)
+
+def sprite_rgb32(ex, g3, sp, rgb, base, cs):
+    """32x32 の (rgb or None)。2x2 sprite(base=TL, +1=TR, +2=BL, +3=BR)。"""
+    out = [[None]*32 for _ in range(32)]
+    for t, ox, oy in ((base, 0, 0), (base+1, 16, 0), (base+2, 0, 16), (base+3, 16, 16)):
+        px = ex.decode_sprite(g3, t)
+        for y in range(16):
+            for x in range(16):
+                pen = sp[cs*8 + px[y][x]]
+                if pen != 0x80:
+                    out[oy+y][ox+x] = rgb[pen]
+    return out
+
+def crater_rgb(n):
+    """n x n のクレーター(暗い窪み)。"""
+    out = [[None]*n for _ in range(n)]
+    c = (n-1)/2.0
+    for y in range(n):
+        for x in range(n):
+            d = ((x-c)**2 + (y-c)**2) ** 0.5
+            if d < n*0.42:
+                out[y][x] = (30, 30, 30) if d < n*0.25 else (70, 70, 70)
+    return out
 
 def addq(colset, rgb, pen_rgb):
     r, g, b = pen_rgb
@@ -55,17 +86,21 @@ def main():
                 code, color, fx, fy = X.bg_cell(g4, bs0, b1)
                 for v in range(4):
                     addq(uc, rgb, rgb[bg_pen[color*4+v]])
-    for gt in set(GS.values()) | set(SOL_FRAMES):
+    gs32_tiles = set()
+    for base in GS32.values():
+        gs32_tiles |= {base, base+1, base+2, base+3}
+    for gt in set(GS.values()) | set(SOL_FRAMES) | gs32_tiles:
         px = X.decode_sprite(g3, gt)
         for y in range(16):
             for x in range(16):
                 pen = sp_pen[7*8 + px[y][x]]
                 if pen != 0x80:
                     addq(uc, rgb, rgb[pen])
-    for row in XB.crater_rgb16():
-        for c in row:
-            if c is not None:
-                addq(uc, rgb, c)
+    for cr in (XB.crater_rgb16(), crater_rgb(32)):
+        for row in cr:
+            for c in row:
+                if c is not None:
+                    addq(uc, rgb, c)
     uorder = list(uc); ucmap = {k: i for i, k in enumerate(uorder)}
 
     # --- 共通タイル表 ---
@@ -100,10 +135,10 @@ def main():
         col_of = lambda t: (t + 0xFD) & 0xFF
         row_of = lambda y: (y >> 3) - 2
 
-        def bake_cells(c0, r0, over, setmap):
+        def bake_cells(c0, r0, over, setmap, ncell=2):
             ids = []
-            for cy in range(2):
-                for cx in range(2):
+            for cy in range(ncell):
+                for cx in range(ncell):
                     col = (c0+cx) & 0xFF; row = r0+cy
                     if not (0 <= row < 25):
                         ids.append(None); continue
@@ -120,13 +155,19 @@ def main():
                     ids.append(li)
             return ids
 
+        crater32 = crater_rgb(32)
         gobj = []; sol = []
         for trig, typ, o, y in objs:
             c0, r0 = col_of(trig), row_of(y)
             if typ in GS:
                 bake_cells(c0, r0, XB.sprite_rgb16(ex, rgb, sp_pen, GS[typ], 7), True)
                 cids = bake_cells(c0, r0, crater, False)
-                gobj.append((c0, r0, TID[typ], cids))
+                gobj.append((c0, r0, TID[typ], 1, cids))
+            elif typ in GS32:
+                over32 = sprite_rgb32(ex, g3, sp_pen, rgb, GS32[typ], 7)
+                bake_cells(c0, r0, over32, True, ncell=4)
+                cids = bake_cells(c0, r0, crater32, False, ncell=4)
+                gobj.append((c0, r0, TID[typ], 2, cids))
             elif typ == 0x1D:
                 frames = [bake_cells(c0, r0, XB.sprite_rgb16(ex, rgb, sp_pen, fr, 7), False)
                           for fr in SOL_FRAMES]
@@ -143,8 +184,8 @@ def main():
                 f.write(struct.pack("<H", ci))
         with open(os.path.join(OUT, "area%02d_gobj.bin" % a), "wb") as f:
             f.write(bytes([len(gobj)]))
-            for col, row, t, cids in gobj:
-                f.write(struct.pack("<H", col) + bytes([row & 0xff, t]))
+            for col, row, t, sz, cids in gobj:
+                f.write(struct.pack("<H", col) + bytes([row & 0xff, t, sz]))
                 for li in cids:
                     f.write(struct.pack("<H", addr_of(li)))
             f.write(bytes([len(sol)]))
