@@ -253,6 +253,13 @@ realstart:
 	ld	hl, 0
 	ld	(coarse), hl
 	ld	(framecnt), hl
+	ld	(step), hl
+	ld	hl, 0xFFFF
+	ld	(minspare), hl
+	xor	a
+	ld	(substep), a
+	; 最初の次ページ(np)列を準備 (prefill 済みの表示に続く展開のため)
+	call	redraw_begin
 
 	IFDEF	DBG_STATIC
 	; --- デバッグ: page0 (bank0 POS=0) を静止表示して halt ---
@@ -276,14 +283,16 @@ realstart:
 	ENDIF
 
 ;=====================================================================
-; メインループ: framecnt(16bit) 1増=1フレーム。phase=f&3, coarse=f>>2。
-;   見せるページ=phase (POS=coarse+off, shift は coltab で付与)。
-;   次フレームに見せるページ np=(f+1)&3 の col39 を、その表示 POS の
-;   1つ手前(base=POS-1)に先行描画 (draw_column は base+40(r+1)=col39@POS)。
+; メインループ (処理落ち対策版)
+;   step 単位でスクロール。step は speed_div フレームごとに +1 (速度調整)。
+;   phase=step&3, coarse=step>>2。各ページは speed_div フレーム表示。
+;   次ページ(np)の新規列展開を step の speed_div フレームに分散 (redraw_chunk)
+;   して 1 フレームあたりの負荷を下げ、4MHz でも取りこぼし 0 を狙う。
+;   wait_vblank はエッジ検出 + 取りこぼし計測 (misscnt)。
 mainloop:
 	call	wait_vblank
-	; --- phase=f&3, coarse=f>>2 ---
-	ld	hl, (framecnt)
+	; --- phase=step&3, coarse=step>>2 ---
+	ld	hl, (step)
 	ld	a, l
 	and	3
 	ld	(phase), a
@@ -291,19 +300,8 @@ mainloop:
 	rr	l
 	srl	h
 	rr	l
-	ld	(coarse), hl		; coarse = f>>2
-	; --- np=(f+1)&3, coarsen=(f+1)>>2 ---
-	ld	hl, (framecnt)
-	inc	hl
-	ld	a, l
-	and	3
-	ld	(npage), a
-	srl	h
-	rr	l
-	srl	h
-	rr	l
-	ld	(coarsen), hl		; coarse_n = (f+1)>>2
-	; --- 0x1FD0: disp=phase>>1, access=np>>1 ---
+	ld	(coarse), hl
+	; --- 0x1FD0: disp=phase>>1, access=npage>>1 (展開先バンク) ---
 	ld	a, (phase)
 	srl	a
 	rlca
@@ -318,11 +316,11 @@ mainloop:
 	rlca				; (np>>1)<<4
 	or	d
 	IFDEF	SHIP
-	or	SCRN_PCG		; PCG モード有効 (自機オーバーレイ用)
+	or	SCRN_PCG
 	ENDIF
 	ld	bc, PORT_SCRN
 	out	(c), a
-	; --- 表示 POS = (coarse + (phase&1?1024:0)) & 0x7FF ---
+	; --- POS = (coarse + (phase&1?1024:0)) & 0x7FF ---
 	ld	hl, (coarse)
 	ld	a, (phase)
 	and	1
@@ -334,39 +332,43 @@ mainloop:
 	and	0x07
 	ld	h, a
 	IFDEF	SHIP
-	ld	(cur_pos), hl		; このフレームの表示開始セル (自機配置用)
+	ld	(cur_pos), hl
 	ENDIF
 	call	setpos
-	; --- 再描画: np の col39 ---
+	; --- 次ページ列の展開を分散 (substep ぶん) ---
 	IFNDEF	DBG_NOREDRAW
-	call	redraw_next
+	call	redraw_chunk
 	ENDIF
-	; --- 自機 (PCG) を現 POS に合わせて配置 (スクロール追従) ---
 	IFDEF	SHIP
 	call	overlay_ship
 	ENDIF
-	; --- M4: フレーム作業後の空き時間を計測して表示 ---
-	;   アクティブ表示期間 (DISP=1) に idle カウンタを回し、DISP=0 に
-	;   なるまでの回数 = 1フレームの CPU 空き容量。8MHz なら約2倍になる。
-	call	wait_active		; DISP=1 になるまで待つ
-	ld	de, 0
-	ld	bc, PORT_PPIB
-.spin:	in	a, (c)
-	add	a, a			; DISP -> carry
-	jr	nc, .spindone		; DISP=0 (アクティブ終了) で停止
-	inc	de
-	jr	.spin
-.spindone:
-	ld	(idlecnt), de
-	; デバッグプローブ出力 (XMIL_PROBE 有効時のみエミュが拾う)
+	; --- 最小フレーム余裕(minspare)をプローブ出力 (XMIL_PROBE 時) ---
+	;   余裕は wait_vblank で計測済み。minspare>0 なら全フレーム1フレーム内に収まる。
+	ld	hl, (minspare)
+	ld	(idlecnt), hl
 	ld	bc, 0x00FE
-	out	(c), e			; lo
+	out	(c), l
 	ld	bc, 0x00FF
-	out	(c), d			; hi
+	out	(c), h
 	IFDEF	M4_DISPLAY
-	call	show_idle		; オンスクリーン表示 (任意)
+	call	show_idle
 	ENDIF
-	; framecnt++
+	; --- substep++ , speed_div で step++ & 次ページ準備 ---
+	ld	a, (substep)
+	inc	a
+	ld	hl, speed_div
+	cp	(hl)
+	jr	c, .samestep
+	xor	a
+	ld	(substep), a
+	ld	hl, (step)
+	inc	hl
+	ld	(step), hl
+	call	redraw_begin
+	jr	.fcinc
+.samestep:
+	ld	(substep), a
+.fcinc:
 	ld	hl, (framecnt)
 	inc	hl
 	ld	(framecnt), hl
@@ -523,23 +525,35 @@ setpos:
 	ret
 
 ;=====================================================================
-; 次ページ np の新規右端列(col39)を タイルID 方式で先行描画。
-;   wc=(coarse_n+COLS-1)&0xFF。wc 列と (wc+1) 列の ID 列(各50B)を DMA で
-;   EMM->RAM(IDBUFA/B)に読み、各タイルを shl[A]|shr[B] で合成し GRAM へ展開。
-redraw_next:
+; step 変化時: 次ページ np=(step+1)&3 の新規列の準備 (ID読み+base+シフト表)。
+;   展開自体は redraw_chunk で speed_div フレームに分散する。
+redraw_begin:
+	; np=(step+1)&3, coarsen=(step+1)>>2
+	ld	hl, (step)
+	inc	hl
+	ld	a, l
+	and	3
+	ld	(npage), a
+	srl	h
+	rr	l
+	srl	h
+	rr	l
+	ld	(coarsen), hl
+	; wc=(coarsen+COLS-1)&0xFF, ID 読み
 	ld	hl, (coarsen)
 	ld	bc, COLS - 1
 	add	hl, bc
-	ld	a, l			; wc = (coarse_n+39) & 0xFF (W=256)
+	ld	a, l
 	ld	(wcol), a
 	ld	e, a
 	ld	hl, IDBUFA
 	call	read_ids
 	ld	a, (wcol)
-	inc	a			; (wc+1)&0xFF
+	inc	a
 	ld	e, a
 	ld	hl, IDBUFB
 	call	read_ids
+	; base=(coarsen+off_np-1)&0x7FF
 	ld	hl, (coarsen)
 	ld	a, (npage)
 	and	1
@@ -553,7 +567,49 @@ redraw_next:
 	ld	h, a
 	ld	(dc_base), hl
 	call	set_shiftpg
-	call	expand_col_tiles
+	xor	a
+	ld	(ec_row), a		; 展開カーソルリセット
+	ret
+
+;=====================================================================
+; 展開チャンク: target=((substep+1)*ROWS)/speed_div 行目まで展開。
+;   speed_div フレームで全 ROWS(25) 行が完了する (最終 substep で target=25)。
+redraw_chunk:
+	; hl = (substep+1) * ROWS
+	ld	a, (substep)
+	inc	a
+	ld	b, a
+	ld	hl, 0
+	ld	de, ROWS
+.m:	add	hl, de
+	djnz	.m
+	; hl / speed_div -> b (quotient)
+	ld	a, (speed_div)
+	ld	e, a
+	ld	d, 0
+	ld	b, 0
+.dv:
+	ld	a, l
+	sub	e
+	ld	c, a
+	ld	a, h
+	sbc	d
+	jr	c, .dvdone		; hl < speed_div
+	ld	l, c
+	ld	h, a
+	inc	b
+	jr	.dv
+.dvdone:
+	ld	a, b			; target 行数 (0..25)
+	ld	(exp_target), a
+.el:
+	ld	a, (ec_row)
+	ld	hl, exp_target
+	cp	(hl)
+	jr	nc, .eldone		; ec_row >= target
+	call	expand_one_row
+	jr	.el
+.eldone:
 	ret
 
 ; npage からシフト表のページ(shl_hi/shr_hi)を設定
@@ -615,24 +671,39 @@ set_emm_addr:
 	ret
 
 ;=====================================================================
-; 25 タイルを展開: dc_base を基準に col39 の各行へ。
-;   IDBUFA[row]=タイルA(wc列), IDBUFB[row]=タイルB(wc+1列)。
-;   cell = (dc_base + 40*(row+1)) & 0x7FF。
+; 全 25 行を展開 (prefill 用)。ec_row をリセットして expand_one_row を 25 回。
 expand_col_tiles:
-	ld	a, ROWS
-	ld	(dc_row), a
-	ld	hl, 0
 	xor	a
 	ld	(ec_row), a
+	ld	b, ROWS
 .rl:
-	ld	bc, COLS
-	add	hl, bc			; オフセット += 40
-	push	hl
+	push	bc
+	call	expand_one_row
+	pop	bc
+	djnz	.rl
+	ret
+
+; 1 行(ec_row)を展開し ec_row++。
+;   IDBUFA[ec_row]=タイルA, IDBUFB[ec_row]=タイルB。
+;   cell = (dc_base + 40*(ec_row+1)) & 0x7FF。
+expand_one_row:
+	ld	a, (ec_row)
+	inc	a			; ec_row+1
+	ld	l, a
+	ld	h, 0
+	add	hl, hl
+	add	hl, hl
+	add	hl, hl			; *8
+	ld	d, h
+	ld	e, l
+	add	hl, hl
+	add	hl, hl			; *32
+	add	hl, de			; *40
 	ld	de, (dc_base)
 	add	hl, de
 	ld	a, h
 	and	0x07
-	ld	h, a			; cell
+	ld	h, a
 	ld	(ec_cell), hl
 	ld	a, (ec_row)
 	add	a, a
@@ -656,14 +727,9 @@ expand_col_tiles:
 	ld	(ec_tb), de		; tileB addr
 	call	compose_tile
 	call	scatter_tile
-	pop	hl
 	ld	a, (ec_row)
 	inc	a
 	ld	(ec_row), a
-	ld	a, (dc_row)
-	dec	a
-	ld	(dc_row), a
-	jr	nz, .rl
 	ret
 
 ; 1タイル(24B)を合成: TBUF[i] = shl[tileA[i]] | shr[tileB[i]]
@@ -907,11 +973,37 @@ build_tables:
 
 ;=====================================================================
 ; VBLANK 待ち: DISP(bit7) が 1 の間待ち、0 になったら戻る
+; VBLANK 待ち (エッジ検出 + フレーム余裕計測)。
+;   まず DISP=1(アクティブ)まで待ち、次に立下り(1->0)を待って VBLANK 先頭に同期。
+;   この間の待ちループ回数 = このフレームの CPU 余裕。最小値を minspare に記録
+;   (0 なら処理落ち=1フレームに収まっていない)。前フレームの処理が1フレームを
+;   超えると待ちが短くなり minspare が下がる = 取りこぼし検出。
 wait_vblank:
 	ld	bc, PORT_PPIB
-.w:	in	a, (c)
-	add	a, a			; bit7 -> carry
-	jr	c, .w			; DISP=1 の間待つ
+	ld	hl, 0			; 待ちカウンタ
+.a:	in	a, (c)			; DISP=1 になるまで (VBLANK 中なら残りを待つ)
+	add	a, a
+	jr	c, .adone
+	inc	hl
+	jr	.a
+.adone:
+.b:	in	a, (c)			; DISP=0 (立下り=次VBLANK先頭) まで
+	add	a, a
+	jr	nc, .bdone
+	inc	hl
+	jr	.b
+.bdone:
+	; minspare = min(minspare, hl)
+	ex	de, hl			; de = 今回の余裕
+	ld	hl, (minspare)
+	; if de < hl: minspare = de
+	ld	a, l
+	sub	e
+	ld	a, h
+	sbc	d
+	jr	c, .keep		; hl < de -> 据え置き
+	ld	(minspare), de
+.keep:
 	ret
 
 ;=====================================================================
@@ -1168,6 +1260,14 @@ dma_id_end:
 coarse:		dw	0		; 表示ページの粗スクロール位置 (f>>2)
 coarsen:	dw	0		; 次フレームの粗位置 ((f+1)>>2)
 framecnt:	dw	0		; フレームカウンタ (16bit)
+step:		dw	0		; スクロールステップ (speed_div フレームごと +1)
+substep:	db	0		; step 内のフレーム (0..speed_div-1)
+	IFNDEF	SPEED
+SPEED		EQU	4		; 1 step = 何フレーム (速度)。4≈0.5px/f(アーケード寄り), 1=2px/f(高速デモ)
+	ENDIF
+speed_div:	db	SPEED		; -DSPEED=n で切替可。実行時に書換えても可
+exp_target:	db	0		; redraw_chunk の目標行数
+minspare:	dw	0xFFFF		; 最小フレーム余裕 (0=処理落ち)
 phase:		db	0
 npage:		db	0		; 次フレームに見せるページ
 wcol:		db	0		; 描画対象の世界列 (0..255)
