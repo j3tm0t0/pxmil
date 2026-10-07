@@ -376,8 +376,10 @@ void scrnmng_menudraw(const RECT_T *rct) {
 	present_frame();
 }
 
-/* メニュー操作直後の再描画用 (taskmng から呼ぶ) */
+/* メニュー操作直後の再描画用 (taskmng から呼ぶ)。パイプラインを
+ * フラッシュして今の絵を即表示する (しないと 1 操作遅れて見える)。 */
 void scrnmng_menupresent(void) {
 
 	present_frame();
+	pxgu_flush();
 }

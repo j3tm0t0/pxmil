@@ -46,6 +46,25 @@ typedef struct {
 	float	x, y, z;
 } VERTEX;
 
+static int	s_pending;		/* 発行済み・未スワップのフレームがある */
+
+/* 発行済みフレームを完了待ちして表示へ回す。メニュー等、次の present を
+ * 待たずに今の絵をすぐ出したいときにも使う。 */
+void pxgu_flush(void) {
+
+	if (!s_pending) {
+		return;
+	}
+	sceGuSync(0, 0);
+	if (s_ovltext[0]) {
+		UINT32 off = ((s_frame - 1) & 1) ? FRAME_SIZE : 0;
+		skb_drawtext_s((UINT16 *)(0x44000000 | off), BUF_WIDTH,
+						2, 2, s_ovltext, 0xffff, 2);
+	}
+	sceGuSwapBuffers();
+	s_pending = 0;
+}
+
 void pxgu_init(void) {
 
 	if (s_init) {
@@ -128,15 +147,7 @@ void pxgu_present(const UINT16 *src, int srcw, int srch,
 	/* パイプライン: ここで「前フレーム」の GE 完了を待って表示へ回し、
 	 * 今フレームはコマンド発行だけして戻る (GE はエミュレーションと
 	 * 並行して描く)。表示は 1 フレーム遅れるが CPU の待ちが消える。 */
-	if (s_frame > 0) {
-		sceGuSync(0, 0);
-		if (s_ovltext[0]) {
-			UINT32 off = ((s_frame - 1) & 1) ? FRAME_SIZE : 0;
-			skb_drawtext_s((UINT16 *)(0x44000000 | off), BUF_WIDTH,
-							2, 2, s_ovltext, 0xffff, 2);
-		}
-		sceGuSwapBuffers();
-	}
+	pxgu_flush();
 
 	sceKernelDcacheWritebackRange(src, 640 * srch * 2);
 
@@ -177,5 +188,6 @@ void pxgu_present(const UINT16 *src, int srcw, int srch,
 
 	sceGuFinish();
 	s_frame++;
-	/* sync と swap は次回の pxgu_present 冒頭で行う */
+	s_pending = 1;
+	/* sync と swap は次回の pxgu_present 冒頭 (または pxgu_flush) で行う */
 }
