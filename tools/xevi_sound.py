@@ -13,7 +13,7 @@ RE(sub2.lst 一次情報で裏取り済):
   - tune(sound番号)→ byte_4C0@0x4C0 triplet[ch_base,ch_count,wave_sel]→ byte_48A[ch_base..]。
   - テンポ: byte_4ED@0x4ED[snd]。note長(frame)= duration * tempo(60fps NMI)。
   - HWは毎フレーム無条件更新 → プレイヤは毎フレームのテーブル歩行でよい。
-X1 PSG(AY-3-8910相当, clock=2MHz): period = round(2e6/(16*f)) = round(125000/f), 12bit。
+X1 PSG(AY-3-8910相当, clock=1.9968MHz=4MHz/2): period = round(clk/(16*f)) = round(124800/f), 12bit。
 54xx 爆発ノイズは別MCUのため抽出不可 → PSGノイズのエンベロープで近似(明記)。
 出力: roms/arcade/xevious-out/sound/(非コミット)。
 """
@@ -32,12 +32,13 @@ WAVES = [[(wp[w*32 + i] & 0xF) for i in range(32)] for w in range(8)]
 PTR = [struct.unpack_from("<H", snd, 0x48A + i*2)[0] for i in range(27)]
 TRIPLET = [(snd[0x4C0 + i*3], snd[0x4C0 + i*3 + 1], snd[0x4C0 + i*3 + 2]) for i in range(15)]
 TEMPO = [snd[0x4ED + i] for i in range(15)]
-# ★オクターブ較正定数★ WSG出力 = freq_reg * WSG_HZ。相対音程は byte_568(平均律)で
-#   確実だが、絶対オクターブは実機照合が必要。候補: 96000/2^16=1.465(旋律~700Hz,自然),
-#   3.072e6/2^20=2.93(旋律~1.4kHz,明るめ)。倍=1オクターブ。既定は 1.465。
-WSG_HZ = 96000.0 / 65536.0     # 1.4648 Hz / freq_reg(=96kHz/2^16)
+# WSG出力 = freq_reg * WSG_HZ。導出: 20bitアキュム, index=bit[19:15], BCは下位16bitに
+#   格納, マスタ3.072MHz → 3.072e6/2^20 = 2.9297(旋律~1.4kHz, Xeviousテーマは明るく高い
+#   のでこれが妥当)。相対音程は byte_568(平均律)で確実。もし実機で1オクターブ高ければ
+#   1オクターブ下げ(/2 = 96000/2^16 = 1.465)に変更可。
+WSG_HZ = 3072000.0 / (2**20)   # 2.9297 Hz / freq_reg(標準 Namco WSG)
 FPS = 60.0
-PSG_CLK = 2000000.0            # X1 AY-3-8910 clock
+PSG_CLK = 1996800.0            # X1 AY-3-8910 clock(4MHz/2。beep実測 period256→~464Hz で裏付け)
 
 def read_seq(ptr_idx):
     a = PTR[ptr_idx]; out = []
@@ -173,7 +174,8 @@ def main():
     with wave.open(os.path.join(OUT, "xevi_all.wav"), "wb") as w:
         w.setnchannels(1); w.setsampwidth(2); w.setframerate(SR); w.writeframes(bytes(allpcm))
     print("出力: roms/arcade/xevious-out/sound/ (xevi_*.wav 試聴用, xevi_*.bin PSGデータ)")
-    print("※54xx爆発は別MCUのため非抽出(sndplay側でPSGノイズ近似)。")
+    print("※54xx爆発は別MCUのため非抽出。本試作では未実装(将来PSGノイズ+減衰で近似予定)。")
+    print("※音量=固定%d(本来byte_517の減衰エンベロープ), 音色=PSG矩形(WSG波形は未再現)。" % VOL)
 
 if __name__ == "__main__":
     main()
