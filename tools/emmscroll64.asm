@@ -66,6 +66,38 @@ IDBUFA		EQU	0xC500		; 50B
 IDBUFB		EQU	0xC560		; 50B
 COLBUF		EQU	0xC600		; 25タイル x 48B = 1200B (〜0xCAB0)
 
+; === 自機(M6) ship.inc 用の設定 (IFDEF SHIP。64色デフォルトビルドは不変) ===
+	IFDEF	SHIP
+SCRN_PCG	EQU	0x20		; 0x1FD0 PCGMODE
+PCG_B		EQU	0x1500		; PCG 定義ポート
+PCG_R		EQU	0x1600
+PCG_G		EQU	0x1700
+PCG_DEFCELL	EQU	0x07FF
+PORT_PSGREG	EQU	0x1C00		; ジョイスティック
+PORT_PSGDAT	EQU	0x1B00
+PORT_TPAL	EQU	0x1FB9		; テキストパレット先頭 (tc1..tc7 = 0x1FB9..0x1FBF)
+SHIP_TC		EQU	2		; 自機テキストカラー番号 (1..7, 0=透明)
+SHIP_ATR	EQU	0x20 | SHIP_TC	; PCG + tc
+SHIP_HX0	EQU	18 * 4
+SHIP_ROW0	EQU	12
+MOVE_DELAY	EQU	3
+SHIPGEN		EQU	0xCB00		; COLBUF(〜0xCAB0)の後の空き RAM (72B)
+SHIP_SCRN_BASE	EQU	SCRN_15K	; ship_init の PCGMODE 書込は 15kHz を保つ
+	ENDIF
+
+; PORT_SCRN 書込マクロ: SHIP 時は PCGMODE 付き(scrn_out)、非SHIP は従来通り
+; (非SHIP 展開は元コードとバイト一致)。
+	MACRO	SCRNSET val
+	IFDEF	SHIP
+	ld	a, val
+	call	scrn_out
+	ELSE
+	ld	bc, PORT_SCRN
+	ld	a, val
+	out	(c), a
+	ENDIF
+	ENDM
+
 	DEVICE	NOSLOT64K
 	ORG	0x0100
 
@@ -91,6 +123,14 @@ realstart:
 	call	fill_emm_map
 	call	build_tables
 	call	prefill
+
+	IFDEF	SHIP
+	; --- 自機(オリジナル機体)を定義・初期化 + テキストパレット色 (仮:赤) ---
+	call	ship_init
+	ld	bc, PORT_TPAL + SHIP_TC - 1	; tc=SHIP_TC のパレットスロット
+	ld	a, (0 << 4) | (3 << 2) | 0	; G0 R3 B0 = 赤 (仮。候補が出たら差替)
+	out	(c), a
+	ENDIF
 
 	ld	hl, 0
 	ld	(framecnt), hl
@@ -137,9 +177,7 @@ mainloop:
 	rr	l
 	ld	(coarsen), hl
 	; 表示: SCRN=15kHz(DISPVRAM0,ACCESS0)
-	ld	bc, PORT_SCRN
-	ld	a, SCRN_15K
-	out	(c), a
+	SCRNSET	SCRN_15K
 	; POS = (coarse + (phase?1024:0)) & 0x7FF
 	ld	hl, (coarse)
 	ld	a, (phase)
@@ -151,7 +189,13 @@ mainloop:
 	ld	a, h
 	and	0x07
 	ld	h, a
+	IFDEF	SHIP
+	ld	(cur_pos), hl		; 自機オーバーレイ用に表示 POS を記録
+	ENDIF
 	call	setpos
+	IFDEF	SHIP
+	call	ship_update		; ジョイスティック移動 + 自機描画 (vblank 中)
+	ENDIF
 	call	start_redraw		; np col39 の再描画を開始 (DMA+合成準備)
 .nowork:
 	call	do_redraw_chunk		; 毎フレーム K 行ずつ展開 (負荷分散, 内部で VBLANK エッジ監視)
@@ -338,22 +382,16 @@ do_redraw_chunk:
 ;   cell = (dc_base + 40*(row+1)) & 0x7FF。bank0=COLBUF+0, bank1=COLBUF+24。
 scatter_chunk:
 	; bank0
-	ld	bc, PORT_SCRN
-	ld	a, SCRN_15K
-	out	(c), a
+	SCRNSET	SCRN_15K
 	ld	a, 0
 	ld	(sc_half), a
 	call	sc_pass
 	; bank1
-	ld	bc, PORT_SCRN
-	ld	a, SCRN_ACC1
-	out	(c), a
+	SCRNSET	SCRN_ACC1
 	ld	a, 24
 	ld	(sc_half), a
 	call	sc_pass
-	ld	bc, PORT_SCRN
-	ld	a, SCRN_15K
-	out	(c), a
+	SCRNSET	SCRN_15K
 	ret
 
 ; sc_pass: (sc_half)=0/24。chunk_cnt 行。src=COLBUF+row_in_chunk*48+sc_half。
@@ -520,23 +558,17 @@ expand_col:
 	cp	ROWS
 	jr	nz, .crow
 	; --- pass scatter bank0 (ACCESS=0): COLBUF+0..23 ---
-	ld	bc, PORT_SCRN
-	ld	a, SCRN_15K
-	out	(c), a
+	SCRNSET	SCRN_15K
 	ld	a, 0
 	ld	(sc_half), a
 	call	scatter_half
 	; --- pass scatter bank1 (ACCESS=1): COLBUF+24..47 ---
-	ld	bc, PORT_SCRN
-	ld	a, SCRN_ACC1
-	out	(c), a
+	SCRNSET	SCRN_ACC1
 	ld	a, 24
 	ld	(sc_half), a
 	call	scatter_half
 	; ACCESS=0 戻す
-	ld	bc, PORT_SCRN
-	ld	a, SCRN_15K
-	out	(c), a
+	SCRNSET	SCRN_15K
 	ret
 
 ; compose48: ec_ta/ec_tb のタイル(各48B)を shl/shr 合成し (ec_dst) へ48B, ec_dst+=48。
@@ -809,9 +841,7 @@ setup_turboz64:
 	out	(c), a
 	ld	a, 0x40
 	out	(c), a			; width40
-	ld	bc, PORT_SCRN
-	ld	a, SCRN_15K
-	out	(c), a
+	SCRNSET	SCRN_15K
 	ld	bc, PORT_EXTTDISP
 	xor	a
 	out	(c), a			; ZPRY=0
@@ -966,5 +996,9 @@ chunk_start:	db	0
 chunk_cnt:	db	0
 vbl_seen:	dw	0		; 観測した VBLANK(DISP 1->0)エッジ総数
 prev_disp:	db	0		; 前回ポーリング時の DISP(0x80/0)
+
+	IFDEF	SHIP
+	INCLUDE	"ship.inc"		; 自機(M6)共通モジュール。cur_pos/ship_* 等を定義
+	ENDIF
 
 	END
