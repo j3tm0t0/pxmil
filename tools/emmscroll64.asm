@@ -233,6 +233,10 @@ mainloop:
 	call	ship_update		; ジョイスティック移動 + 自機描画 (vblank 中)
 	call	sprite_update		; M7: 弾の発射/移動/描画
 	ENDIF
+	IFDEF	SPR_FRAMESEP
+	xor	a			; [案4] サイクル内フレーム番号を 0(step)にリセット
+	ld	(cyc_f), a
+	ENDIF
 	; 4MHz 取りこぼし対策: スクロールステップフレームでは重いエンジン処理
 	; (start_redraw の DMA + do_redraw_chunk の列展開) を走らせない。
 	; sr_pending を立てて次の非ステップフレームへ回し、chunk は非ステップ
@@ -243,9 +247,26 @@ mainloop:
 	IFDEF	MEAS
 	jp	.framesync		; MEAS 時は .nowork 肥大で jr 範囲外のため jp
 	ELSE
+	IFDEF	SPR_FRAMESEP
+	jp	.framesync		; 案4 も .nowork 肥大のため jp
+	ELSE
 	jr	.framesync
 	ENDIF
+	ENDIF
 .nowork:
+	IFDEF	SPR_FRAMESEP
+	; [案4] 非ステップ7フレームを chunk 専用(5)と sprite 専用(2)に分離。
+	;   cyc_f=3,6 を sprite フレーム、残り(1,2,4,5,7)を chunk フレームに。
+	;   1フレームに chunk か sprite の片方だけ載せ 4MHz で両方とも予算内に。
+	;   sprite は step(0)+3+6 = 8フレーム中3回 ≒ 22.5Hz。CHUNK=5 必須。
+	ld	a, (cyc_f)
+	inc	a
+	ld	(cyc_f), a
+	cp	3
+	jp	z, .spr_frame
+	cp	6
+	jp	z, .spr_frame
+	ENDIF
 	IFDEF	SHIP
 	IFDEF	SPR_SMOOTH
 	; [M8] -DSPR_SMOOTH 時のみ: スプライトを毎フレーム更新 (ステップ=.changed
@@ -282,6 +303,12 @@ mainloop:
 	MEASCALL do_redraw_chunk, meas_chunk
 	ELSE
 	call	do_redraw_chunk		; K 行ずつ展開 (非ステップ7フレームに配分)
+	ENDIF
+	IFDEF	SPR_FRAMESEP
+	jp	.framesync
+.spr_frame:				; [案4] sprite 専用フレーム(chunk を載せない)
+	call	ship_update
+	call	sprite_update
 	ENDIF
 .framesync:
 	; --- フレーム同期 + 取りこぼし(スリップ)検出 ---
@@ -420,7 +447,9 @@ start_redraw:
 ;=====================================================================
 ; do_redraw_chunk: rd_active 中、ec_row から最大 CHUNK 行を合成+散布する。
 ;   (負荷分散: 1列1200Bを数フレームに分けて展開 -> VBLANK 取りこぼし 0)
-CHUNK		EQU	4
+	IFNDEF	CHUNK
+CHUNK		EQU	4		; -DCHUNK=n で上書き可(既定4で byte-identical)
+	ENDIF
 do_redraw_chunk:
 	ld	a, (rd_active)
 	or	a
@@ -1122,6 +1151,9 @@ chunk_cnt:	db	0
 vbl_seen:	dw	0		; 観測した VBLANK(DISP 1->0)エッジ総数
 prev_disp:	db	0		; 前回ポーリング時の DISP(0x80/0)
 sr_pending:	db	0		; start_redraw 保留フラグ(ステップフレームで立て翌フレーム実行)
+	IFDEF	SPR_FRAMESEP
+cyc_f:		db	0		; [案4] スクロール周期内フレーム番号(0=step,1..7)
+	ENDIF
 
 	IFDEF	SHIP
 ; テキストパレット A案 7色 (slot1..7 = port 0x1FB9..0x1FBF)。値=(G<<4)|(R<<2)|B。

@@ -27,8 +27,15 @@ MAX_EXPL	EQU	4		; 同時爆発数
 
 ; 速度/間隔定数は sprite_update の呼ばれる頻度で意味が変わる。
 ;   既定: sprite_update は 8フレームごと(ステップフレームのみ)。
-;   -DSPR_SMOOTH: 毎フレーム呼ばれる → 速度を小さく・間隔を広く再調整(実時間維持)。
+;   -DSPR_SMOOTH: 毎フレーム / -DSPR_FRAMESEP: 約22Hz(3/8フレーム)。
+;   どちらも 1呼出=ほぼ毎フレーム相当なので frame 単位の定数を使う。
 	IFDEF	SPR_SMOOTH
+FRAMEUNIT	EQU	1
+	ENDIF
+	IFDEF	SPR_FRAMESEP
+FRAMEUNIT	EQU	1
+	ENDIF
+	IFDEF	FRAMEUNIT
 BULLET_SPEED	EQU	3		; 前進/呼出 (2px単位; 3=6px/frame, 速め)
 FIRE_DELAY	EQU	8		; 連射間隔(フレーム)
 ENEMY_ANIM	EQU	12		; アニメ更新間隔(フレーム)
