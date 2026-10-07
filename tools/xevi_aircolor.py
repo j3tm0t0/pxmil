@@ -408,7 +408,7 @@ APLAN = [
 ]
 
 
-def cmd_ship(ex, rgb, sp_pen, gfx3, tile=80, code=7):
+def cmd_ship(ex, rgb, sp_pen, gfx3, tile=162, code=7):
     """Solvalou を A案スロットに割り当て、png2ship 入力PNG + 表示プレビューを出す。
     向きは地形と同じ rotate(-90)(xevi_extract の map_arcade_rot90 と同じ)。"""
     os.makedirs(OUT_DIR, exist_ok=True)
@@ -437,23 +437,32 @@ def cmd_ship(ex, rgb, sp_pen, gfx3, tile=80, code=7):
                         255 if (s & 1) else 0, 255)      # B chan = B plane
             pp[x, y] = (APLAN[s - 1][1][0], APLAN[s - 1][1][1],
                         APLAN[s - 1][1][2], 255)
-    # 地形と同じ向き: rotate(-90)(時計回り)
-    enc_r = enc.rotate(-90, expand=True)
-    prev_r = prev.rotate(-90, expand=True)
+    # 向きメモ: Xevious はハード ROT90。decode_sprite は raw(=画面と90°ずれ)。
+    #   arcade 画面で機首=上 は raw を +90(CCW)。
+    #   X1 は前進方向=右(emmscroll64 が右端 col39 を新規列に展開)なので機首=右。
+    #   機首=右 は raw を 180 回転(raw は機首=左)。→ X1 データは rotate(180)。
+    X1_ROT = 180
+    enc_r = enc.rotate(X1_ROT, expand=True)
     enc_p = os.path.join(out_root, "solvalou_ship.png")
     enc_r.save(enc_p)
 
-    # 表示プレビュー: 暗緑地形っぽい背景に合成(白機体が見えるように)。
-    #   左=回転前(arcade 上向き) 右=回転後(地形向き=rotate-90)
-    def on_bg(im):
+    # プレビュー: 暗緑背景に合成し、確認用に複数向きを並べる。
+    def on_bg(im, scale=10):
         bg = Image.new("RGBA", im.size, (40, 90, 40, 255))
         bg.alpha_composite(im)
-        return bg.convert("RGB")
-    cmp = Image.new("RGB", (16 * 2 + 4, 16), (0, 0, 0))
-    cmp.paste(on_bg(prev), (0, 0))
-    cmp.paste(on_bg(prev_r), (16 + 4, 0))
-    cmp.resize((cmp.width * 12, cmp.height * 12), Image.NEAREST).save(
-        os.path.join(out_root, "solvalou_ship_preview.png"))
+        return bg.convert("RGB").resize((im.width * scale, im.height * scale),
+                                        Image.NEAREST)
+    views = [("raw(機首左)", prev.rotate(0, expand=True)),
+             ("arcade上向き(+90)", prev.rotate(90, expand=True)),
+             ("X1 機首右(180)", prev.rotate(180, expand=True)),
+             ("機首下(-90)", prev.rotate(-90, expand=True))]
+    cw = 16 * 10
+    cmp = Image.new("RGB", (len(views) * (cw + 6), cw + 16), (0, 0, 0))
+    dr = ImageDraw.Draw(cmp)
+    for i, (nm, im) in enumerate(views):
+        cmp.paste(on_bg(im), (i * (cw + 6), 14))
+        dr.text((i * (cw + 6) + 2, 2), nm, fill=(230, 230, 230))
+    cmp.save(os.path.join(out_root, "solvalou_ship_preview.png"))
     print("Solvalou tile=%d code=%d (白/灰/赤, 青なし)" % (tile, code))
     print("slot 使用ピクセル数(= tc):")
     for s in sorted(usage):
@@ -477,7 +486,9 @@ def main(argv):
     elif cmd == "build":
         cmd_build(ex, rgb, sp_pen, gfx3)
     elif cmd == "ship":
-        cmd_ship(ex, rgb, sp_pen, gfx3)
+        t = int(argv[2]) if len(argv) > 2 else 162
+        c = int(argv[3]) if len(argv) > 3 else 7
+        cmd_ship(ex, rgb, sp_pen, gfx3, t, c)
     else:
         print("unknown cmd", cmd)
 
