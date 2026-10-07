@@ -159,6 +159,19 @@ void pxgu_present(const UINT16 *src, int srcw, int srch,
 
 	sceKernelDcacheWritebackRange(src, 640 * srch * 2);
 
+	/* 1 VBLANK の間に 2 回切替予約すると先の面は表示されないまま飛ばされ、
+	 * 表示中の面が次の描画先と重なる。表示中の面へ描くと Clear で黒い帯が
+	 * 出るので、その場合だけ VBLANK を待つ。 */
+	for (;;) {
+		void	*top;
+		int		bw, fmt;
+		sceDisplayGetFrameBuf(&top, &bw, &fmt, PSP_DISPLAY_SETBUF_IMMEDIATE);
+		if (((UINT32)top & 0x00ffffff) != (UINT32)(s_draw * FRAME_SIZE)) {
+			break;
+		}
+		sceDisplayWaitVblankStart();
+	}
+
 	sceGuStart(GU_DIRECT, s_list);
 	sceGuDrawBufferList(GU_PSM_5650, (void *)(s_draw * FRAME_SIZE), BUF_WIDTH);
 	/* CPU が書き換えたテクスチャを使うため GE のテクスチャキャッシュを
