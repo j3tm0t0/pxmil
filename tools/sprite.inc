@@ -470,6 +470,10 @@ fire_blaster:
 	ld	(hl), 0xFF
 	inc	hl
 	ld	(hl), 0xFF
+	IFDEF	SOUND
+	ld	hl, se_blaster		; [SND] ブラスター発射音
+	call	snd_play_se
+	ENDIF
 	ld	a, BLASTER_DELAY
 	ld	(bfire_tmr), a
 	ret
@@ -529,6 +533,10 @@ blaster_move:
 	jr	nc, .trysol		; 地上物ミス → Sol 判定へ
 	call	crater_write_obj	; 当たり: 2x2の4セルを crater タイルで EMM 上書き
 	call	crater_enqueue		; [#2] GRAM クレーターを保留登録(pump が数フレームで描く)
+	IFDEF	SOUND
+	ld	hl, se_exp_ground	; [SND] 地上物破壊音
+	call	snd_play_se
+	ENDIF
 	jr	.nobj
 .trysol:
 	IFDEF	GOBJ_TILEMAP
@@ -1076,6 +1084,10 @@ sol_hit_check:
 	ld	(sol_state), a		; f0 から開始
 	xor	a
 	ld	(sol_timer), a
+	IFDEF	SOUND
+	ld	hl, se_teleport		; [SND] Sol 出現音(テレポート)
+	call	snd_play_se
+	ENDIF
 	ret
 
 ; sol_update: 毎フレーム1回(mainloop)。発動中なら SOL_STEP 毎に次コマを上書き。
@@ -1372,6 +1384,10 @@ collision_check:
 	ld	a, (hl)
 	ld	(col_ey), a
 	call	expl_spawn		; (col_ex, col_ey) に爆発
+	IFDEF	SOUND
+	ld	hl, se_flyhit		; [SND] 空中敵 hit 音
+	call	snd_play_se
+	ENDIF
 	jr	.bnext			; この弾は消えたので次の弾へ
 .ejn:	ld	a, (spr_j)
 	inc	a
@@ -1462,6 +1478,10 @@ fire_check:
 	ld	a, (ship_vy)
 	add	a, 10			; 下側 (自機下寄り)
 	call	spawn_bullet
+	IFDEF	SOUND
+	ld	hl, se_zapper		; [SND] ザッパー発射音
+	call	snd_play_se
+	ENDIF
 	ld	a, FIRE_DELAY
 	ld	(fire_tmr), a
 	ret

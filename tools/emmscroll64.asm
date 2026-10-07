@@ -160,6 +160,11 @@ realstart:
 	jr	nz, .setpal
 	call	sprite_init		; M7: 弾/敵/爆発の PCG 生成 + テーブル初期化
 	ENDIF
+	IFDEF	SOUND
+	call	snd_init		; [SND] PSG 無音化 + サウンド初期化
+	ld	ix, snd_bgm_fanfare	; 開始ファンファーレ(終了後 bgm_mgr が本BGMへ)
+	call	snd_play_bgm
+	ENDIF
 
 	ld	hl, 0
 	ld	(framecnt), hl
@@ -211,6 +216,10 @@ realstart:
 
 mainloop:
 	call	wait_vblank
+	IFDEF	SOUND
+	call	snd_bgm_mgr		; [SND] BGM 終了検出→次曲(fanfare→本BGM→ループ)
+	call	snd_tick		; [SND] 毎フレーム更新(VBLANK 直後, 最悪~4048T)
+	ENDIF
 	; adv = framecnt >> SPEED
 	ld	hl, (framecnt)
 	srl	h
@@ -1245,6 +1254,42 @@ cyc_f:		db	0		; [案4] スクロール周期内フレーム番号(0=step,1..7)
 tpal_a:	db	0x3F, 0x2A, 0x15, 0x00, 0x0C, 0x27, 0x2D
 	INCLUDE	"ship.inc"		; 自機(M6)共通モジュール。cur_pos/ship_* 等を定義
 	INCLUDE	"sprite.inc"		; M7 弾/敵/爆発 (ship.inc の後=read_joy等を使うため)
+	IFDEF	SOUND
+;=====================================================================
+; [SND] サウンド: xevi-extract の PSG プレイヤ(sndplay.inc) + データ。
+;   データは xevi_sound.py 出力(非コミット, roms/)。差し替えは incbin パスのみ。
+	INCLUDE	"tools/sndplay.inc"
+snd_bgm_fanfare:
+	incbin	"roms/arcade/xevious-out/sound/xevi_fanfare.bin"
+snd_bgm_main:
+	incbin	"roms/arcade/xevious-out/sound/xevi_bgm.bin"
+se_zapper:
+	incbin	"roms/arcade/xevious-out/sound/se_00_zapper.bin"
+se_blaster:
+	incbin	"roms/arcade/xevious-out/sound/se_01_blaster.bin"
+se_flyhit:
+	incbin	"roms/arcade/xevious-out/sound/se_02_flyhit.bin"
+se_teleport:
+	incbin	"roms/arcade/xevious-out/sound/se_03_teleport.bin"
+se_exp_aerial:
+	incbin	"roms/arcade/xevious-out/sound/se_07_exp_aerial.bin"
+se_exp_ground:
+	incbin	"roms/arcade/xevious-out/sound/se_08_exp_ground.bin"
+; BGM 終了検出 → 次曲(fanfare→本BGM→本BGMループ)。mainloop から毎フレーム。
+snd_bgm_mgr:
+	call	snd_bgm_active
+	or	a
+	ret	nz
+	ld	a, (bgm_phase)
+	or	a
+	jr	nz, .main
+	ld	a, 1
+	ld	(bgm_phase), a
+.main:
+	ld	ix, snd_bgm_main
+	jp	snd_play_bgm
+bgm_phase:	db	0
+	ENDIF
 	ENDIF
 
 	END
