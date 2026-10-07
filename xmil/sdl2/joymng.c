@@ -186,11 +186,11 @@ void pxmil_statedump(void) {
 	/* crtc: SCRN_BITS (bit3=SCRN_DISPVRAM graphics-hide), dispmode,
 	 *   start address pos / POSH:POSL (R12:R13) for scroll tracking. */
 	fprintf(stderr, "SD frame=%u tcells=%d pcgcells=%d gramnz=%ld "
-					"pcghash=%08x pcgchg=%d scrn=%02x dispvram=%d "
+					"pcghash=%08x pcgchg=%d scrn=%02x ply=%02x "
 					"dispmode=%02x pos=%u poshl=%02x%02x\n",
 			(unsigned)pxmil_frame, tcells, pcgcells, gramnz,
 			h, (h != sd_prev),
-			crtc.s.SCRN_BITS, ((crtc.s.SCRN_BITS & SCRN_DISPVRAM) ? 0 : 1),
+			crtc.s.SCRN_BITS, crtc.s.rgbp[CRTC_PLY],
 			crtc.e.dispmode, (unsigned)crtc.e.pos,
 			crtc.s.reg[CRTCREG_POSH], crtc.s.reg[CRTCREG_POSL]);
 	sd_prev = h;
