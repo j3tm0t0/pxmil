@@ -384,10 +384,10 @@ fire_check:
 	ld	hl, bul_prev
 	add	hl, de
 	add	hl, de
-	ld	(hl), 0xFF		; prev 無効(下位)
+	ld	(hl), 0xFF		; prev 無効(窓1)
 	inc	hl
 	ld	(hl), 0xFF
-	ld	hl, bul_prev2		; [2窓削減] page1 スロットも無効化(スロット再利用対策)
+	ld	hl, bul_prev2		; 窓2 も無効化(スロット再利用の残留防止)
 	add	hl, de
 	add	hl, de
 	ld	(hl), 0xFF
@@ -400,70 +400,13 @@ fire_check:
 ; 全弾を前回位置(両窓)から消去。ループ index は RAM(spr_i)。clr_cell が bc を
 ;   壊すためレジスタ c には置かない。
 bullets_erase:
-	IFDEF	SPR_1WIN
-	; [2窓削減] 表示ページ(cur_pos bit10)のスロットのみ消去
-	ld	a, (cur_pos + 1)
-	and	0x04
-	ld	hl, bul_prev
-	jr	z, .b0
-	ld	hl, bul_prev2
-.b0:	ld	(spr_pbase), hl
-	xor	a
-	ld	(spr_i), a
-.el1:	ld	a, (spr_i)
-	cp	MAX_BULLETS
-	ret	z
-	; 表示ページ slot = spr_pbase + 2*i
-	add	a, a
-	ld	e, a
-	ld	d, 0
-	ld	hl, (spr_pbase)
-	add	hl, de
-	ld	a, (hl)
-	inc	hl
-	ld	h, (hl)
-	ld	l, a			; hl = cell
-	ld	a, h
-	cp	0xFF
-	jr	z, .en1			; slot 無効 → 何も無い
-	call	clr_cell		; 表示ページの旧セルを消去
-	; 非アクティブ(画面外で消滅)なら slot を無効化してゴースト防止
-	ld	a, (spr_i)
-	ld	e, a
-	ld	d, 0
-	ld	hl, bul_active
-	add	hl, de
-	ld	a, (hl)
-	or	a
-	jr	nz, .en1		; active なら draw が slot を再設定
-	ld	a, (spr_i)
-	add	a, a
-	ld	e, a
-	ld	d, 0
-	ld	hl, (spr_pbase)
-	add	hl, de
-	ld	(hl), 0xFF
-	inc	hl
-	ld	(hl), 0xFF
-.en1:	ld	a, (spr_i)
-	inc	a
-	ld	(spr_i), a
-	jr	.el1
-	ELSE
 	xor	a
 	ld	(spr_i), a
 .el:	ld	a, (spr_i)
 	cp	MAX_BULLETS
 	ret	z
-	ld	e, a
-	ld	d, 0
-	ld	hl, bul_active
-	add	hl, de
-	ld	a, (hl)
-	or	a
-	jr	z, .en			; 非アクティブ
-	; prev 窓1 (bul_prev + 2*i)
-	ld	a, (spr_i)
+	; prev 窓1 (bul_prev + 2*i)。active/非active を問わず、prev が有効なら両窓消去
+	;   (非アクティブの消去をスキップするとゴーストが残る)。
 	add	a, a
 	ld	e, a
 	ld	d, 0
@@ -475,8 +418,8 @@ bullets_erase:
 	ld	l, a			; hl = cell(窓1)
 	ld	a, h
 	cp	0xFF
-	jr	z, .en			; prev 無効
-	call	clr_cell		; 窓1 消去 (de は保持される)
+	jp	z, .en			; prev 無効 → 両窓とも何も無い
+	call	clr_cell		; 窓1 消去
 	ld	a, (spr_i)
 	add	a, a
 	ld	e, a
@@ -487,12 +430,38 @@ bullets_erase:
 	inc	hl
 	ld	h, (hl)
 	ld	l, a			; hl = cell(窓2)
-	call	clr_cell
+	call	clr_cell		; 窓2 消去
+	; 非アクティブ(画面外で消滅)なら両窓 slot を無効化(再消去/再利用の残留防止)
+	ld	a, (spr_i)
+	ld	e, a
+	ld	d, 0
+	ld	hl, bul_active
+	add	hl, de
+	ld	a, (hl)
+	or	a
+	jp	nz, .en			; active なら draw が両窓 prev を再設定
+	ld	a, (spr_i)
+	add	a, a
+	ld	e, a
+	ld	d, 0
+	ld	hl, bul_prev
+	add	hl, de
+	ld	(hl), 0xFF
+	inc	hl
+	ld	(hl), 0xFF
+	ld	a, (spr_i)
+	add	a, a
+	ld	e, a
+	ld	d, 0
+	ld	hl, bul_prev2
+	add	hl, de
+	ld	(hl), 0xFF
+	inc	hl
+	ld	(hl), 0xFF
 .en:	ld	a, (spr_i)
 	inc	a
 	ld	(spr_i), a
-	jr	.el
-	ENDIF
+	jp	.el
 
 ; 全弾を前進、画面外(cell col >= COLS-1)で消滅。
 bullets_move:
@@ -588,34 +557,6 @@ bullets_draw:
 	add	a, b
 	add	a, BULLET_BASE
 	ld	(spr_code), a
-	IFDEF	SPR_1WIN
-	; [2窓削減] 表示ページ(cur_pos)のみ描画、prev は表示ページスロットへ
-	ld	hl, (spr_soff)
-	ld	de, (cur_pos)
-	add	hl, de
-	ld	a, h
-	and	0x07
-	ld	h, a
-	ld	(spr_cell), hl
-	ld	a, (cur_pos + 1)
-	and	0x04
-	ld	hl, bul_prev
-	jr	z, .d0
-	ld	hl, bul_prev2
-.d0:	ld	a, (spr_i)
-	add	a, a
-	ld	e, a
-	ld	d, 0
-	add	hl, de
-	ld	a, (spr_cell)
-	ld	(hl), a
-	inc	hl
-	ld	a, (spr_cell + 1)
-	ld	(hl), a
-	ld	hl, (spr_cell)
-	ld	a, (spr_code)
-	call	put_cell
-	ELSE
 	; 窓1: cell = (cur_pos + soff) & 0x7FF
 	ld	hl, (spr_soff)
 	ld	de, (cur_pos)
@@ -664,7 +605,6 @@ bullets_draw:
 	ld	hl, (spr_cell)
 	ld	a, (spr_code)
 	call	put_cell		; 窓2 描画
-	ENDIF
 .dn:	ld	a, (spr_i)
 	inc	a
 	ld	(spr_i), a
@@ -696,6 +636,9 @@ gen_enemy:
 
 ; 一定間隔で右端から敵出現(空きスロットがあれば)。ey は数行を循環。
 enemy_spawn:
+	IFDEF	NO_ENEMY
+	ret				; 検証用: 敵を出さない(弾/爆発のゴースト切り分け)
+	ENDIF
 	ld	a, (spawn_tmr)
 	or	a
 	jr	z, .go
@@ -763,7 +706,7 @@ enemy_spawn:
 	ld	(hl), 0xFF
 	inc	hl
 	ld	(hl), 0xFF
-	ld	hl, ene_prev2		; [2窓削減] page1 スロットも無効化
+	ld	hl, ene_prev2		; 窓2 も無効化(孤児防止)
 	add	hl, de
 	add	hl, de
 	ld	(hl), 0xFF
@@ -771,65 +714,8 @@ enemy_spawn:
 	ld	(hl), 0xFF
 	ret
 
-; 全敵を前回位置から消去。既定(1窓)=表示ページのみ / -DSPR_EVERY8=両窓。
+; 全敵を前回位置(両窓, 2x2)から消去。
 enemies_erase:
-	IFDEF	SPR_1WIN
-	; [2窓削減] 表示ページ(cur_pos bit10)のスロットのみ消去
-	ld	a, (cur_pos + 1)
-	and	0x04
-	ld	hl, ene_prev
-	jr	z, .pb0
-	ld	hl, ene_prev2
-.pb0:	ld	(spr_pbase), hl
-	xor	a
-	ld	(spr_i), a
-.el1:	ld	a, (spr_i)
-	cp	MAX_ENEMIES
-	ret	z
-	ld	e, a
-	ld	d, 0
-	ld	a, (scroll_moved)
-	ld	hl, ene_dirty
-	add	hl, de
-	or	(hl)
-	jp	z, .en1			; idle-skip
-	ld	a, (spr_i)
-	add	a, a
-	ld	e, a
-	ld	d, 0
-	ld	hl, (spr_pbase)
-	add	hl, de
-	ld	a, (hl)
-	inc	hl
-	ld	h, (hl)
-	ld	l, a
-	ld	a, h
-	cp	0xFF
-	jr	z, .en1			; prev 無効
-	call	ene_clr2x2
-	; 非アクティブなら表示ページ slot を無効化
-	ld	a, (spr_i)
-	ld	e, a
-	ld	d, 0
-	ld	hl, ene_active
-	add	hl, de
-	ld	a, (hl)
-	or	a
-	jr	nz, .en1
-	ld	a, (spr_i)
-	add	a, a
-	ld	e, a
-	ld	d, 0
-	ld	hl, (spr_pbase)
-	add	hl, de
-	ld	(hl), 0xFF
-	inc	hl
-	ld	(hl), 0xFF
-.en1:	ld	a, (spr_i)
-	inc	a
-	ld	(spr_i), a
-	jp	.el1
-	ELSE
 	xor	a
 	ld	(spr_i), a
 .el:	ld	a, (spr_i)
@@ -887,11 +773,19 @@ enemies_erase:
 	ld	(hl), 0xFF
 	inc	hl
 	ld	(hl), 0xFF
+	ld	a, (spr_i)		; 窓2 も無効化(孤児防止)
+	add	a, a
+	ld	e, a
+	ld	d, 0
+	ld	hl, ene_prev2
+	add	hl, de
+	ld	(hl), 0xFF
+	inc	hl
+	ld	(hl), 0xFF
 .en:	ld	a, (spr_i)
 	inc	a
 	ld	(spr_i), a
 	jp	.el
-	ENDIF
 
 ; 全敵のアニメ更新 + 左へ移動 + 画面外で消滅。移動/アニメしたら ene_dirty=1。
 enemies_move:
@@ -1024,35 +918,6 @@ enemies_draw:
 	add	a, a			; frame*4
 	add	a, ENEMY_BASE
 	ld	(spr_code), a
-	IFDEF	SPR_1WIN
-	; [2窓削減] 表示ページのみ描画、prev は表示ページスロットへ。ページ切替
-	;   フレームは scroll_moved=1 で必ず描き直されるので新表示ページも更新される。
-	ld	hl, (spr_soff)
-	ld	de, (cur_pos)
-	add	hl, de
-	ld	a, h
-	and	0x07
-	ld	h, a
-	ld	(spr_cell), hl
-	ld	a, (cur_pos + 1)
-	and	0x04
-	ld	hl, ene_prev
-	jr	z, .ed0
-	ld	hl, ene_prev2
-.ed0:	ld	a, (spr_i)
-	add	a, a
-	ld	e, a
-	ld	d, 0
-	add	hl, de
-	ld	a, (spr_cell)
-	ld	(hl), a
-	inc	hl
-	ld	a, (spr_cell + 1)
-	ld	(hl), a
-	ld	hl, (spr_cell)
-	ld	a, (spr_code)
-	call	ene_put2x2
-	ELSE
 	; 窓1
 	ld	hl, (spr_soff)
 	ld	de, (cur_pos)
@@ -1100,7 +965,6 @@ enemies_draw:
 	ld	hl, (spr_cell)
 	ld	a, (spr_code)
 	call	ene_put2x2
-	ENDIF
 .dn:	ld	a, (spr_i)
 	inc	a
 	ld	(spr_i), a
@@ -1212,7 +1076,7 @@ expl_spawn:
 	ld	(hl), 0xFF
 	inc	hl
 	ld	(hl), 0xFF
-	ld	hl, exp_prev2		; [2窓削減] page1 スロットも無効化
+	ld	hl, exp_prev2		; 窓2 も無効化
 	add	hl, de
 	add	hl, de
 	ld	(hl), 0xFF
@@ -1222,69 +1086,12 @@ expl_spawn:
 
 ; 全爆発を前回位置(両窓, 2x2)から消去。
 expls_erase:
-	IFDEF	SPR_1WIN
-	; [2窓削減] 表示ページのスロットのみ消去
-	ld	a, (cur_pos + 1)
-	and	0x04
-	ld	hl, exp_prev
-	jr	z, .pb0
-	ld	hl, exp_prev2
-.pb0:	ld	(spr_pbase), hl
-	xor	a
-	ld	(spr_i), a
-.el1:	ld	a, (spr_i)
-	cp	MAX_EXPL
-	ret	z
-	; 表示ページ slot = spr_pbase + 2*i
-	add	a, a
-	ld	e, a
-	ld	d, 0
-	ld	hl, (spr_pbase)
-	add	hl, de
-	ld	a, (hl)
-	inc	hl
-	ld	h, (hl)
-	ld	l, a			; hl = cell
-	ld	a, h
-	cp	0xFF
-	jr	z, .en1			; slot 無効
-	call	ene_clr2x2		; 表示ページの旧セルを消去
-	; 非アクティブ(消滅)なら slot を無効化
-	ld	a, (spr_i)
-	ld	e, a
-	ld	d, 0
-	ld	hl, exp_active
-	add	hl, de
-	ld	a, (hl)
-	or	a
-	jr	nz, .en1		; active なら draw が再設定
-	ld	a, (spr_i)
-	add	a, a
-	ld	e, a
-	ld	d, 0
-	ld	hl, (spr_pbase)
-	add	hl, de
-	ld	(hl), 0xFF
-	inc	hl
-	ld	(hl), 0xFF
-.en1:	ld	a, (spr_i)
-	inc	a
-	ld	(spr_i), a
-	jr	.el1
-	ELSE
 	xor	a
 	ld	(spr_i), a
 .el:	ld	a, (spr_i)
 	cp	MAX_EXPL
 	ret	z
-	ld	e, a
-	ld	d, 0
-	ld	hl, exp_active
-	add	hl, de
-	ld	a, (hl)
-	or	a
-	jr	z, .en
-	ld	a, (spr_i)
+	; active/非active 問わず prev 有効なら両窓消去 (非アクティブ消去スキップでゴースト)
 	add	a, a
 	ld	e, a
 	ld	d, 0
@@ -1296,7 +1103,7 @@ expls_erase:
 	ld	l, a
 	ld	a, h
 	cp	0xFF
-	jr	z, .en
+	jp	z, .en
 	call	ene_clr2x2
 	ld	a, (spr_i)
 	add	a, a
@@ -1309,11 +1116,37 @@ expls_erase:
 	ld	h, (hl)
 	ld	l, a
 	call	ene_clr2x2
+	; 非アクティブなら両窓 slot を無効化
+	ld	a, (spr_i)
+	ld	e, a
+	ld	d, 0
+	ld	hl, exp_active
+	add	hl, de
+	ld	a, (hl)
+	or	a
+	jp	nz, .en
+	ld	a, (spr_i)
+	add	a, a
+	ld	e, a
+	ld	d, 0
+	ld	hl, exp_prev
+	add	hl, de
+	ld	(hl), 0xFF
+	inc	hl
+	ld	(hl), 0xFF
+	ld	a, (spr_i)
+	add	a, a
+	ld	e, a
+	ld	d, 0
+	ld	hl, exp_prev2
+	add	hl, de
+	ld	(hl), 0xFF
+	inc	hl
+	ld	(hl), 0xFF
 .en:	ld	a, (spr_i)
 	inc	a
 	ld	(spr_i), a
-	jr	.el
-	ENDIF
+	jp	.el
 
 ; 全爆発のコマ送り。3コマ終了で消滅。
 expls_anim:
@@ -1400,34 +1233,6 @@ expls_draw:
 	add	a, a
 	add	a, EXPL_BASE
 	ld	(spr_code), a
-	IFDEF	SPR_1WIN
-	; [2窓削減] 表示ページのみ描画、prev は表示ページスロットへ
-	ld	hl, (spr_soff)
-	ld	de, (cur_pos)
-	add	hl, de
-	ld	a, h
-	and	0x07
-	ld	h, a
-	ld	(spr_cell), hl
-	ld	a, (cur_pos + 1)
-	and	0x04
-	ld	hl, exp_prev
-	jr	z, .xd0
-	ld	hl, exp_prev2
-.xd0:	ld	a, (spr_i)
-	add	a, a
-	ld	e, a
-	ld	d, 0
-	add	hl, de
-	ld	a, (spr_cell)
-	ld	(hl), a
-	inc	hl
-	ld	a, (spr_cell + 1)
-	ld	(hl), a
-	ld	hl, (spr_cell)
-	ld	a, (spr_code)
-	call	ene_put2x2
-	ELSE
 	; 窓1
 	ld	hl, (spr_soff)
 	ld	de, (cur_pos)
@@ -1475,7 +1280,6 @@ expls_draw:
 	ld	hl, (spr_cell)
 	ld	a, (spr_code)
 	call	ene_put2x2
-	ENDIF
 .dn:	ld	a, (spr_i)
 	inc	a
 	ld	(spr_i), a
@@ -1491,9 +1295,6 @@ spr_soff:	dw	0
 spr_code:	db	0
 spr_i:		db	0		; ループ index (レジスタ c は clr/put_cell で壊れるため)
 spr_cell:	dw	0		; 描画先セル一時
-	IFDEF	SPR_1WIN
-spr_pbase:	dw	0		; [2窓削減] 表示ページの prev 配列ベース(cur_pos bit10 で選択)
-	ENDIF
 fire_tmr:	db	0
 bul_active:	ds	MAX_BULLETS
 bul_hx:		ds	MAX_BULLETS		; 横 2px単位
