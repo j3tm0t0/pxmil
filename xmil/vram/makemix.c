@@ -58,11 +58,11 @@ void makemix_mixgrph(UINT8 *dst, UINT align, const UINT8 *grp, UINT count) {
 }
 
 #if defined(SUPPORT_TURBOZ)
-/* turboZ 64è‰² (6ãƒ—ãƒ¬ãƒ¼ãƒ³) ãƒ¢ãƒ¼ãƒ‰ã®ã‚»ãƒ«å±•é–‹ã€‚
-   bank0(grp0) ã® B/R/G ãƒ—ãƒ¬ãƒ¼ãƒ³ = 6bit ã‚¤ãƒ³ãƒ‡ãƒƒã‚¯ã‚¹ã® bit0/1/2ã€
+/* turboZ 64F (6ƒvƒŒ[ƒ“) ƒ‚[ƒh‚ÌƒZƒ‹“WŠJB
+   bank0(grp0) ‚Ì B/R/G ƒvƒŒ[ƒ“ = 6bit ƒCƒ“ƒfƒbƒNƒX‚Ì bit0/1/2A
    bank1(grp1) ã® B/R/G = bit3/4/5ã€‚ã“ã®ä¸¦ã³ã¯ crtc.c palette_o(64è‰²)ã®
-   ã‚¤ãƒ³ãƒ‡ãƒƒã‚¯ã‚¹è¨ˆç®— (bit0..2=bank0 BRG, bit3..5=bank1 BRG) ã¨ pal4096banktbl ã«
-   ä¸€è‡´ã™ã‚‹ã€‚screenmap ã®å„ãƒã‚¤ãƒˆã« 0..63 ã®ã‚¤ãƒ³ãƒ‡ãƒƒã‚¯ã‚¹ã‚’æ›¸ã(ãƒ†ã‚­ã‚¹ãƒˆæ··åˆãªã—)ã€‚ */
+   ƒCƒ“ƒfƒbƒNƒXŒvZ (bit0..2=bank0 BRG, bit3..5=bank1 BRG) ‚Æ pal4096banktbl ‚É
+   ˆê’v‚·‚éBscreenmap ‚ÌŠeƒoƒCƒg‚É 0..63 ‚ÌƒCƒ“ƒfƒbƒNƒX‚ğ‘‚­(ƒeƒLƒXƒg¬‡‚È‚µ)B */
 void makemix_mixgrph64(UINT8 *dst, UINT align,
 					const UINT8 *grp0, const UINT8 *grp1, UINT count) {
 

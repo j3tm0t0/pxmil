@@ -19,10 +19,10 @@
 	UINT8	mainmem[0x10000];
 
 #if defined(PXMIL_PROFPC)
-/* PC プロファイラ (ゲームのメインループ特定用。常用ビルドには入らない)
- * - profpc_hist: 命令開始 PC ごとの実行回数
- * - profpc_trace: 直近の PC リングトレース (周期・バックエッジの特定用)
- * - profpc_portb: 8255 ポート B (VBLANK) の読み取り回数 (ppi.c が加算) */
+/* PC �v���t�@�C�� (�Q�[���̃��C�����[�v����p�B��p�r���h�ɂ͓���Ȃ�)
+ * - profpc_hist: ���ߊJ�n PC ���Ƃ̎��s��
+ * - profpc_trace: ���߂� PC �����O�g���[�X (�����E�o�b�N�G�b�W�̓���p)
+ * - profpc_portb: 8255 �|�[�g B (VBLANK) �̓ǂݎ��� (ppi.c �����Z) */
 #define	PXMIL_PROFPC_TRACELEN	(1 << 20)
 	UINT32	profpc_hist[0x10000];
 	UINT16	profpc_trace[PXMIL_PROFPC_TRACELEN];

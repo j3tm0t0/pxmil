@@ -104,8 +104,8 @@ void width40x25_64s(void) {						// 40x25 200line 64è‰² (6plane,1ç”»é¢)
 			if (dirty) {
 				TRAMUPDATE(pos) = (UINT8)(udtmp ^ dirty);
 				newline = TRUE;
-				/* 64è‰²ã¯ã‚°ãƒ©ãƒ•ã‚£ãƒƒã‚¯ã®ã¿ (ãƒ†ã‚­ã‚¹ãƒˆæ··åˆãªã—)ã€‚
-				   disp1=bank0, disp2=bank1 ã® 6 ãƒ—ãƒ¬ãƒ¼ãƒ³ã‚’å±•é–‹ã€‚ */
+				/* 64F‚ÍƒOƒ‰ƒtƒBƒbƒN‚Ì‚İ (ƒeƒLƒXƒg¬‡‚È‚µ)B
+				   disp1=bank0, disp2=bank1 ‚Ì 6 ƒvƒŒ[ƒ“‚ğ“WŠJB */
 				makemix_mixgrph64(dst, SURFACE_WIDTH * 2,
 								makescrn.disp1 + TRAM2GRAM(pos),
 								makescrn.disp2 + TRAM2GRAM(pos), fontcy);
