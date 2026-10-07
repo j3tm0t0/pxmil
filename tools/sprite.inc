@@ -17,7 +17,7 @@
 ; =====================================================================
 
 BULLET_BASE	EQU	0xA0		; 弾 PCG 先頭 (0xA0..0xAF)
-MAX_BULLETS	EQU	4		; 同時発射数
+MAX_BULLETS	EQU	8		; 同時存在数 (ザッパー2発 x 複数ペア)。PCG は共有16版で不変
 TRIG1		EQU	0x20		; PSG port A bit5 (トリガ1, 負論理)
 ENEMY_BASE	EQU	0xB0		; 敵 PCG 先頭 (0xB0..0xBF, 4フレーム x 2x2)
 MAX_ENEMIES	EQU	4		; 同時出現数
@@ -351,20 +351,32 @@ fire_check:
 	call	read_joy		; a = PSG port A (負論理)
 	bit	5, a			; トリガ1
 	ret	nz			; 押されていない(bit=1)
-	; 空きスロットを探す
+	; [M8] ザッパー2発: vy(X1縦方向)で上下に並べて同時発射。
+	ld	a, (ship_vy)
+	add	a, 2			; 上側 (自機上寄り)
+	call	spawn_bullet
+	ld	a, (ship_vy)
+	add	a, 10			; 下側 (自機下寄り)
+	call	spawn_bullet
+	ld	a, FIRE_DELAY
+	ld	(fire_tmr), a
+	ret
+
+; a = 発射 vy。空きスロットに弾1発を spawn (hx = ship_hx + 2セル前方)。
+;   空きが無ければ何もしない。de/bc は壊してよい。
+spawn_bullet:
+	ld	(bul_spawn_vy), a
 	ld	hl, bul_active
 	ld	b, MAX_BULLETS
 	ld	c, 0			; index
 .fs:	ld	a, (hl)
 	or	a
-	jr	z, .spawn
+	jr	z, .sp
 	inc	hl
 	inc	c
 	djnz	.fs
 	ret				; 空き無し
-.spawn:
-	; bul_active[c]=1, hx=ship_hx(+前方へ少し), vy=ship_vy
-	ld	(hl), 1
+.sp:	ld	(hl), 1			; active
 	ld	a, c
 	ld	e, a
 	ld	d, 0
@@ -373,28 +385,22 @@ fire_check:
 	ld	hl, bul_hx
 	add	hl, de
 	ld	(hl), a
-	ld	a, (ship_vy)
-	inc	a			; 中央寄り(自機3x3の中段)
-	inc	a
-	inc	a
-	inc	a
+	ld	a, (bul_spawn_vy)
 	ld	hl, bul_vy
 	add	hl, de
 	ld	(hl), a
-	ld	hl, bul_prev
-	add	hl, de
-	add	hl, de
-	ld	(hl), 0xFF		; prev 無効(窓1)
-	inc	hl
-	ld	(hl), 0xFF
-	ld	hl, bul_prev2		; 窓2 も無効化(スロット再利用の残留防止)
+	ld	hl, bul_prev		; prev 無効化(両窓)
 	add	hl, de
 	add	hl, de
 	ld	(hl), 0xFF
 	inc	hl
 	ld	(hl), 0xFF
-	ld	a, FIRE_DELAY
-	ld	(fire_tmr), a
+	ld	hl, bul_prev2
+	add	hl, de
+	add	hl, de
+	ld	(hl), 0xFF
+	inc	hl
+	ld	(hl), 0xFF
 	ret
 
 ; 全弾を前回位置(両窓)から消去。ループ index は RAM(spr_i)。clr_cell が bc を
@@ -1296,6 +1302,7 @@ spr_code:	db	0
 spr_i:		db	0		; ループ index (レジスタ c は clr/put_cell で壊れるため)
 spr_cell:	dw	0		; 描画先セル一時
 fire_tmr:	db	0
+bul_spawn_vy:	db	0		; spawn_bullet の発射 vy 一時
 bul_active:	ds	MAX_BULLETS
 bul_hx:		ds	MAX_BULLETS		; 横 2px単位
 bul_vy:		ds	MAX_BULLETS		; 縦 2ライン単位
