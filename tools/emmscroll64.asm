@@ -363,6 +363,23 @@ mainloop:
 	ld	hl, (framecnt)
 	inc	hl
 	ld	(framecnt), hl
+	IFDEF	CRATER_SELFTEST
+	; 決定論テスト: framecnt==CST_FRAME で gobj_list[0](col211,row14)に crater を1回強制。
+	IFNDEF	CST_FRAME
+CST_FRAME	EQU	3040		; coarse=190 → col211 は画面 col21 に表示
+	ENDIF
+	ld	hl, (framecnt)
+	ld	de, CST_FRAME
+	or	a
+	sbc	hl, de
+	jr	nz, .cst_skip
+	ld	hl, gobj_list
+	ld	(gc_ptr), hl
+	call	crater_write_obj
+	call	crater_gram
+.cst_skip:
+	ld	hl, (framecnt)		; dropped 計算が依存する HL=framecnt を復元
+	ENDIF
 	IFDEF	MEAS
 	; [MEAS] 各ルーチンのサイクル数を OUT (base, ship, spr, chunk, sr の順)。
 	;   実コストは (値 - meas_base)。走らなかったフレームは 0 付近。

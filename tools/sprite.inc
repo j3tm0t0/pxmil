@@ -429,7 +429,7 @@ blaster_move:
 	call	gobj_check
 	jr	nc, .nobj		; 当たり無し
 	call	crater_write_obj	; 当たり: 2x2の4セルを crater タイルで EMM 上書き
-	; TODO(次段): 表示中 GRAM の両ページ・両シフト版も即時上書き
+	call	crater_gram		; 表示中 GRAM(両ページ・両シフト)へクレーターを即時反映
 .nobj:
 	call	expl_spawn
 .mn:	ld	a, (spr_i)
@@ -663,7 +663,9 @@ crater_write_cell:
 	out	(c), d
 	ret
 
-; crater_write_obj: gc_ptr のエントリの 2x2(TL/TR/BL/BR)を各 crater で EMM 上書き。
+; crater_write_obj: gc_ptr のエントリの 2x2(TL/TR/BL/BR)を crater で EMM 上書き。
+;   エントリ形式(xevi, 6B): dw col, db row, db type, dw crater_base。
+;   2x2 タイル = crater_base + 0/+48/+96/+144 (TILEBYTES=48, tile 連続)。
 ;   セル配置: TL=(col,row) TR=(col+1,row) BL=(col,row+1) BR=(col+1,row+1)。
 crater_write_obj:
 	ld	hl, (gc_ptr)
@@ -674,52 +676,205 @@ crater_write_obj:
 	ld	a, (hl)
 	ld	(gc_row), a
 	inc	hl
-	inc	hl			; -> craterTL
-	; TL (col, row)
+	inc	hl			; -> crater_base (type をスキップ)
 	ld	e, (hl)
 	inc	hl
-	ld	d, (hl)
-	inc	hl
-	push	hl
+	ld	d, (hl)			; de = crater_base
+	ld	(gc_cbase), de
+	; TL (col, row) = base
 	ld	a, (gc_col)
 	ld	c, a
 	ld	a, (gc_row)
 	call	crater_write_cell
-	pop	hl
-	; TR (col+1, row)
-	ld	e, (hl)
-	inc	hl
-	ld	d, (hl)
-	inc	hl
-	push	hl
+	; TR (col+1, row) = base + 48
+	ld	de, (gc_cbase)
+	ld	hl, TILEBYTES
+	add	hl, de
+	ex	de, hl
 	ld	a, (gc_col)
 	inc	a
 	ld	c, a
 	ld	a, (gc_row)
 	call	crater_write_cell
-	pop	hl
-	; BL (col, row+1)
-	ld	e, (hl)
-	inc	hl
-	ld	d, (hl)
-	inc	hl
-	push	hl
+	; BL (col, row+1) = base + 96
+	ld	de, (gc_cbase)
+	ld	hl, TILEBYTES * 2
+	add	hl, de
+	ex	de, hl
 	ld	a, (gc_col)
 	ld	c, a
 	ld	a, (gc_row)
 	inc	a
 	call	crater_write_cell
-	pop	hl
-	; BR (col+1, row+1)
-	ld	e, (hl)
-	inc	hl
-	ld	d, (hl)
+	; BR (col+1, row+1) = base + 144
+	ld	de, (gc_cbase)
+	ld	hl, TILEBYTES * 3
+	add	hl, de
+	ex	de, hl
 	ld	a, (gc_col)
 	inc	a
 	ld	c, a
 	ld	a, (gc_row)
 	inc	a
 	call	crater_write_cell
+	ret
+
+;=====================================================================
+; crater_gram: crater_write_obj が EMM を更新した後、表示中 GRAM にクレーターを
+;   即時反映する。地上物(tilemap col W=gc_col, row R=gc_row)の 2x2 は tile W,W+1 を
+;   変更したので、4px ページでは隣接ブレンドのため dc_base 列 W-1/W/W+1 の 3 列
+;   (各 compose は列C と C+1 を使う=operand B は col+1)を再合成する。タイル ID は
+;   W-1..W+2 の 4 列を private バッファ(CG_IDBUF=TBUF)へ読み、page0/1 で 3 列×2 行を
+;   compose48 + scatter_chunk で GRAM へ散布。スクロールが跨フレームで使う
+;   dc_base/shl_hi/shr_hi のみ save/restore(ec_row/IDBUFA/B は非使用、
+;   chunk_start/cnt/ec_dst は本処理で設定)。
+CG_IDBUF	EQU	TBUF		; 0xC400: 4*50=200B (W-1..W+2 のタイルID)
+crater_gram:
+	IFDEF	CRATER_DBG
+	ld	a, 0xAA
+	ld	bc, 0x00FE
+	out	(c), a
+	ld	a, 0xAA
+	ld	bc, 0x00FF
+	out	(c), a			; emit PROBE 0xAAAA=43690 (crater_gram 実行検出)
+	ENDIF
+	; --- save 跨フレーム状態 ---
+	ld	hl, (dc_base)
+	ld	(cg_sav_dc), hl
+	ld	a, (shl_hi)
+	ld	(cg_sav_shl), a
+	ld	a, (shr_hi)
+	ld	(cg_sav_shr), a
+	; --- タイル ID 読み込み(ページ非依存): W-1..W+2 -> CG_IDBUF[0..3] ---
+	ld	a, (gc_col)
+	dec	a
+	ld	e, a
+	ld	hl, CG_IDBUF
+	call	read_ids
+	ld	a, (gc_col)
+	ld	e, a
+	ld	hl, CG_IDBUF + 50
+	call	read_ids
+	ld	a, (gc_col)
+	inc	a
+	ld	e, a
+	ld	hl, CG_IDBUF + 100
+	call	read_ids
+	ld	a, (gc_col)
+	inc	a
+	inc	a
+	ld	e, a
+	ld	hl, CG_IDBUF + 150
+	call	read_ids
+	; --- page 0/1 ---
+	xor	a
+	ld	(cg_page), a
+.ploop:
+	ld	a, (cg_page)
+	add	a, (SHLTAB >> 8)
+	ld	(shl_hi), a
+	ld	a, (cg_page)
+	add	a, (SHRTAB >> 8)
+	ld	(shr_hi), a
+	xor	a
+	ld	(cg_k), a		; k=0..2: dc_base 列 = (W-1)+k
+.kloop:
+	; dc_base = ((W-1)+k - COLS + page*OFF1024) & 0x7FF
+	ld	hl, 0
+	ld	a, (cg_page)
+	or	a
+	jr	z, .np0
+	ld	hl, OFF1024
+.np0:
+	ld	a, (gc_col)
+	dec	a			; W-1
+	ld	c, a
+	ld	a, (cg_k)
+	add	a, c			; (W-1)+k
+	ld	c, a
+	ld	b, 0
+	add	hl, bc
+	ld	bc, COLS
+	or	a
+	sbc	hl, bc
+	ld	a, h
+	and	0x07
+	ld	h, a
+	ld	(dc_base), hl
+	; compose rows R, R+1 -> COLBUF (A=CG_IDBUF[k], B=CG_IDBUF[k+1])
+	ld	a, (gc_row)
+	ld	(chunk_start), a
+	ld	a, 2
+	ld	(chunk_cnt), a
+	ld	hl, COLBUF
+	ld	(ec_dst), hl
+	ld	a, (gc_row)
+	ld	(cg_rr), a
+	ld	b, 2
+.rloop:
+	push	bc
+	; ec_ta = (CG_IDBUF + k*50)[rr*2]
+	ld	a, (cg_k)
+	call	cg_colbase		; hl = CG_IDBUF + k*50
+	ld	a, (cg_rr)
+	add	a, a
+	ld	e, a
+	ld	d, 0
+	add	hl, de
+	ld	a, (hl)
+	inc	hl
+	ld	h, (hl)
+	ld	l, a
+	ld	(ec_ta), hl
+	; ec_tb = (CG_IDBUF + (k+1)*50)[rr*2]
+	ld	a, (cg_k)
+	inc	a
+	call	cg_colbase
+	ld	a, (cg_rr)
+	add	a, a
+	ld	e, a
+	ld	d, 0
+	add	hl, de
+	ld	a, (hl)
+	inc	hl
+	ld	h, (hl)
+	ld	l, a
+	ld	(ec_tb), hl
+	call	compose48
+	ld	a, (cg_rr)
+	inc	a
+	ld	(cg_rr), a
+	pop	bc
+	djnz	.rloop
+	call	scatter_chunk		; 2 行(chunk_start=R から)を dc_base へ散布
+	ld	a, (cg_k)
+	inc	a
+	ld	(cg_k), a
+	cp	3
+	jp	nz, .kloop
+	ld	a, (cg_page)
+	inc	a
+	ld	(cg_page), a
+	cp	2
+	jp	nz, .ploop
+	; --- restore ---
+	ld	hl, (cg_sav_dc)
+	ld	(dc_base), hl
+	ld	a, (cg_sav_shl)
+	ld	(shl_hi), a
+	ld	a, (cg_sav_shr)
+	ld	(shr_hi), a
+	ret
+
+; cg_colbase: a=0..3 -> hl = CG_IDBUF + a*50
+cg_colbase:
+	ld	hl, CG_IDBUF
+	or	a
+	ret	z
+	ld	b, a
+	ld	de, 50
+.add:	add	hl, de
+	djnz	.add
 	ret
 
 ; gobj_check: 着弾の tilemap(col8=c, row=a) が未破壊の地上物と一致するか。
@@ -772,7 +927,7 @@ gobj_check:
 	scf
 	ret
 .nx:	pop	hl			; エントリ先頭
-	ld	de, 14
+	ld	de, 6			; 1件=6B (dw col, db row, db type, dw crater_base)
 	add	hl, de			; 次エントリ
 	pop	bc			; 件数
 	ld	a, (gc_i)
@@ -2066,10 +2221,19 @@ gc_row:		db	0
 gc_col:		db	0
 gc_i:		db	0
 gc_ptr:		dw	0		; gobj_check が一致したエントリの先頭アドレス
+cg_sav_dc:	dw	0		; crater_gram: 跨フレーム状態の退避
+cg_sav_shl:	db	0
+cg_sav_shr:	db	0
+cg_page:	db	0
+cg_k:		db	0
+cg_rr:		db	0
+gc_cbase:	dw	0		; crater_write_obj: crater_base 一時保持
 ; 地上物リスト: 1件 = dw tilemap_col, db row, db type, dw crater_id (6B)。
 ;   実データは -DGOBJ_EXTDATA で roms/ から(gobj_n/gobj_list を定義)。既定は空。
 	IFDEF	GOBJ_EXTDATA
+gobj_list:				; データ先頭(roms が count を equ で定義)
 	INCLUDE	"roms/area1_gobj.inc"
+gobj_n:		db	gobj_area1_count
 	ELSE
 gobj_n:		db	0		; 骨組み: 空リスト(当たり無し)
 gobj_list:
