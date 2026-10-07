@@ -29,6 +29,8 @@ RETICLE_BASE	EQU	0xCC		; [M8] 照準 PCG (0xCC..0xCF, 2x2 の角ブラケット)
 RETICLE_DIST	EQU	10 * 4		; 自機前方の表示距離 (hx 2px単位, 10セル先)
 BLASTER_BASE	EQU	0xD0		; [M8] ブラスター弾 PCG (0xD0..0xDB, 3サイズ x 2x2)
 BLASTER_SIZES	EQU	3		; 照準へ近づくほど小さく(大→中→小)
+RETICLE_RED_BASE EQU	0xDC		; [M8-3] 照準ロック時の赤版 PCG (0xDC..0xDF, 2x2)
+RETICLE_BLINK	EQU	0x08		; 点滅周期(framecnt のこのビットで赤/シアン切替)
 MAX_BLASTER	EQU	1		; 同時存在数 (ピーク負荷削減)
 BLASTER_SPEED	EQU	4		; 前進/呼出 (2px単位)
 TRIG2		EQU	0x40		; PSG port A bit6 (トリガ2, 負論理)
@@ -67,10 +69,14 @@ sprite_init:
 	call	gen_enemy
 	call	gen_expl
 	call	gen_reticle
+	call	gen_reticle_red		; [M8-3] ロック点滅用の赤版照準 PCG
 	call	gen_blaster
 	ld	hl, 0xFFFF		; 照準 prev 無効化
 	ld	(ret_prev), hl
 	ld	(ret_prev2), hl
+	ld	a, RETICLE_BASE		; 初期はシアン
+	ld	(ret_code), a
+	ld	(ret_lcode), a
 	ld	hl, bla_active		; ブラスター全非アクティブ
 	ld	b, MAX_BLASTER
 .cb:	ld	(hl), 0
@@ -180,25 +186,102 @@ gen_bullet:
 ;=====================================================================
 ; [M8] 照準(リティクル): 自機前方 RETICLE_DIST に常時表示する 2x2 のオリジナル
 ;   角ブラケット(orange tc7=B+R+G)。常時 active なので ship 同様に両窓 erase+draw。
+; 照準 PCG 生成。実測: PCG プレーンは RGB チャンネルに直接対応(R→赤,G→緑,B→青)。
+;   形状(shape)は reticle_data の G プレーン(セル内 offset+16)から取得(単色前提)。
+;   通常=シアン(G+B), ロック=赤(R のみ)。gen_reticle_cells で共通化。
+;   a=先頭PCGコード, c=プレーン選択(0=シアン:B+G, 1=赤:R)
 gen_reticle:
-	ld	hl, reticle_data
 	ld	a, RETICLE_BASE
+	ld	c, 0			; シアン
+	jr	gen_reticle_cells
+gen_reticle_red:
+	ld	a, RETICLE_RED_BASE
+	ld	c, 1			; 赤
+gen_reticle_cells:
 	ld	(ene_code), a
+	ld	a, c
+	ld	(rr_mode), a
+	ld	hl, reticle_data
+	ld	(rr_src), hl
 	ld	b, 4
 .l:	push	bc
 	ld	a, (ene_code)
 	call	pcg_select
+	ld	a, (rr_mode)
+	or	a
+	jr	nz, .red
+	; シアン: B<-shape, R<-0, G<-shape
+	call	.shape
 	ld	d, PCG_B >> 8
 	call	def_plane
+	ld	hl, rr_zero
 	ld	d, PCG_R >> 8
 	call	def_plane
+	call	.shape
 	ld	d, PCG_G >> 8
 	call	def_plane
+	jr	.done
+.red:	; 赤: B<-0, R<-shape, G<-0
+	ld	hl, rr_zero
+	ld	d, PCG_B >> 8
+	call	def_plane
+	call	.shape
+	ld	d, PCG_R >> 8
+	call	def_plane
+	ld	hl, rr_zero
+	ld	d, PCG_G >> 8
+	call	def_plane
+.done:
+	ld	hl, (rr_src)		; 次セル (src+24)
+	ld	de, 24
+	add	hl, de
+	ld	(rr_src), hl
 	ld	a, (ene_code)
 	inc	a
 	ld	(ene_code), a
 	pop	bc
 	djnz	.l
+	ret
+; .shape: hl <- 現セルの shape プレーン(src+16 = G プレーン)
+.shape:
+	ld	hl, (rr_src)
+	ld	de, 16
+	add	hl, de
+	ret
+
+; [M8-3] 照準ロック判定: 照準の tilemap 位置に未破壊地上物があれば ret_code=赤
+;   (framecnt のビットで点滅)、無ければシアン。実ヒットと同じ (col_ex,col_ey) 基準。
+reticle_lock_update:
+	ld	a, (ship_hx)
+	add	a, RETICLE_DIST
+	srl	a
+	srl	a			; 照準セル列
+	cp	COLS - 2
+	jr	c, .cok
+	ld	a, COLS - 2
+.cok:	ld	b, a			; 画面セル列
+	ld	a, (coarse)
+	add	a, b
+	add	a, GOBJ_OFFSET
+	ld	c, a			; tilemap 列
+	ld	a, (ship_vy)
+	add	a, 6
+	srl	a
+	srl	a			; セル行 = tilemap 行(非スクロール)
+	IFDEF	FORCE_RED
+	ld	a, RETICLE_RED_BASE	; テスト: 常に赤
+	ld	(ret_code), a
+	ret
+	ENDIF
+	call	gobj_at			; carry = 未破壊地上物あり
+	ld	a, RETICLE_BASE
+	jr	nc, .set		; ロックなし → シアン
+	ld	a, (framecnt)
+	and	RETICLE_BLINK
+	ld	a, RETICLE_BASE
+	jr	z, .set			; 点滅オフ相 → シアン
+	ld	a, RETICLE_RED_BASE	; 点滅オン相 → 赤
+.set:	ld	(ret_code), a
 	ret
 
 ; 照準の表示セル位置(soff)を計算して spr_soff に格納。
@@ -245,6 +328,10 @@ reticle_erase:
 	ld	hl, ret_lvy
 	cp	(hl)
 	jr	nz, .redraw
+	ld	a, (ret_code)		; ロック点滅で色(PCGコード)が変われば描き直す
+	ld	hl, ret_lcode
+	cp	(hl)
+	jr	nz, .redraw
 	ld	a, 1			; 変化なし → スキップ
 	ld	(ret_skip), a
 	ret
@@ -268,6 +355,8 @@ reticle_draw:
 	ld	(ret_lhx), a
 	ld	a, (ship_vy)
 	ld	(ret_lvy), a
+	ld	a, (ret_code)		; 今回描画する PCG コード(シアン/赤)を記録
+	ld	(ret_lcode), a
 	call	reticle_soff
 	; 窓1
 	ld	hl, (spr_soff)
@@ -277,7 +366,7 @@ reticle_draw:
 	and	0x07
 	ld	h, a
 	ld	(ret_prev), hl
-	ld	a, RETICLE_BASE
+	ld	a, (ret_code)
 	call	ene_put2x2
 	; 窓2
 	ld	hl, (cur_pos)
@@ -290,7 +379,7 @@ reticle_draw:
 	and	0x07
 	ld	h, a
 	ld	(ret_prev2), hl
-	ld	a, RETICLE_BASE
+	ld	a, (ret_code)
 	call	ene_put2x2
 	ret
 
@@ -880,9 +969,63 @@ cg_colbase:
 	djnz	.add
 	ret
 
+; gobj_at: (c=col8, a=row) に未破壊地上物があれば carry、無ければ nc。非破壊
+;   (gc_ptr/破壊フラグを変更しない)。照準ロック表示判定用。
+gobj_at:
+	ld	(ga_row), a
+	ld	a, c
+	ld	(ga_col), a
+	ld	a, (gobj_n)
+	or	a
+	ret	z
+	ld	b, a			; 残り件数
+	ld	hl, gobj_list
+	xor	a
+	ld	(ga_i), a
+.l:	push	bc
+	; 破壊済み?
+	ld	a, (ga_i)
+	ld	e, a
+	ld	d, 0
+	push	hl
+	ld	hl, gobj_dead
+	add	hl, de
+	ld	a, (hl)
+	pop	hl
+	or	a
+	jr	nz, .nx
+	; col lo (offset0)
+	ld	a, (hl)
+	ld	e, a
+	ld	a, (ga_col)
+	cp	e
+	jr	nz, .nx
+	; row (offset2)
+	push	hl
+	inc	hl
+	inc	hl
+	ld	a, (hl)
+	pop	hl
+	ld	e, a
+	ld	a, (ga_row)
+	cp	e
+	jr	nz, .nx
+	pop	bc			; 一致
+	scf
+	ret
+.nx:	ld	de, 6
+	add	hl, de
+	ld	a, (ga_i)
+	inc	a
+	ld	(ga_i), a
+	pop	bc
+	djnz	.l
+	or	a			; 不一致
+	ret
+
 ; gobj_check: 着弾の tilemap(col8=c, row=a) が未破壊の地上物と一致するか。
 ;   一致→ carry セット + gc_ptr=一致エントリ + 破壊フラグセット。不一致→ carry クリア。
-;   1件 = dw col, db row, db type, dw craterTL/TR/BL/BR = 14B。
+;   1件 = dw col, db row, db type, dw crater_base = 6B。
 gobj_check:
 	ld	(gc_row), a
 	ld	a, c
@@ -969,6 +1112,8 @@ sprite_update:
 	call	expls_anim
 	; 衝突判定(弾vs敵, 敵vs自機) → 当たった弾/敵を非アクティブ化 + 爆発発生
 	call	collision_check
+	; [M8-3] 照準ロック判定(地上物上なら赤点滅) → ret_code 決定
+	call	reticle_lock_update
 	; 全消去(前回位置)。敵は idle-skip, 非アクティブ化された敵も消去される。
 	call	reticle_erase
 	call	expls_erase
@@ -2287,6 +2432,14 @@ ret_prev2:	dw	0xFFFF		; 窓2
 ret_lhx:	db	0xFF		; idle-skip: 前回描画時の ship_hx
 ret_lvy:	db	0xFF		; 前回描画時の ship_vy
 ret_skip:	db	0		; このフレーム照準描画をスキップしたか
+ret_code:	db	RETICLE_BASE	; [M8-3] 今フレーム描画する照準 PCG(シアン/赤)
+ret_lcode:	db	RETICLE_BASE	; 前回描画した PCG コード(idle-skip 判定用)
+ga_col:		db	0		; gobj_at 作業
+ga_row:		db	0
+ga_i:		db	0
+rr_src:		dw	0		; gen_reticle 作業(現セルのソース)
+rr_mode:	db	0		; 0=シアン(B+G) 1=赤(R)
+rr_zero:	db	0,0,0,0,0,0,0,0	; 使わないプレーンに書く 0 データ
 
 ;=====================================================================
 ; 敵ベースデータ (4フレーム × 96B = 384B)。差し替えフック:
