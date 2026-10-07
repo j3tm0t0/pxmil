@@ -29,11 +29,16 @@ ENEMY_SPAWN	EQU	48		; 出現間隔(フレーム)
 ENEMY_SPEED	EQU	1		; 横移動(セル/移動tick)
 ENEMY_MOVE	EQU	4		; 移動間隔(フレーム)
 
+EXPL_BASE	EQU	0xC0		; 爆発 PCG 先頭 (0xC0..0xCB, 3フレーム x 2x2)
+MAX_EXPL	EQU	4		; 同時爆発数
+EXPL_ANIM	EQU	4		; 1コマの表示フレーム数
+
 ;=====================================================================
 ; 起動時: 弾 PCG(16版)生成 + テーブル初期化。PCGモード有効時に呼ぶ。
 sprite_init:
 	call	gen_bullet
 	call	gen_enemy
+	call	gen_expl
 	; 弾テーブルを全て非アクティブに
 	ld	hl, bul_active
 	ld	b, MAX_BULLETS
@@ -46,6 +51,12 @@ sprite_init:
 .ce:	ld	(hl), 0
 	inc	hl
 	djnz	.ce
+	; 爆発テーブルを全て非アクティブに
+	ld	hl, exp_active
+	ld	b, MAX_EXPL
+.cx:	ld	(hl), 0
+	inc	hl
+	djnz	.cx
 	xor	a
 	ld	(fire_tmr), a
 	ld	(spawn_tmr), a
@@ -128,13 +139,166 @@ gen_bullet:
 sprite_update:
 	call	fire_check		; トリガで発射
 	call	enemy_spawn		; 一定間隔で右端から出現
-	call	enemies_erase		; 敵を前回位置から消去(両窓)
-	call	bullets_erase		; 弾を前回位置から消去(両窓)
-	call	bullets_move		; 弾 前進 + 画面外で消滅
-	call	enemies_move		; 敵 移動/アニメ + 画面外で消滅
-	call	bullets_draw		; 弾 描画(両窓), prev 記録
-	call	enemies_draw		; 敵 描画(両窓), prev 記録
+	; 全消去(前回位置)。衝突で後に非アクティブ化されても、消去は済んでいるので消える。
+	call	expls_erase
+	call	enemies_erase
+	call	bullets_erase
+	; 衝突判定(弾vs敵, 敵vs自機) → 当たった弾/敵を非アクティブ化 + 爆発発生
+	call	collision_check
+	; 移動/アニメ
+	call	bullets_move
+	call	enemies_move
+	call	expls_anim
+	; 全描画(アクティブのみ)
+	call	bullets_draw
+	call	enemies_draw
+	call	expls_draw
 	ret
+
+; 衝突判定(セル空間)。弾セルが敵2x2矩形内 → 両方消滅 + 爆発。
+;   敵2x2が自機3x3矩形と重なる → 敵消滅 + 爆発(自機は当面無傷)。
+collision_check:
+	; --- 弾 vs 敵 ---
+	xor	a
+	ld	(spr_i), a		; 弾 index
+.bl:	ld	a, (spr_i)
+	cp	MAX_BULLETS
+	jp	nc, .evs		; 範囲外のため jp
+	ld	e, a
+	ld	d, 0
+	ld	hl, bul_active
+	add	hl, de
+	ld	a, (hl)
+	or	a
+	jp	z, .bnext
+	; 弾セル bcx=(hx>>2), bcy=(vy>>2)
+	ld	hl, bul_hx
+	add	hl, de
+	ld	a, (hl)
+	srl	a
+	srl	a
+	ld	(col_bcx), a
+	ld	hl, bul_vy
+	add	hl, de
+	ld	a, (hl)
+	srl	a
+	srl	a
+	ld	(col_bcy), a
+	; 各敵と判定
+	xor	a
+	ld	(spr_j), a
+.ej:	ld	a, (spr_j)
+	cp	MAX_ENEMIES
+	jr	nc, .bnext
+	ld	e, a
+	ld	d, 0
+	ld	hl, ene_active
+	add	hl, de
+	ld	a, (hl)
+	or	a
+	jr	z, .ejn
+	; bcx in [ex, ex+1] ?
+	ld	hl, ene_ex
+	add	hl, de
+	ld	a, (col_bcx)
+	sub	(hl)			; bcx - ex
+	cp	2			; 0 or 1 ?
+	jr	nc, .ejn
+	ld	hl, ene_ey
+	add	hl, de
+	ld	a, (col_bcy)
+	sub	(hl)
+	cp	2
+	jr	nc, .ejn
+	; ヒット: 弾消滅, 敵消滅, 爆発(敵位置)
+	ld	a, (spr_i)
+	ld	e, a
+	ld	d, 0
+	ld	hl, bul_active
+	add	hl, de
+	ld	(hl), 0
+	ld	a, (spr_j)
+	ld	e, a
+	ld	d, 0
+	ld	hl, ene_active
+	add	hl, de
+	ld	(hl), 0
+	ld	hl, ene_ex
+	add	hl, de
+	ld	a, (hl)
+	ld	(col_ex), a
+	ld	hl, ene_ey
+	add	hl, de
+	ld	a, (hl)
+	ld	(col_ey), a
+	call	expl_spawn		; (col_ex, col_ey) に爆発
+	jr	.bnext			; この弾は消えたので次の弾へ
+.ejn:	ld	a, (spr_j)
+	inc	a
+	ld	(spr_j), a
+	jr	.ej
+.bnext:	ld	a, (spr_i)
+	inc	a
+	ld	(spr_i), a
+	jp	.bl
+	; --- 敵 vs 自機 ---
+.evs:
+	xor	a
+	ld	(spr_j), a
+.vl:	ld	a, (spr_j)
+	cp	MAX_ENEMIES
+	ret	z
+	ld	e, a
+	ld	d, 0
+	ld	hl, ene_active
+	add	hl, de
+	ld	a, (hl)
+	or	a
+	jr	z, .vn
+	; 自機セル scx=(ship_hx>>2) 幅3, scy=(ship_vy>>2) 高3
+	; 矩形重なり: ex < scx+3 && ex+2 > scx && ey < scy+3 && ey+2 > scy
+	ld	hl, ene_ex
+	add	hl, de
+	ld	a, (hl)
+	ld	(col_ex), a		; ex
+	ld	hl, ene_ey
+	add	hl, de
+	ld	a, (hl)
+	ld	(col_ey), a
+	ld	a, (ship_hx)
+	srl	a
+	srl	a
+	ld	(col_scx), a		; scx
+	ld	a, (ship_vy)
+	srl	a
+	srl	a
+	ld	(col_scy), a
+	; 矩形重なり: 敵[ex,ex+1] と 自機[scx,scx+2] が重なる ⇔ (ex-scx) in [-1..2]。
+	;   (ex - scx + 1) in [0..3] で重なり。
+	ld	a, (col_ex)
+	ld	hl, col_scx
+	sub	(hl)
+	add	a, 1
+	cp	4
+	jr	nc, .vn			; X 非重なり
+	ld	a, (col_ey)
+	ld	hl, col_scy
+	sub	(hl)
+	add	a, 1
+	cp	4
+	jr	nc, .vn			; Y 非重なり
+	; 重なり: 敵消滅 + 爆発
+	ld	a, (spr_j)
+	ld	e, a
+	ld	d, 0
+	ld	hl, ene_active
+	add	hl, de
+	ld	(hl), 0
+	call	expl_spawn		; (col_ex,col_ey)
+.vn:	ld	a, (spr_j)
+	inc	a
+	ld	(spr_j), a
+	jr	.vl
 
 ; トリガ(bit5,負論理)で、連射間隔ごとに空きスロットへ弾を発射。
 fire_check:
@@ -439,18 +603,17 @@ enemy_spawn:
 	add	hl, de
 	ld	a, COLS - 2		; 右端
 	ld	(hl), a
-	; ey: spawn_row を 3,8,13,18 で循環
+	; ey: spawn_row を循環し row = 3*idx + 6 (= 6,9,12,15)
 	ld	a, (spawn_row)
 	inc	a
 	cp	4
 	jr	c, .rok
 	xor	a
 .rok:	ld	(spawn_row), a
-	add	a, a
 	ld	c, a
-	add	a, a
-	add	a, c			; *5 ... (row = 3 + idx*5 近似)
-	add	a, 3
+	add	a, a			; 2*idx
+	add	a, c			; 3*idx
+	add	a, 6			; 3*idx + 6
 	ld	hl, ene_ey
 	add	hl, de
 	ld	(hl), a
@@ -710,6 +873,253 @@ ene_clr2x2:
 	ret
 
 ;=====================================================================
+; 爆発 PCG 生成: expl_data(3フレーム×96B = 12セル×24B)を EXPL_BASE から定義。
+gen_expl:
+	ld	hl, expl_data
+	ld	a, EXPL_BASE
+	ld	(ene_code), a
+	ld	b, 12
+.el:	push	bc
+	ld	a, (ene_code)
+	call	pcg_select
+	ld	d, PCG_B >> 8
+	call	def_plane
+	ld	d, PCG_R >> 8
+	call	def_plane
+	ld	d, PCG_G >> 8
+	call	def_plane
+	ld	a, (ene_code)
+	inc	a
+	ld	(ene_code), a
+	pop	bc
+	djnz	.el
+	ret
+
+; (col_ex, col_ey) に爆発を1つ発生(空きスロットがあれば)。spr_k を使用
+;   (collision_check が spr_i/spr_j を使用中のため別 index)。
+expl_spawn:
+	xor	a
+	ld	(spr_k), a
+.fs:	ld	a, (spr_k)
+	cp	MAX_EXPL
+	ret	z			; 空き無し
+	ld	e, a
+	ld	d, 0
+	ld	hl, exp_active
+	add	hl, de
+	ld	a, (hl)
+	or	a
+	jr	z, .go
+	ld	a, (spr_k)
+	inc	a
+	ld	(spr_k), a
+	jr	.fs
+.go:
+	ld	(hl), 1
+	ld	hl, exp_ex
+	add	hl, de
+	ld	a, (col_ex)
+	ld	(hl), a
+	ld	hl, exp_ey
+	add	hl, de
+	ld	a, (col_ey)
+	ld	(hl), a
+	ld	hl, exp_frm
+	add	hl, de
+	ld	(hl), 0
+	ld	hl, exp_tmr
+	add	hl, de
+	ld	(hl), EXPL_ANIM
+	ld	hl, exp_prev
+	add	hl, de
+	add	hl, de
+	ld	(hl), 0xFF
+	inc	hl
+	ld	(hl), 0xFF
+	ret
+
+; 全爆発を前回位置(両窓, 2x2)から消去。
+expls_erase:
+	xor	a
+	ld	(spr_i), a
+.el:	ld	a, (spr_i)
+	cp	MAX_EXPL
+	ret	z
+	ld	e, a
+	ld	d, 0
+	ld	hl, exp_active
+	add	hl, de
+	ld	a, (hl)
+	or	a
+	jr	z, .en
+	ld	a, (spr_i)
+	add	a, a
+	ld	e, a
+	ld	d, 0
+	ld	hl, exp_prev
+	add	hl, de
+	ld	a, (hl)
+	inc	hl
+	ld	h, (hl)
+	ld	l, a
+	ld	a, h
+	cp	0xFF
+	jr	z, .en
+	call	ene_clr2x2
+	ld	a, (spr_i)
+	add	a, a
+	ld	e, a
+	ld	d, 0
+	ld	hl, exp_prev2
+	add	hl, de
+	ld	a, (hl)
+	inc	hl
+	ld	h, (hl)
+	ld	l, a
+	call	ene_clr2x2
+.en:	ld	a, (spr_i)
+	inc	a
+	ld	(spr_i), a
+	jr	.el
+
+; 全爆発のコマ送り。3コマ終了で消滅。
+expls_anim:
+	xor	a
+	ld	(spr_i), a
+.al:	ld	a, (spr_i)
+	cp	MAX_EXPL
+	ret	z
+	ld	e, a
+	ld	d, 0
+	ld	hl, exp_active
+	add	hl, de
+	ld	a, (hl)
+	or	a
+	jr	z, .an
+	ld	hl, exp_tmr
+	add	hl, de
+	dec	(hl)
+	jr	nz, .an
+	ld	(hl), EXPL_ANIM
+	ld	hl, exp_frm
+	add	hl, de
+	ld	a, (hl)
+	inc	a
+	ld	(hl), a
+	cp	3
+	jr	c, .an
+	ld	hl, exp_active
+	add	hl, de
+	ld	(hl), 0			; 3コマ終了 → 消滅
+.an:	ld	a, (spr_i)
+	inc	a
+	ld	(spr_i), a
+	jr	.al
+
+; 全爆発を描画(両窓, 2x2), prev 記録。
+expls_draw:
+	xor	a
+	ld	(spr_i), a
+.dl:	ld	a, (spr_i)
+	cp	MAX_EXPL
+	ret	z
+	ld	e, a
+	ld	d, 0
+	ld	hl, exp_active
+	add	hl, de
+	ld	a, (hl)
+	or	a
+	jp	z, .dn
+	; soff = ey*COLS + ex
+	ld	hl, exp_ey
+	add	hl, de
+	ld	a, (hl)
+	ld	h, 0
+	ld	l, a
+	add	hl, hl
+	add	hl, hl
+	add	hl, hl
+	ld	d, h
+	ld	e, l
+	add	hl, hl
+	add	hl, hl
+	add	hl, de			; *40
+	ld	a, (spr_i)
+	ld	e, a
+	ld	d, 0
+	push	hl
+	ld	hl, exp_ex
+	add	hl, de
+	ld	a, (hl)
+	pop	hl
+	ld	e, a
+	ld	d, 0
+	add	hl, de
+	ld	(spr_soff), hl
+	; code base = EXPL_BASE + frame*4
+	ld	a, (spr_i)
+	ld	e, a
+	ld	d, 0
+	ld	hl, exp_frm
+	add	hl, de
+	ld	a, (hl)
+	add	a, a
+	add	a, a
+	add	a, EXPL_BASE
+	ld	(spr_code), a
+	; 窓1
+	ld	hl, (spr_soff)
+	ld	de, (cur_pos)
+	add	hl, de
+	ld	a, h
+	and	0x07
+	ld	h, a
+	ld	(spr_cell), hl
+	ld	a, (spr_i)
+	add	a, a
+	ld	e, a
+	ld	d, 0
+	ld	hl, exp_prev
+	add	hl, de
+	ld	a, (spr_cell)
+	ld	(hl), a
+	inc	hl
+	ld	a, (spr_cell + 1)
+	ld	(hl), a
+	ld	hl, (spr_cell)
+	ld	a, (spr_code)
+	call	ene_put2x2
+	; 窓2
+	ld	hl, (cur_pos)
+	ld	a, h
+	xor	0x04
+	ld	h, a
+	ld	de, (spr_soff)
+	add	hl, de
+	ld	a, h
+	and	0x07
+	ld	h, a
+	ld	(spr_cell), hl
+	ld	a, (spr_i)
+	add	a, a
+	ld	e, a
+	ld	d, 0
+	ld	hl, exp_prev2
+	add	hl, de
+	ld	a, (spr_cell)
+	ld	(hl), a
+	inc	hl
+	ld	a, (spr_cell + 1)
+	ld	(hl), a
+	ld	hl, (spr_cell)
+	ld	a, (spr_code)
+	call	ene_put2x2
+.dn:	ld	a, (spr_i)
+	inc	a
+	ld	(spr_i), a
+	jp	.dl
+
+;=====================================================================
 ; データ / RAM
 SPR_ZERO:	db	0,0,0,0,0,0,0,0		; def_plane 用 0 プレーン
 
@@ -739,6 +1149,22 @@ ene_atmr:	ds	MAX_ENEMIES
 ene_mtmr:	ds	MAX_ENEMIES
 ene_prev:	ds	MAX_ENEMIES * 2		; 前回 top-left セル 窓1
 ene_prev2:	ds	MAX_ENEMIES * 2		; 窓2
+
+spr_j:		db	0		; collision 内側ループ index
+spr_k:		db	0		; expl_spawn の index
+col_bcx:	db	0		; 衝突: 弾セル列
+col_bcy:	db	0		; 弾セル行
+col_ex:		db	0		; 衝突: 敵/爆発 列
+col_ey:		db	0		; 行
+col_scx:	db	0		; 自機セル列
+col_scy:	db	0		; 自機セル行
+exp_active:	ds	MAX_EXPL
+exp_ex:		ds	MAX_EXPL
+exp_ey:		ds	MAX_EXPL
+exp_frm:	ds	MAX_EXPL	; コマ 0..2
+exp_tmr:	ds	MAX_EXPL
+exp_prev:	ds	MAX_EXPL * 2
+exp_prev2:	ds	MAX_EXPL * 2
 
 ;=====================================================================
 ; 敵ベースデータ (4フレーム × 96B = 384B)。差し替えフック:
@@ -803,3 +1229,48 @@ enemy_data:
 	db	0x7F,0xFE,0xFC,0xF8,0xF0,0xE0,0xC0,0x80
 	db	0x80,0x00,0x00,0x00,0x00,0x00,0x00,0x00
 	ENDIF
+
+;=====================================================================
+; 爆発ベースデータ (3フレーム × 96B = 288B)。オリジナルの膨張バースト
+;   (4x4 → 8x8 → 12x12 の橙色の破裂)。色=橙(slot7=tc7=B+R+G 全プレーン)。
+;   各セル B=R=G=同形状。著名キャラは不使用。
+expl_data:
+; --- frame0: 4x4 中心 ---
+	db	0x00,0x00,0x00,0x00,0x00,0x00,0x03,0x03	; TL B
+	db	0x00,0x00,0x00,0x00,0x00,0x00,0x03,0x03	; TL R
+	db	0x00,0x00,0x00,0x00,0x00,0x00,0x03,0x03	; TL G
+	db	0x00,0x00,0x00,0x00,0x00,0x00,0xC0,0xC0	; TR B
+	db	0x00,0x00,0x00,0x00,0x00,0x00,0xC0,0xC0	; TR R
+	db	0x00,0x00,0x00,0x00,0x00,0x00,0xC0,0xC0	; TR G
+	db	0x03,0x03,0x00,0x00,0x00,0x00,0x00,0x00	; BL B
+	db	0x03,0x03,0x00,0x00,0x00,0x00,0x00,0x00	; BL R
+	db	0x03,0x03,0x00,0x00,0x00,0x00,0x00,0x00	; BL G
+	db	0xC0,0xC0,0x00,0x00,0x00,0x00,0x00,0x00	; BR B
+	db	0xC0,0xC0,0x00,0x00,0x00,0x00,0x00,0x00	; BR R
+	db	0xC0,0xC0,0x00,0x00,0x00,0x00,0x00,0x00	; BR G
+; --- frame1: 8x8 ---
+	db	0x00,0x00,0x00,0x00,0x0F,0x0F,0x0F,0x0F	; TL B
+	db	0x00,0x00,0x00,0x00,0x0F,0x0F,0x0F,0x0F	; TL R
+	db	0x00,0x00,0x00,0x00,0x0F,0x0F,0x0F,0x0F	; TL G
+	db	0x00,0x00,0x00,0x00,0xF0,0xF0,0xF0,0xF0	; TR B
+	db	0x00,0x00,0x00,0x00,0xF0,0xF0,0xF0,0xF0	; TR R
+	db	0x00,0x00,0x00,0x00,0xF0,0xF0,0xF0,0xF0	; TR G
+	db	0x0F,0x0F,0x0F,0x0F,0x00,0x00,0x00,0x00	; BL B
+	db	0x0F,0x0F,0x0F,0x0F,0x00,0x00,0x00,0x00	; BL R
+	db	0x0F,0x0F,0x0F,0x0F,0x00,0x00,0x00,0x00	; BL G
+	db	0xF0,0xF0,0xF0,0xF0,0x00,0x00,0x00,0x00	; BR B
+	db	0xF0,0xF0,0xF0,0xF0,0x00,0x00,0x00,0x00	; BR R
+	db	0xF0,0xF0,0xF0,0xF0,0x00,0x00,0x00,0x00	; BR G
+; --- frame2: 12x12 ---
+	db	0x00,0x00,0x3F,0x3F,0x3F,0x3F,0x3F,0x3F	; TL B
+	db	0x00,0x00,0x3F,0x3F,0x3F,0x3F,0x3F,0x3F	; TL R
+	db	0x00,0x00,0x3F,0x3F,0x3F,0x3F,0x3F,0x3F	; TL G
+	db	0x00,0x00,0xFC,0xFC,0xFC,0xFC,0xFC,0xFC	; TR B
+	db	0x00,0x00,0xFC,0xFC,0xFC,0xFC,0xFC,0xFC	; TR R
+	db	0x00,0x00,0xFC,0xFC,0xFC,0xFC,0xFC,0xFC	; TR G
+	db	0x3F,0x3F,0x3F,0x3F,0x3F,0x3F,0x00,0x00	; BL B
+	db	0x3F,0x3F,0x3F,0x3F,0x3F,0x3F,0x00,0x00	; BL R
+	db	0x3F,0x3F,0x3F,0x3F,0x3F,0x3F,0x00,0x00	; BL G
+	db	0xFC,0xFC,0xFC,0xFC,0xFC,0xFC,0x00,0x00	; BR B
+	db	0xFC,0xFC,0xFC,0xFC,0xFC,0xFC,0x00,0x00	; BR R
+	db	0xFC,0xFC,0xFC,0xFC,0xFC,0xFC,0x00,0x00	; BR G
