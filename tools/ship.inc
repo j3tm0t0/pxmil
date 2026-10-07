@@ -417,7 +417,7 @@ move_ship:
 ; 自機を現フレームの表示 POS に合わせてテキストVRAMに配置 (スクロール追従)。
 ;   前回位置を消去し、新位置(cur_pos + 画面オフセット)に 2x2 を書く。
 overlay_ship:
-	; 前回消去 (両窓)
+	; 前回消去 (両窓)。自機は弾の銃口貫通で欠けるため idle-skip しない(毎フレーム描画)。
 	ld	hl, (ship_prev)
 	ld	a, h
 	cp	0xFF

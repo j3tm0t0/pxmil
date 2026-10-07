@@ -641,12 +641,18 @@ enemy_spawn:
 	ld	hl, ene_frm
 	add	hl, de
 	ld	(hl), 0
+	; 負荷分散: スロット index でタイマー位相をずらす(1フレームに描き直す敵を減らす)
+	ld	a, (spr_i)		; ene_atmr = slot+1 (アニメ位相ずらし)
+	inc	a
 	ld	hl, ene_atmr
 	add	hl, de
-	ld	(hl), ENEMY_ANIM
+	ld	(hl), a
+	ld	a, (spr_i)		; ene_mtmr = (slot mod ENEMY_MOVE)+1 (移動位相ずらし)
+	and	ENEMY_MOVE - 1
+	inc	a
 	ld	hl, ene_mtmr
 	add	hl, de
-	ld	(hl), ENEMY_MOVE
+	ld	(hl), a
 	ld	hl, ene_prev
 	add	hl, de
 	add	hl, de
