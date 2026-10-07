@@ -428,10 +428,7 @@ blaster_move:
 	ld	a, (col_ey)
 	call	gobj_check
 	jr	nc, .nobj		; 当たり無し
-	ld	a, (gc_col)		; 当たり: EMM タイルを crater に上書き(de=crater)
-	ld	c, a
-	ld	a, (gc_row)
-	call	crater_write_emm
+	call	crater_write_obj	; 当たり: 2x2の4セルを crater タイルで EMM 上書き
 	; TODO(次段): 表示中 GRAM の両ページ・両シフト版も即時上書き
 .nobj:
 	call	expl_spawn
@@ -631,9 +628,10 @@ MAX_GOBJ	EQU	16		; エリアあたり地上物の最大(破壊フラグ用)
 ; crater_write_emm: EMM のタイルマップ(col,row)を crater_id で上書き(再展開で反映)。
 ;   入力: c=tilemap列(8bit, 骨組み), a=row(0-24), de=crater tile ID。
 ;   EMM addr = col*50 + row*2 (read_ids と同じ列*50 + 行*2)。
-crater_write_emm:
-	push	de			; crater id 退避
-	; hl = col*50
+; crater_write_cell: EMM タイルマップ(col8=c, row=a) に de(2byte タイルデータ
+;   アドレス)を書く。EMM addr = col*50 + row*2。
+crater_write_cell:
+	push	de			; crater addr 退避
 	ld	h, 0
 	ld	l, c
 	ld	b, h
@@ -648,7 +646,6 @@ crater_write_emm:
 	pop	bc
 	add	hl, bc			; *25
 	add	hl, hl			; *50
-	; + row*2
 	ld	d, 0
 	add	a, a			; row*2
 	ld	e, a
@@ -660,78 +657,127 @@ crater_write_emm:
 	xor	a
 	ld	(emm_a2), a
 	call	set_emm_addr
-	pop	de			; crater id
+	pop	de			; crater addr
 	ld	bc, EMM_DAT
-	out	(c), e			; lo
-	out	(c), d			; hi
+	out	(c), e
+	out	(c), d
+	ret
+
+; crater_write_obj: gc_ptr のエントリの 2x2(TL/TR/BL/BR)を各 crater で EMM 上書き。
+;   セル配置: TL=(col,row) TR=(col+1,row) BL=(col,row+1) BR=(col+1,row+1)。
+crater_write_obj:
+	ld	hl, (gc_ptr)
+	ld	a, (hl)			; col lo
+	ld	(gc_col), a
+	inc	hl
+	inc	hl			; -> row
+	ld	a, (hl)
+	ld	(gc_row), a
+	inc	hl
+	inc	hl			; -> craterTL
+	; TL (col, row)
+	ld	e, (hl)
+	inc	hl
+	ld	d, (hl)
+	inc	hl
+	push	hl
+	ld	a, (gc_col)
+	ld	c, a
+	ld	a, (gc_row)
+	call	crater_write_cell
+	pop	hl
+	; TR (col+1, row)
+	ld	e, (hl)
+	inc	hl
+	ld	d, (hl)
+	inc	hl
+	push	hl
+	ld	a, (gc_col)
+	inc	a
+	ld	c, a
+	ld	a, (gc_row)
+	call	crater_write_cell
+	pop	hl
+	; BL (col, row+1)
+	ld	e, (hl)
+	inc	hl
+	ld	d, (hl)
+	inc	hl
+	push	hl
+	ld	a, (gc_col)
+	ld	c, a
+	ld	a, (gc_row)
+	inc	a
+	call	crater_write_cell
+	pop	hl
+	; BR (col+1, row+1)
+	ld	e, (hl)
+	inc	hl
+	ld	d, (hl)
+	ld	a, (gc_col)
+	inc	a
+	ld	c, a
+	ld	a, (gc_row)
+	inc	a
+	call	crater_write_cell
 	ret
 
 ; gobj_check: 着弾の tilemap(col8=c, row=a) が未破壊の地上物と一致するか。
-;   一致→ carry セット + 戻り: ix or 変数に index、de=crater id。不一致→ carry クリア。
-;   骨組み: gobj_n エントリを線形走査(1件 = dw col, db row, db type, dw crater = 6B)。
+;   一致→ carry セット + gc_ptr=一致エントリ + 破壊フラグセット。不一致→ carry クリア。
+;   1件 = dw col, db row, db type, dw craterTL/TR/BL/BR = 14B。
 gobj_check:
 	ld	(gc_row), a
 	ld	a, c
 	ld	(gc_col), a
 	ld	a, (gobj_n)
 	or	a
-	ret	z			; 空リスト → 当たり無し(carry クリア)
-	ld	b, a
+	ret	z			; 空リスト
+	ld	b, a			; b = 残り件数
 	ld	hl, gobj_list
 	xor	a
 	ld	(gc_i), a
 .l:	push	bc
-	; col 一致? (下位8bitのみ, 骨組み)
+	push	hl			; エントリ先頭
 	ld	a, (hl)			; col lo
 	ld	c, a
 	inc	hl
-	inc	hl			; col hi をスキップ(骨組みは8bit)
-	ld	a, (hl)			; row
-	inc	hl
-	ld	e, a			; row
-	ld	a, (hl)			; type (未使用)
-	inc	hl
-	ld	a, (hl)			; crater lo
-	ld	(gc_crlo), a
-	inc	hl
-	ld	a, (hl)			; crater hi
-	ld	(gc_crhi), a
-	inc	hl			; hl = 次エントリ
+	inc	hl			; -> row
+	ld	a, (hl)
+	ld	b, a			; b = row (件数はスタック)
 	; 破壊済み?
-	push	hl
 	ld	a, (gc_i)
-	ld	l, a
-	ld	h, 0
-	ld	de, gobj_dead
+	ld	e, a
+	ld	d, 0
+	ld	hl, gobj_dead
 	add	hl, de
 	ld	a, (hl)
-	pop	hl
 	or	a
-	jr	nz, .nx			; 破壊済みスキップ
+	jr	nz, .nx
 	ld	a, (gc_col)
 	cp	c
 	jr	nz, .nx
 	ld	a, (gc_row)
-	cp	e
+	cp	b
 	jr	nz, .nx
 	; 一致!
-	pop	bc
-	ld	a, (gc_i)		; 破壊フラグを立てる
-	ld	l, a
-	ld	h, 0
-	ld	de, gobj_dead
+	pop	hl			; エントリ先頭
+	ld	(gc_ptr), hl
+	pop	bc			; 件数破棄
+	ld	a, (gc_i)		; 破壊フラグ
+	ld	e, a
+	ld	d, 0
+	ld	hl, gobj_dead
 	add	hl, de
 	ld	(hl), 1
-	ld	a, (gc_crlo)
-	ld	e, a
-	ld	a, (gc_crhi)
-	ld	d, a			; de = crater id
 	scf
 	ret
-.nx:	ld	a, (gc_i)
+.nx:	pop	hl			; エントリ先頭
+	ld	de, 14
+	add	hl, de			; 次エントリ
+	pop	bc			; 件数
+	ld	a, (gc_i)
 	inc	a
 	ld	(gc_i), a
-	pop	bc
 	djnz	.l
 	or	a			; carry クリア
 	ret
@@ -2019,8 +2065,7 @@ gobj_dead:	ds	MAX_GOBJ		; 破壊済みフラグ(1=破壊)
 gc_row:		db	0
 gc_col:		db	0
 gc_i:		db	0
-gc_crlo:	db	0
-gc_crhi:	db	0
+gc_ptr:		dw	0		; gobj_check が一致したエントリの先頭アドレス
 ; 地上物リスト: 1件 = dw tilemap_col, db row, db type, dw crater_id (6B)。
 ;   実データは -DGOBJ_EXTDATA で roms/ から(gobj_n/gobj_list を定義)。既定は空。
 	IFDEF	GOBJ_EXTDATA
