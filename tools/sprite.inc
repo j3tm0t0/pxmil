@@ -871,24 +871,26 @@ crater_gram:
 	xor	a
 	ld	(cg_k), a		; k=0..2: dc_base 列 = (W-1)+k
 .kloop:
-	; dc_base = ((W-1)+k - COLS + page*OFF1024) & 0x7FF
-	ld	hl, 0
+	; dc_base = (coarse + col_ex + k - 1 - COLS + page*OFF1024) & 0x7FF
+	;   screen位置基準(col_ex=物体の画面列=gc_col-coarse)。16bit coarse を使うので
+	;   map pass>=1 でも表示中列の GRAM リング位置に一致する。pass0 では旧式と同値。
+	ld	hl, (coarse)
 	ld	a, (cg_page)
 	or	a
 	jr	z, .np0
-	ld	hl, OFF1024
+	ld	de, OFF1024
+	add	hl, de
 .np0:
-	ld	a, (gc_col)
-	dec	a			; W-1
-	ld	c, a
+	ld	a, (col_ex)
+	ld	e, a
 	ld	a, (cg_k)
-	add	a, c			; (W-1)+k
-	ld	c, a
-	ld	b, 0
-	add	hl, bc
-	ld	bc, COLS
+	add	a, e			; col_ex + k
+	ld	e, a
+	ld	d, 0
+	add	hl, de
+	ld	de, 1 + COLS		; - (1 + COLS)
 	or	a
-	sbc	hl, bc
+	sbc	hl, de
 	ld	a, h
 	and	0x07
 	ld	h, a
