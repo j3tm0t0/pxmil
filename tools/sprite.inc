@@ -25,6 +25,8 @@ TORKAN_BASE	EQU	0xF0		; [M8④] Torkan PCG (0xF0..0xF7, 2フレーム x 2x2)
 MAX_ENEMIES	EQU	4		; 同時出現数
 ENEMY_SPEED	EQU	1		; 横移動(セル/移動tick) ※敵は8pxグリッド
 EN_NTYPES	EQU	3		; [M8④] 敵タイプ数 (Toroid/Jara/Torkan)
+TOROID_STOP	EQU	16		; [M8④] Toroid が停止する画面セル列(寄って停止)
+TOROID_PAUSE	EQU	24		; 停止フレーム数(移動tick単位 ×ENEMY_MOVE)
 EXPL_BASE	EQU	0xC0		; 爆発 PCG 先頭 (0xC0..0xCB, 3フレーム x 2x2)
 MAX_EXPL	EQU	2		; 同時爆発数 (ピーク負荷削減)
 RETICLE_BASE	EQU	0xCC		; [M8] 照準 PCG (0xCC..0xCF, 2x2 の角ブラケット)
@@ -1794,6 +1796,9 @@ enemy_spawn:
 	ld	hl, ene_dir		; [M8④] 振動方向 初期=下
 	add	hl, de
 	ld	(hl), 0
+	ld	hl, ene_phase		; [M8④] Toroid フェーズ 初期=approach
+	add	hl, de
+	ld	(hl), 0
 	; [M8④] タイプ = spawn_seq[spawn_idx] (エリア1はToroid主体, たまにJara/Torkan)
 	push	de			; slot index 退避
 	ld	a, (spawn_idx)
@@ -1975,87 +1980,121 @@ enemies_move:
 	ld	hl, ene_dirty		; 移動 → dirty
 	add	hl, de
 	ld	(hl), 1
-	ld	hl, ene_ex
-	add	hl, de
-	ld	a, (hl)
-	sub	ENEMY_SPEED
-	ld	(hl), a
-	; [M8④] 軌道ディスパッチ: 0=Toroid(直進) / 1=Jara(下へ漂う) / 2=Torkan(下+横加速ダイブ)
-	push	af			; ene_ex(新) を off-screen 判定用に保存
+	; [M8④] per-type 移動(横+縦)。de=slot。traj_id を取得して分岐。
+	;   Toroid: 横入り→STOP列で停止(pause)→後退(右へ) / Jara: 左進+上下振動 /
+	;   Torkan: 斜めダイブ(左2倍+下)。
+	push	de			; slot index
 	ld	a, (spr_i)
 	ld	e, a
 	ld	d, 0
 	ld	hl, ene_type
 	add	hl, de
-	ld	a, (hl)			; type
+	ld	a, (hl)
 	ld	c, a
 	add	a, a
-	add	a, c			; type*3
+	add	a, c
 	inc	a
-	inc	a			; +2 = traj_id オフセット
+	inc	a			; type*3+2
 	ld	e, a
 	ld	d, 0
 	ld	hl, entype_tab
 	add	hl, de
 	ld	a, (hl)			; traj_id
+	pop	de			; slot index 復元
 	or	a
-	jp	z, .trajdone		; 0=Toroid: 縦移動なし(直進)
+	jp	z, .e_tor		; 0=Toroid
 	cp	2
-	jp	z, .tk_dive		; 2=Torkan: ダイブ
-	; --- 1=Jara: ene_ey を ene_dir 方向に振動(4..20, 端で反転) ---
-	ld	a, (spr_i)
-	ld	e, a
-	ld	d, 0
+	jp	z, .e_tk		; 2=Torkan
+	; --- 1=Jara: 横=左, 縦=振動(ene_dir, 4..20) ---
+	ld	hl, ene_ex
+	add	hl, de
+	ld	a, (hl)
+	sub	ENEMY_SPEED
+	ld	(hl), a
 	ld	hl, ene_dir
 	add	hl, de
 	ld	a, (hl)
 	or	a
-	jr	nz, .ja_up
+	jr	nz, .e_jup
 	ld	hl, ene_ey		; dir=0: 下へ
 	add	hl, de
 	ld	a, (hl)
 	inc	a
 	ld	(hl), a
 	cp	20
-	jp	c, .trajdone
+	jp	c, .e_off
 	ld	hl, ene_dir
 	add	hl, de
-	ld	(hl), 1			; 下端 → 上へ
-	jp	.trajdone
-.ja_up:	ld	hl, ene_ey		; dir=1: 上へ
+	ld	(hl), 1
+	jp	.e_off
+.e_jup:	ld	hl, ene_ey		; dir=1: 上へ
 	add	hl, de
 	ld	a, (hl)
 	dec	a
 	ld	(hl), a
 	cp	4
-	jp	nc, .trajdone
+	jp	nc, .e_off
 	ld	hl, ene_dir
 	add	hl, de
-	ld	(hl), 0			; 上端 → 下へ
-	jp	.trajdone
-.tk_dive:
-	ld	a, (spr_i)		; Torkan: ene_ey を下へ(clamp 22)
-	ld	e, a
-	ld	d, 0
+	ld	(hl), 0
+	jp	.e_off
+.e_tor:	; --- 0=Toroid: phase machine(0=approach/1=pause/2=retreat) ---
+	ld	hl, ene_phase
+	add	hl, de
+	ld	a, (hl)
+	or	a
+	jr	nz, .e_tor12
+	ld	hl, ene_ex		; phase0 approach: 左へ
+	add	hl, de
+	ld	a, (hl)
+	sub	ENEMY_SPEED
+	ld	(hl), a
+	cp	TOROID_STOP + 1
+	jp	nc, .e_off		; まだ手前 → 継続
+	ld	hl, ene_phase		; STOP 到達 → pause
+	add	hl, de
+	ld	(hl), 1
+	ld	hl, ene_ptmr
+	add	hl, de
+	ld	(hl), TOROID_PAUSE
+	jp	.e_off
+.e_tor12:
+	cp	2
+	jr	z, .e_tor_ret
+	ld	hl, ene_ptmr		; phase1 pause: タイマー
+	add	hl, de
+	dec	(hl)
+	jp	nz, .e_off
+	ld	hl, ene_phase
+	add	hl, de
+	ld	(hl), 2			; → retreat
+	jp	.e_off
+.e_tor_ret:				; phase2 retreat: 右へ
+	ld	hl, ene_ex
+	add	hl, de
+	ld	a, (hl)
+	add	a, ENEMY_SPEED
+	ld	(hl), a
+	jp	.e_off
+.e_tk:	; --- 2=Torkan: 左2倍(ダイブ) + 下 ---
+	ld	hl, ene_ex
+	add	hl, de
+	ld	a, (hl)
+	sub	2
+	ld	(hl), a
 	ld	hl, ene_ey
 	add	hl, de
 	ld	a, (hl)
 	cp	22
-	jr	nc, .tk2
+	jr	nc, .e_off
 	inc	a
 	ld	(hl), a
-.tk2:	ld	hl, ene_ex		; + 横加速(ダイブ)
+.e_off:
+	; off-screen 判定: ene_ex >= COLS (左underflow 0xFF / 右retreat 40+)で消滅
+	ld	hl, ene_ex
 	add	hl, de
-	dec	(hl)
-.trajdone:
-	pop	af			; ene_ex 復帰
-	ld	e, a			; ene_ex 退避
-	ld	a, (spr_i)		; de = i に復元 (traj 分岐で de が壊れているため)
-	ld	c, a
-	ld	a, e
-	ld	e, c
-	ld	d, 0
-	cp	COLS			; 0 未満で 0xFF 等 >= COLS → 消滅
+	ld	a, (hl)
+	cp	COLS
 	jr	c, .mn
 	ld	hl, ene_active
 	add	hl, de
@@ -2634,6 +2673,8 @@ ene_ey:		ds	MAX_ENEMIES		; セル行
 ene_frm:	ds	MAX_ENEMIES		; アニメフレーム 0..3
 ene_type:	ds	MAX_ENEMIES		; [M8] 敵タイプ index (0..EN_NTYPES-1)
 ene_dir:	ds	MAX_ENEMIES		; [M8④] Jara 振動方向(0=下/1=上)
+ene_phase:	ds	MAX_ENEMIES		; [M8④] Toroid フェーズ(0=approach/1=pause/2=retreat)
+ene_ptmr:	ds	MAX_ENEMIES		; [M8④] Toroid pause タイマー
 spawn_type:	db	0		; (旧)未使用
 spawn_idx:	db	0		; [M8④] spawn_seq のインデックス
 ; [M8④] 出現タイプ列(エリア1≒Toroid主体, たまに Jara(1)/Torkan(2))。12個循環。
