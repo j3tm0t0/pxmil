@@ -74,12 +74,13 @@ static void keypad_input(const SceCtrlData *pad) {
 		kp_curdir = code;
 	}
 
-	keypad_key(PSP_CTRL_SQUARE, now, NKEY_Z);
+	/* △=Z (つい押して武器を捨てがちなので誤爆しにくい側に)、
+	 * □=CTRL+W (タンク搭乗時以外は無害) */
+	keypad_key(PSP_CTRL_TRIANGLE, now, NKEY_Z);
 	keypad_key(PSP_CTRL_CROSS, now, NKEY_SPACE);
 	keypad_key(PSP_CTRL_CIRCLE, now, NKEY_X_);
-	/* △ = CTRL+W */
-	keypad_key(PSP_CTRL_TRIANGLE, now, NKEY_CTRL);
-	keypad_key(PSP_CTRL_TRIANGLE, now, NKEY_W);
+	keypad_key(PSP_CTRL_SQUARE, now, NKEY_CTRL);
+	keypad_key(PSP_CTRL_SQUARE, now, NKEY_W);
 	kp_buttons = now;
 }
 
