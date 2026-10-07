@@ -152,7 +152,24 @@ realstart:
 	;  により不要になった。実機でも書込んだ色は即反映されるのでこれが正しい挙動。)
 	IFDEF	ALLAREAS
 	call	allarea_load		; [⑦] FDC で全エリアデータを EMM へ展開
+	xor	a			; [⑦(2)] area1(index0)の タイルを RAM タイル表へ集約
+	call	area_switch
 	IFDEF	ALLAREAS_DBG
+	; 検証(2): RAM タイル表先頭(TILEBASE)の2バイトを PROBE(0xC8:byte)。
+	ld	a, (TILEBASE + 0)
+	ld	e, a
+	ld	bc, 0x00FE
+	out	(c), e
+	ld	a, 0xC8
+	ld	bc, 0x00FF
+	out	(c), a
+	ld	a, (TILEBASE + 1)
+	ld	e, a
+	ld	bc, 0x00FE
+	out	(c), e
+	ld	a, 0xC9
+	ld	bc, 0x00FF
+	out	(c), a
 	; 検証: EMM_MAPS(area01_map)先頭2バイトを読み PROBE(0xC0:byte)で出力。
 	ld	a, EMM_MAPS & 0xFF
 	ld	(emm_a0), a
@@ -1136,6 +1153,89 @@ al_emm_addr:
 	ld	a, (al_hi)
 	jp	set_emm_dst
 
+;=====================================================================
+; [⑦(2)] area_switch: a=area(0..15)。areaNN_used(EMM_USED+a*0x800)を読み、
+;   common_tiles[idx](EMM_TILES+idx*48)を RAM タイル表(TILEBASE+i*48)へ 48B ずつ集約。
+;   map/gobj は EMM 常駐のまま(engine が area base を加算して読む=(3))。
+area_switch:
+	; --- used list header(n): EMM addr = EMM_USED + area*0x800 ---
+	add	a, a
+	add	a, a
+	add	a, a			; area*8 (=(area*0x800)>>8)
+	ld	(emm_a1), a
+	xor	a
+	ld	(emm_a0), a
+	ld	a, EMM_USED >> 16	; 0x01
+	ld	(emm_a2), a
+	call	set_emm_addr
+	ld	bc, EMM_DAT
+	in	a, (c)			; n lo
+	ld	l, a
+	in	a, (c)			; n hi
+	ld	h, a
+	ld	(as_n), hl
+	; --- n*2B(共通index)を used_buf へ(EMM 自動+1で連続読み) ---
+	add	hl, hl			; hl = n*2 (バイト数)
+	ld	de, used_buf
+.rdl:	ld	a, h
+	or	l
+	jr	z, .rddone
+	in	a, (c)			; EMM byte
+	ld	(de), a
+	inc	de
+	dec	hl
+	jr	.rdl
+.rddone:
+	; --- 集約: for i=0..n-1: idx=used_buf[i], EMM_TILES+idx*48 → TILEBASE+i*48 ---
+	ld	hl, (as_n)
+	ld	(as_cnt), hl
+	ld	ix, used_buf
+	ld	hl, TILEBASE
+	ld	(as_dst), hl
+.tl:	ld	hl, (as_cnt)
+	ld	a, h
+	or	l
+	ret	z			; 全タイル完了
+	dec	hl
+	ld	(as_cnt), hl
+	; EMM src = EMM_TILES + idx*48 (16bit, <0xC000)
+	ld	l, (ix + 0)
+	ld	h, (ix + 1)		; hl = idx
+	add	hl, hl
+	add	hl, hl
+	add	hl, hl
+	add	hl, hl			; *16
+	ld	d, h
+	ld	e, l
+	add	hl, hl			; *32
+	add	hl, de			; *48
+	ld	de, EMM_TILES
+	add	hl, de			; EMM_TILES + idx*48
+	ld	a, l
+	ld	(emm_a0), a
+	ld	a, h
+	ld	(emm_a1), a
+	xor	a
+	ld	(emm_a2), a
+	call	set_emm_addr
+	; 48B を (as_dst) へ
+	ld	hl, (as_dst)
+	ld	bc, EMM_DAT
+	ld	d, 48
+.cpl:	in	a, (c)
+	ld	(hl), a
+	inc	hl
+	dec	d
+	jr	nz, .cpl
+	ld	(as_dst), hl		; +48 済
+	ld	de, 2
+	add	ix, de			; 次 index
+	jr	.tl
+
+as_n:		dw	0
+as_cnt:		dw	0
+as_dst:		dw	0
+used_buf:	ds	802		; 共通index列(最大~401×2B)
 man_buf:	ds	256		; sector0(マニフェスト)
 al_count:	db	0
 al_i:		db	0
