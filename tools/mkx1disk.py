@@ -58,7 +58,9 @@ def make_disk(program, name, load, exec_addr, start_sector, data_files=None):
 
     # 追加データファイルをプログラム直後の連続セクタに配置し、
     #   マニフェストを sector0 の 0x20 に書く(本体の FDC ルーチンが読む):
-    #   0x20: count(1B), 続いて 1件=[start_sector:2B LE, length_bytes:4B LE]=6B。
+    #   0x20: count(1B), 続いて 1件=[start_sector:2B LE, length_bytes:2B LE]=4B。
+    #   (len は 2B。全データファイルは <64KB 前提。common_tiles 44928B が最大。)
+    #   これで 16エリア(2+16*3=50件=201B)が sector0(224B)に収まる。
     def nsec(n):
         return (n + SECTOR_SIZE - 1) // SECTOR_SIZE
     next_sec = start_sector + nsec(size)
@@ -66,6 +68,8 @@ def make_disk(program, name, load, exec_addr, start_sector, data_files=None):
     for df in (data_files or []):
         with open(df, "rb") as fp:
             data = fp.read()
+        if len(data) >= 0x10000:
+            raise ValueError("データファイルが 64KB 以上(マニフェスト len は2B): " + df)
         off = next_sec * SECTOR_SIZE
         if off + len(data) > DISK_SIZE:
             raise ValueError("追加データがディスク容量を超過しています: " + df)
@@ -74,9 +78,9 @@ def make_disk(program, name, load, exec_addr, start_sector, data_files=None):
         next_sec += nsec(len(data))
     man = bytearray([len(entries)])
     for _, sec, ln in entries:
-        man += struct.pack("<HI", sec, ln)
+        man += struct.pack("<HH", sec, ln)
     if 0x20 + len(man) > 0x100:
-        raise ValueError("マニフェストが sector0 に収まりません(ファイル数過多)")
+        raise ValueError("マニフェストが sector0 に収まりません(ファイル数過多: %d件)" % len(entries))
     disk[0x20:0x20 + len(man)] = man
     return bytes(disk), entries
 

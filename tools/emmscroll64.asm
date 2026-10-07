@@ -1067,7 +1067,7 @@ allarea_load:
 	ld	c, (ix + 0)
 	ld	b, (ix + 1)		; BC = start linear sector
 	ld	l, (ix + 2)
-	ld	h, (ix + 3)		; HL = len 低16(ファイル<64KB 前提: map 12800)
+	ld	h, (ix + 3)		; HL = len(2B, 全ファイル<64KB)
 	ld	de, 255			; sector数 = ceil(len/256) = (len+255)>>8
 	add	hl, de
 	ld	e, h
@@ -1075,7 +1075,7 @@ allarea_load:
 	push	ix
 	call	fdc_load		; BC..DE を現 EMM dst へ読む
 	pop	ix
-	ld	de, 6			; 次エントリ(6B)
+	ld	de, 4			; 次エントリ(4B: start_sec2 + len2)
 	add	ix, de
 	ld	a, (al_i)
 	inc	a
