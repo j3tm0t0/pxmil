@@ -110,10 +110,12 @@ void pccore_reset(void) {
 
 	pccore.ROM_TYPE = xmilcfg.ROM_TYPE;
 #if defined(XMIL_PROBE_SUPPORT)
-	/* pxmil: ヘッドレス(dummy/offscreen)検証で turboZ(RT3)を使うための ROM_TYPE
-	 *   上書き。IPL_TYPE の既定が 3 でない(ini の 4 列目は PFFLAG_MAX の上限値)ため
-	 *   xmil.cfg 無しだと RT2 になり turboZ 機能が無効になる。Mac 開発ビルド限定
-	 *   (PSP は XMIL_PROBE_SUPPORT 未定義)。例: XMIL_ROM_TYPE=3 ./xmilsdl2 ... */
+	/* pxmil: override ROM_TYPE for headless (dummy/offscreen) turboZ (RT3)
+	 *   verification. IPL_TYPE default is not 3 (the 4th ini field is a
+	 *   PFFLAG_MAX upper bound, not a default), so without xmil.cfg it
+	 *   becomes RT2 and turboZ (analog/text palette) is disabled.
+	 *   Mac dev build only (PSP has no XMIL_PROBE_SUPPORT).
+	 *   e.g. XMIL_ROM_TYPE=3 ./xmilsdl2 ... */
 	{
 		const char *e = getenv("XMIL_ROM_TYPE");
 		if (e) {
