@@ -402,6 +402,7 @@ void IOOUTCALL palette_o(UINT port, REG8 value) {
 			crtc.p.grph[crtc.e.pal_bank][num] = pal;
 			pal_setgrph(crtc.e.pal_bank, (REG8)num);
 		}
+		crtc.e.palandply = 1;
 	}
 #endif
 }

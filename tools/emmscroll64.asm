@@ -85,15 +85,9 @@ realstart:
 	call	clear_tvram
 	call	setup_turboz64
 	call	load_palette64
-	; ★アナログパレット書込(grph4096)は crtc.e.palandply を立てないため、
-	;   pal_update(pal4096to64 で grph4096->64pen を構築)が再実行されず表示が
-	;   黒のままになる。blackctrl(0x1FE0)を変化させて palandply を立て、次フレームの
-	;   pal_update でパレットを反映させる(モードは変えない)。
-	ld	bc, 0x1FE0
-	ld	a, 0xFF
-	out	(c), a
-	xor	a
-	out	(c), a
+	; (以前はここで blackctrl(0x1FE0)を叩いて palandply を立てる回避が必要だった。
+	;  xmil 本体の修正 = アナログパレット(grph4096)書込で crtc.e.palandply=1 を立てる
+	;  により不要になった。実機でも書込んだ色は即反映されるのでこれが正しい挙動。)
 	call	fill_emm_map
 	call	build_tables
 	call	prefill
