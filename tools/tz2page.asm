@@ -8,8 +8,9 @@
 ; このテスト: page0 を全面 index1(赤)、page1 を全面 index4(緑)で塗り、
 ;   1秒ごとに CRTC POS を 0 <-> 1000 で切替える。赤<->緑 が切り替われば2ページ成立。
 ;
-; I/O は tzcube/tzterrain と同じ。CRTC: port 0x1800=regnum, 0x1801=data。POSL=reg12?
-;   (X1 CRTC は 6845 互換: R12=開始アドレス上位, R13=下位)。本エミュ CRTCREG_POSH/POSL。
+; I/O は tzcube/tzterrain と同じ。CRTC: port 0x1800=regnum, 0x1801=data。
+;   X1 CRTC は 6845 互換: R12=開始アドレス上位(POSH), R13=下位(POSL)。
+;   xmil の CRTCREG_POSH=12 / CRTCREG_POSL=13 (crtc.h で確認済)。
 
 	DEVICE	NOSLOT64K
 	ORG	0x0100
