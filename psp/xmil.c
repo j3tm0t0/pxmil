@@ -136,32 +136,9 @@ int main(int argc, char *argv[]) {
 	taskmng_initialize();
 	pccore_initialize();
 
-	/* 前回使っていたディスクがあればそれを、なければ disk/ の最初の
-	 * イメージを FDD0 にマウントして起動する。 */
-	if (!pspmenu_mountlast()) {
-		FLINFO	fli;
-		FLISTH	flh;
-
-		flh = file_list1st(file_getcd("disk"), &fli);
-		if (flh != FLISTH_INVALID) {
-			do {
-				const char *ext = file_getext(fli.path);
-				if ((!file_cmpname(ext, "2d")) ||
-					(!file_cmpname(ext, "d88")) ||
-					(!file_cmpname(ext, "88d")) ||
-					(!file_cmpname(ext, "2hd"))) {
-					char path[MAX_PATH];
-					milstr_ncpy(path, file_getcd("disk"), sizeof(path));
-					file_setseparator(path, sizeof(path));
-					milstr_ncat(path, fli.path, sizeof(path));
-					diskdrv_setfdd(0, path, 0);
-					pspmenu_setmounted(0, fli.path);
-					break;
-				}
-			} while(file_listnext(flh, &fli) == SUCCESS);
-			file_listclose(flh);
-		}
-	}
+	/* 前回使っていたディスクがあればマウント。なければ何も挿さず
+	 * IPL で止まる (ディスクはメニューから選ぶ)。 */
+	pspmenu_mountlast();
 
 	scrndraw_redraw();
 	pccore_reset();
