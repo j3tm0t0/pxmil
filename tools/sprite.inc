@@ -17,18 +17,18 @@
 ; =====================================================================
 
 BULLET_BASE	EQU	0xA0		; 弾 PCG 先頭 (0xA0..0xAF)
-MAX_BULLETS	EQU	8		; 同時存在数 (ザッパー2発 x 複数ペア)。PCG は共有16版で不変
+MAX_BULLETS	EQU	6		; 同時存在数 (ザッパー2発 x 3組)。PCG は共有16版で不変
 TRIG1		EQU	0x20		; PSG port A bit5 (トリガ1, 負論理)
 ENEMY_BASE	EQU	0xB0		; 敵 PCG 先頭 (0xB0..0xBF, 4フレーム x 2x2)
 MAX_ENEMIES	EQU	4		; 同時出現数
 ENEMY_SPEED	EQU	1		; 横移動(セル/移動tick) ※敵は8pxグリッド
 EN_NTYPES	EQU	2		; [M8] 敵タイプ数 (足場: type0=直進/type1=斜め)
 EXPL_BASE	EQU	0xC0		; 爆発 PCG 先頭 (0xC0..0xCB, 3フレーム x 2x2)
-MAX_EXPL	EQU	4		; 同時爆発数
+MAX_EXPL	EQU	2		; 同時爆発数 (ピーク負荷削減)
 RETICLE_BASE	EQU	0xCC		; [M8] 照準 PCG (0xCC..0xCF, 2x2 の角ブラケット)
 RETICLE_DIST	EQU	10 * 4		; 自機前方の表示距離 (hx 2px単位, 10セル先)
 BLASTER_BASE	EQU	0xD0		; [M8] ブラスター弾 PCG (0xD0..0xD3, 2x2)
-MAX_BLASTER	EQU	2		; 同時存在数
+MAX_BLASTER	EQU	1		; 同時存在数 (ピーク負荷削減)
 BLASTER_SPEED	EQU	4		; 前進/呼出 (2px単位)
 TRIG2		EQU	0x40		; PSG port A bit6 (トリガ2, 負論理)
 BLASTER_DELAY	EQU	12		; 連射間隔
@@ -232,6 +232,24 @@ reticle_soff:
 	ret
 
 reticle_erase:
+	; [M8] idle-skip: scroll 不変かつ自機不動なら照準を描き直さない(ピーク負荷削減)
+	ld	a, (scroll_moved)
+	or	a
+	jr	nz, .redraw
+	ld	a, (ship_hx)
+	ld	hl, ret_lhx
+	cp	(hl)
+	jr	nz, .redraw
+	ld	a, (ship_vy)
+	ld	hl, ret_lvy
+	cp	(hl)
+	jr	nz, .redraw
+	ld	a, 1			; 変化なし → スキップ
+	ld	(ret_skip), a
+	ret
+.redraw:
+	xor	a
+	ld	(ret_skip), a
 	ld	hl, (ret_prev)
 	ld	a, h
 	cp	0xFF
@@ -242,6 +260,13 @@ reticle_erase:
 	ret
 
 reticle_draw:
+	ld	a, (ret_skip)
+	or	a
+	ret	nz			; erase 側でスキップ判定済
+	ld	a, (ship_hx)		; 最終描画時の自機位置を記録
+	ld	(ret_lhx), a
+	ld	a, (ship_vy)
+	ld	(ret_lvy), a
 	call	reticle_soff
 	; 窓1
 	ld	hl, (spr_soff)
@@ -1705,7 +1730,22 @@ expls_erase:
 .el:	ld	a, (spr_i)
 	cp	MAX_EXPL
 	ret	z
-	; active/非active 問わず prev 有効なら両窓消去 (非アクティブ消去スキップでゴースト)
+	; [M8] idle-skip: active かつ変化なし(scroll_moved/dirty 無)なら消去しない。
+	;   非active(死亡)は常に両窓消去+無効化(ゴースト防止)。
+	ld	e, a
+	ld	d, 0
+	ld	hl, exp_active
+	add	hl, de
+	ld	a, (hl)
+	or	a
+	jr	z, .doer
+	ld	a, (scroll_moved)
+	ld	hl, exp_dirty
+	add	hl, de
+	or	(hl)
+	jp	z, .en
+.doer:
+	ld	a, (spr_i)
 	add	a, a
 	ld	e, a
 	ld	d, 0
@@ -1776,6 +1816,9 @@ expls_anim:
 	ld	a, (hl)
 	or	a
 	jr	z, .an
+	ld	hl, exp_dirty		; [M8] dirty=0 (初期)。アニメ変化/消滅で 1
+	add	hl, de
+	ld	(hl), 0
 	ld	hl, exp_tmr
 	add	hl, de
 	dec	(hl)
@@ -1786,6 +1829,11 @@ expls_anim:
 	ld	a, (hl)
 	inc	a
 	ld	(hl), a
+	push	af			; 新フレーム退避
+	ld	hl, exp_dirty		; アニメ変化 → dirty
+	add	hl, de
+	ld	(hl), 1
+	pop	af			; 新フレーム復帰
 	cp	3
 	jr	c, .an
 	ld	hl, exp_active
@@ -1810,6 +1858,28 @@ expls_draw:
 	ld	a, (hl)
 	or	a
 	jp	z, .dn
+	; [M8] idle-skip: prev 有効 かつ変化なし(scroll_moved/dirty 無)なら描き直さない
+	ld	a, (spr_i)
+	add	a, a
+	ld	e, a
+	ld	d, 0
+	ld	hl, exp_prev + 1	; 窓1 prev 高位
+	add	hl, de
+	ld	a, (hl)
+	cp	0xFF
+	jr	z, .edraw		; prev 無効 → 描画
+	ld	a, (spr_i)
+	ld	e, a
+	ld	d, 0
+	ld	a, (scroll_moved)
+	ld	hl, exp_dirty
+	add	hl, de
+	or	(hl)
+	jp	z, .dn			; 変化なし → skip
+.edraw:
+	ld	a, (spr_i)		; de = i に復元
+	ld	e, a
+	ld	d, 0
 	; soff = ey*COLS + ex
 	ld	hl, exp_ey
 	add	hl, de
@@ -1978,8 +2048,12 @@ exp_frm:	ds	MAX_EXPL	; コマ 0..2
 exp_tmr:	ds	MAX_EXPL
 exp_prev:	ds	MAX_EXPL * 2
 exp_prev2:	ds	MAX_EXPL * 2
+exp_dirty:	ds	MAX_EXPL	; [M8] アニメ変化/消滅フラグ(idle-skip用)
 ret_prev:	dw	0xFFFF		; 照準の前回 top-left (窓1)
 ret_prev2:	dw	0xFFFF		; 窓2
+ret_lhx:	db	0xFF		; idle-skip: 前回描画時の ship_hx
+ret_lvy:	db	0xFF		; 前回描画時の ship_vy
+ret_skip:	db	0		; このフレーム照準描画をスキップしたか
 
 ;=====================================================================
 ; 敵ベースデータ (4フレーム × 96B = 384B)。差し替えフック:
