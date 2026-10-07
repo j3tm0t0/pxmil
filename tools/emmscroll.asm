@@ -34,19 +34,20 @@
 ;       probe ポート 0x00FE/0x00FF (エミュ XMIL_PROBE 時に stderr 出力) で取得。
 ;       -DM4_DISPLAY で画面左上に16進4桁オンスクリーン表示 (任意)。
 ;   8MHz 切替: エミュ環境変数 XMIL_CYCMUL=128 (256=4MHz)。
-;   M3/M5: 背景を実地形 STRIP に変更。tools/xevi_x1strip.py で抽出マップ
-;       (map_native, エリア1帯 y0=292, bs0減少方向, 色別固定網点) を X1 8色
-;       GRAM STRIP (roms/world.bin, W_CELLS 列) 化し incbin。
-;       起動時 fill_emm が 0/2/4/6px プリシフト版 x4 を EMM に展開。
-;       毎フレームの新規右端列を EMM→DMA→メイン RAM(colbuf) に転送し
-;       (read_col_dma, 記事方式), CPU が colbuf から GRAM に展開(scatter_col)。
-;       縦1列は GRAM ポート空間で不連続のため GRAM 直描は不可=CPUスキャッタ
-;       (記事の「1列ループはCPUで転送」に相当)。ワールドは W_CELLS 周期ループ
-;       (継ぎ目が 512px ごとにスクロール; 全長無限化は FDC ストリーミングで次段)。
+;   M5: 背景をタイルID方式でエリア1全長(256列=実ゲーム周期)に。継ぎ目なし。
+;       tools/xevi2x1.py が「タイルID列(256列x25x2B, ID=タイル絶対RAMアドレス)」と
+;       「ユニークタイル表(304個x24B, X1 8色 hp2網点, 8x8)」を生成し両方を incbin。
+;       tiletbl は 0x0103 固定(= jp 直後, xevi2x1 の --tilebase と一致)。
+;       起動: fill_emm_map が ID列を EMM へ転送, build_tables が shl/shr
+;       ルックアップ表(4ページ)を 0xC000〜に構築。
+;       毎フレーム: 新規列 wc と wc+1 の ID列(各50B)を DMA で EMM→RAM(IDBUFA/B),
+;       各タイルを TBUF[i]=shl[tileA[i]]|shr[tileB[i]] で展開時シフト合成し GRAM へ。
+;       2px(偶数)シフト + 横周期2網点 で実機チラつき無し。
+;       縦1列は GRAM 不連続のため CPU で展開(記事の「1列ループはCPUで転送」)。
+;       データ量 約20KB(ID列12.8KB+タイル表7.3KB)で 1本の bin に埋め込み。
 ;
-; ビルド前に world.bin を生成すること (roms/ は非コミット):
-;   python3 tools/xevi_x1strip.py --width 64 --y0 292 --mode hp2
-;   (mode hp2 = 横周期2網点。実機で 2px スクロール時の網点チラつきを回避)
+; ビルド前にタイルデータを生成すること (roms/ は非コミット):
+;   python3 tools/xevi2x1.py --area 1 --emit --tilebase 0x103
 
 	DEVICE	NOSLOT64K
 	ORG	0x0100
@@ -69,28 +70,46 @@ COLS		EQU	40
 ROWS		EQU	25
 OFF1024		EQU	1024		; バンク内 2 窓目のオフセット
 
-; --- EMM / 地形 STRIP ---
+; --- EMM / タイルID方式 ---
 EMM_A0		EQU	0x0D00		; アドレス 下位
 EMM_A1		EQU	0x0D01		; 中位
 EMM_A2		EQU	0x0D02		; 上位
 EMM_DAT		EQU	0x0D03		; データ (R/W でアドレス自動+1)
-W_CELLS		EQU	64		; ワールド幅 (セル=512px, 周期ループ)
-COLBYTES	EQU	ROWS*3*8	; 1列=25セル x 3プレーン x 8ラスタ = 600
-SHIFTSZ		EQU	W_CELLS*COLBYTES	; 1シフト版のサイズ = 48000
+W_CELLS		EQU	256		; エリア1周期 (列)。wc = ... & 0xFF
+TILEBYTES	EQU	24		; 1タイル = 8x8 を 8ラスタ x 3プレーン (B8,R8,G8)
+IDBYTES		EQU	2		; タイルID = タイル表の絶対RAMアドレス(LE16)
+COLIDS		EQU	ROWS*IDBYTES	; 1列の ID 列 = 25*2 = 50 バイト
+TILEBASE	EQU	0x0103		; tiletbl の配置(= jp の直後)。xevi2x1 と一致
+; 高位 RAM のバッファ/テーブル (bin には含めない, 起動時構築/転送)
+SHLTAB		EQU	0xC000		; a<<(2*np) ルックアップ 4ページ (page=0xC0+np)
+SHRTAB		EQU	0xC400		; a>>(8-2*np) ルックアップ 4ページ (page=0xC4+np)
+TBUF		EQU	0xC800		; 1タイル合成 24バイト
+IDBUFA		EQU	0xC820		; wc 列の ID 50バイト
+IDBUFB		EQU	0xC860		; (wc+1) 列の ID 50バイト
 
 ;=====================================================================
-start:
+start:				; exec = 0x0100
+	jp	realstart
+
+; --- 埋め込みデータ (疑似IPLが RAM に連続ロード) ---
+tiletbl:			; 0x0103 固定 (= TILEBASE, xevi2x1 の tilebase と一致)
+	incbin	"roms/xtiles.bin"	; ユニークタイル表 (24B/タイル, X1 8色 hp2網点)
+xmapdata:
+	incbin	"roms/xtilemap.bin"	; タイルID列 256列x25x2B (ID=タイル絶対アドレス)
+
+realstart:
 	di
 	ld	sp, 0xF000
 
 	call	init_screen
 	call	clear_tvram
 
-	; --- 地形 STRIP を EMM に展開 (0/2/4/6px プリシフト版 x4) ---
-	call	fill_emm
+	; --- タイルID列を EMM へ転送, シフトルックアップ表を構築 ---
+	call	fill_emm_map
+	call	build_tables
 
 	IFNDEF	DBG_STATIC
-	; --- 初期プリフィル: pg0..3 の表示窓(列0..39)を EMM から埋める ---
+	; --- 初期プリフィル: pg0..3 の表示窓(列0..39)を埋める ---
 	call	prefill
 	ENDIF
 
@@ -439,26 +458,23 @@ setpos:
 	ret
 
 ;=====================================================================
-; 次ページ np の col39 を EMM の地形 STRIP から先行描画。
-;   表示 POS_n = coarse_n + off_np。col39@POS_n にするため base = POS_n - 1。
-;   世界列 wc = (coarse_n + COLS-1) mod W_CELLS。
-;   EMM の プリシフト済み STRIP (np のシフト版) を colbuf に読み、GRAM に撒く。
+; 次ページ np の新規右端列(col39)を タイルID 方式で先行描画。
+;   wc=(coarse_n+COLS-1)&0xFF。wc 列と (wc+1) 列の ID 列(各50B)を DMA で
+;   EMM->RAM(IDBUFA/B)に読み、各タイルを shl[A]|shr[B] で合成し GRAM へ展開。
 redraw_next:
-	; wc = (coarse_n + COLS-1) mod W_CELLS
 	ld	hl, (coarsen)
 	ld	bc, COLS - 1
 	add	hl, bc
-	call	mod_w			; a = hl mod W_CELLS
+	ld	a, l			; wc = (coarse_n+39) & 0xFF (W=256)
 	ld	(wcol), a
-	; EMM アドレス = np*SHIFTSZ + wc*COLBYTES
-	ld	a, (npage)
 	ld	e, a
+	ld	hl, IDBUFA
+	call	read_ids
 	ld	a, (wcol)
-	ld	d, a
-	call	calc_emm_addr		; emm_a0/1/2 設定
-	call	set_emm_addr
-	call	read_col_dma		; EMM -> colbuf (600 bytes)
-	; base = (coarse_n + off_np) - 1, &0x7FF
+	inc	a			; (wc+1)&0xFF
+	ld	e, a
+	ld	hl, IDBUFB
+	call	read_ids
 	ld	hl, (coarsen)
 	ld	a, (npage)
 	and	1
@@ -471,19 +487,79 @@ redraw_next:
 	and	0x07
 	ld	h, a
 	ld	(dc_base), hl
-	call	scatter_col
+	call	set_shiftpg
+	call	expand_col_tiles
+	ret
+
+; npage からシフト表のページ(shl_hi/shr_hi)を設定
+set_shiftpg:
+	ld	a, (npage)
+	add	a, (SHLTAB >> 8)
+	ld	(shl_hi), a
+	ld	a, (npage)
+	add	a, (SHRTAB >> 8)
+	ld	(shr_hi), a
 	ret
 
 ;=====================================================================
-; colbuf(600B, cellrow/plane/raster 順) を GRAM の右端1列に撒く。
-;   セル = (dc_base + 40*(r+1)) & 0x7FF , r=0..24, 各プレーン8ラスタ。
-scatter_col:
+; ID 列読み込み: e=世界列(0..255), hl=転送先(IDBUFA/B)。
+;   EMM アドレス = col*COLIDS(50) を設定し DMA で 50 バイト転送。
+read_ids:
+	ld	(dma_id_dst), hl
+	ld	h, 0
+	ld	l, e			; col
+	ld	b, h
+	ld	c, l			; bc = col*1
+	add	hl, hl			; *2
+	add	hl, hl			; *4
+	add	hl, hl			; *8
+	ld	d, h
+	ld	e, l			; de = col*8
+	add	hl, hl			; *16
+	add	hl, de			; *24
+	add	hl, bc			; *25
+	add	hl, hl			; *50
+	ld	a, l
+	ld	(emm_a0), a
+	ld	a, h
+	ld	(emm_a1), a
+	xor	a
+	ld	(emm_a2), a
+	call	set_emm_addr
+	ld	hl, dma_id
+	ld	bc, 0x1F80
+	ld	e, dma_id_end - dma_id
+.d:	ld	a, (hl)
+	out	(c), a
+	inc	hl
+	dec	e
+	jr	nz, .d
+	ret
+
+; emm_a0/a1/a2 -> EMM アドレスポート
+set_emm_addr:
+	ld	bc, EMM_A0
+	ld	a, (emm_a0)
+	out	(c), a
+	inc	c
+	ld	a, (emm_a1)
+	out	(c), a
+	inc	c
+	ld	a, (emm_a2)
+	out	(c), a
+	ret
+
+;=====================================================================
+; 25 タイルを展開: dc_base を基準に col39 の各行へ。
+;   IDBUFA[row]=タイルA(wc列), IDBUFB[row]=タイルB(wc+1列)。
+;   cell = (dc_base + 40*(row+1)) & 0x7FF。
+expand_col_tiles:
 	ld	a, ROWS
 	ld	(dc_row), a
-	ld	hl, 0			; オフセット
-	ld	de, colbuf
-	ld	(bufptr), de
-.rloop:
+	ld	hl, 0
+	xor	a
+	ld	(ec_row), a
+.rl:
 	ld	bc, COLS
 	add	hl, bc			; オフセット += 40
 	push	hl
@@ -491,51 +567,109 @@ scatter_col:
 	add	hl, de
 	ld	a, h
 	and	0x07
-	ld	h, a			; cell &0x7FF (hl=cell)
-	; B プレーン
+	ld	h, a			; cell
+	ld	(ec_cell), hl
+	ld	a, (ec_row)
+	add	a, a
+	ld	e, a
+	ld	d, 0
+	ld	hl, IDBUFA
+	add	hl, de
+	ld	e, (hl)
+	inc	hl
+	ld	d, (hl)
+	ld	(ec_ta), de		; tileA addr
+	ld	a, (ec_row)
+	add	a, a
+	ld	e, a
+	ld	d, 0
+	ld	hl, IDBUFB
+	add	hl, de
+	ld	e, (hl)
+	inc	hl
+	ld	d, (hl)
+	ld	(ec_tb), de		; tileB addr
+	call	compose_tile
+	call	scatter_tile
+	pop	hl
+	ld	a, (ec_row)
+	inc	a
+	ld	(ec_row), a
+	ld	a, (dc_row)
+	dec	a
+	ld	(dc_row), a
+	jr	nz, .rl
+	ret
+
+; 1タイル(24B)を合成: TBUF[i] = shl[tileA[i]] | shr[tileB[i]]
+compose_tile:
+	ld	de, (ec_ta)
+	ld	ix, TBUF
+	ld	b, TILEBYTES
+.p1:
+	ld	a, (de)
+	inc	de
+	ld	l, a
+	ld	a, (shl_hi)
+	ld	h, a
+	ld	a, (hl)
+	ld	(ix+0), a
+	inc	ix
+	djnz	.p1
+	ld	de, (ec_tb)
+	ld	ix, TBUF
+	ld	b, TILEBYTES
+.p2:
+	ld	a, (de)
+	inc	de
+	ld	l, a
+	ld	a, (shr_hi)
+	ld	h, a
+	ld	a, (hl)
+	or	(ix+0)
+	ld	(ix+0), a
+	inc	ix
+	djnz	.p2
+	ret
+
+; TBUF(24B: B8,R8,G8) を GRAM cell(ec_cell)の 3プレーン8ラスタへ
+scatter_tile:
+	ld	de, TBUF
+	ld	hl, (ec_cell)
 	ld	a, h
 	or	(GRAM_B >> 8)
 	ld	b, a
 	ld	c, l
-	call	wplane8
-	; R プレーン
+	call	wr8
+	ld	hl, (ec_cell)
 	ld	a, h
 	or	(GRAM_R >> 8)
 	ld	b, a
 	ld	c, l
-	call	wplane8
-	; G プレーン
+	call	wr8
+	ld	hl, (ec_cell)
 	ld	a, h
 	or	(GRAM_G >> 8)
 	ld	b, a
 	ld	c, l
-	call	wplane8
-	pop	hl
-	ld	a, (dc_row)
-	dec	a
-	ld	(dc_row), a
-	jr	nz, .rloop
+	call	wr8
 	ret
 
-; bc=GRAM port。bufptr から 8 バイトを 8 ラスタに書き、bufptr+=8。
-;   hl(cell)/dc_base 保持。
-wplane8:
-	push	hl
-	ld	hl, (bufptr)
-	ld	e, 8
-.w:	ld	a, (hl)
+; bc=port, de=src。8バイトを8ラスタに書き de+=8, b(上位)+=8/ラスタ。hl破壊。
+wr8:
+	ld	l, 8
+.w:	ld	a, (de)
+	inc	de
 	out	(c), a
-	inc	hl
 	ld	a, b
-	add	a, 0x08			; raster++
+	add	a, 0x08
 	ld	b, a
-	dec	e
+	dec	l
 	jr	nz, .w
-	ld	(bufptr), hl
-	pop	hl
 	ret
 
 ; bc=port(b=high c=low), a=data を 8 ラスタに書く (bc/de/hl 保持, a 破壊)
+;   show_idle の黒クリア用。
 wcell8:
 	push	bc
 	push	de
@@ -552,100 +686,12 @@ wcell8:
 	ret
 
 ;=====================================================================
-; EMM アドレス計算: d=wc(0..W-1), e=np(0..3) -> emm_a0/a1/a2 (24bit)
-;   addr = np*SHIFTSZ + wc*COLBYTES
-calc_emm_addr:
-	; hl = wc*COLBYTES (wc<=63, COLBYTES=600, 最大 37800 < 65536)
-	ld	hl, 0
-	ld	a, d			; wc
-	or	a
-	jr	z, .wdone
-	ld	bc, COLBYTES
-.wadd:
-	add	hl, bc
-	dec	a
-	jr	nz, .wadd
-.wdone:
-	; + np*SHIFTSZ  (npbase テーブル, 3バイト/エントリ, index=np*3)
-	ld	a, e			; np
-	add	a, a
-	add	a, e			; np*3
-	ld	c, a
-	ld	b, 0
-	ld	ix, npbase
-	add	ix, bc			; ix -> npbase[np]
-	; 24bit 加算: (0:hl) + (ix[2]:ix[1]:ix[0])
-	ld	a, l
-	add	a, (ix+0)
-	ld	(emm_a0), a
-	ld	a, h
-	adc	a, (ix+1)
-	ld	(emm_a1), a
-	ld	a, 0
-	adc	a, (ix+2)
-	ld	(emm_a2), a
-	ret
-
-; emm_a0/a1/a2 -> EMM アドレスポート
-set_emm_addr:
-	ld	bc, EMM_A0
-	ld	a, (emm_a0)
-	out	(c), a
-	inc	c
-	ld	a, (emm_a1)
-	out	(c), a
-	inc	c
-	ld	a, (emm_a2)
-	out	(c), a
-	ret
-
-; EMM (アドレス設定済) から COLBYTES バイトを colbuf に読む (CPU/IN 版)
-read_col_emm:
-	ld	hl, colbuf
-	ld	de, COLBYTES
-	ld	bc, EMM_DAT
-.r:	in	a, (c)
-	ld	(hl), a
-	inc	hl
-	dec	de
-	ld	a, d
-	or	e
-	jr	nz, .r
-	ret
-
-; EMM (アドレス設定済) から COLBYTES バイトを Z80 DMA で colbuf へ転送。
-;   port A = EMM データ 0x0D03 (I/O 固定), port B = colbuf (メモリ 増加)。
-;   記事方式の「EMM→DMA→メイン RAM」。CPU は colbuf から GRAM へ展開。
-read_col_dma:
-	ld	hl, dma_tbl
-	ld	bc, 0x1F80		; Z80 DMA
-	ld	e, dma_tbl_end - dma_tbl
-.d:	ld	a, (hl)
-	out	(c), a
-	inc	hl
-	dec	e
-	jr	nz, .d
-	ret
-
-;=====================================================================
-; hl mod W_CELLS -> a  (hl 破壊)。W_CELLS=64 なので下位6bitで済む。
-mod_w:
-	ld	a, l
-	and	W_CELLS - 1		; 64-1=0x3F
-	ret
-
-;=====================================================================
-; 初期プリフィル: coarse=0 で pg0..3 の表示窓 40 列を世界列 0..39 で描く
-;   各ページを選び、列 0..39 を順に draw_column 相当で埋める。
-;   簡易化: redraw_rp と同じ経路を、coarse を 0..39 と仮想的に進めず、
-;   列ごとに base を +1 して書く。
-;   coarse=0 前提。各ページ np の表示窓(POS=off_np)の列 sc=0..39 に
-;   世界列 sc の STRIP を置く。画面列 sc の base = off_np + sc - 40。
+; 初期プリフィル: coarse=0。各ページ np の表示窓(POS=off_np)の列 sc=0..39 に
+;   世界列 sc のタイルを置く。base = off_np + sc - 40。
 prefill:
 	xor	a
 	ld	(pf_page), a
-.ploop:
-	; bank = page>>1 を access/disp に選ぶ
+.pl:
 	ld	a, (pf_page)
 	srl	a
 	ld	c, a
@@ -661,7 +707,12 @@ prefill:
 	or	d
 	ld	bc, PORT_SCRN
 	out	(c), a
-	; off_np -> pf_base
+	ld	a, (pf_page)
+	add	a, (SHLTAB >> 8)
+	ld	(shl_hi), a
+	ld	a, (pf_page)
+	add	a, (SHRTAB >> 8)
+	ld	(shr_hi), a
 	ld	hl, 0
 	ld	a, (pf_page)
 	and	1
@@ -671,16 +722,16 @@ prefill:
 	ld	(pf_base), hl
 	xor	a
 	ld	(pf_wc), a
-.wloop:
-	; EMM アドレス = np*SHIFTSZ + wc*COLBYTES  (wc=sc)
-	ld	a, (pf_page)
-	ld	e, a
+.wl:
 	ld	a, (pf_wc)
-	ld	d, a
-	call	calc_emm_addr
-	call	set_emm_addr
-	call	read_col_dma
-	; base = pf_base + wc - 40
+	ld	e, a
+	ld	hl, IDBUFA
+	call	read_ids
+	ld	a, (pf_wc)
+	inc	a
+	ld	e, a
+	ld	hl, IDBUFB
+	call	read_ids
 	ld	hl, (pf_base)
 	ld	a, (pf_wc)
 	ld	c, a
@@ -693,133 +744,100 @@ prefill:
 	and	0x07
 	ld	h, a
 	ld	(dc_base), hl
-	call	scatter_col
-	; wc++
+	call	expand_col_tiles
 	ld	a, (pf_wc)
 	inc	a
 	ld	(pf_wc), a
 	cp	COLS
-	jr	nz, .wloop
-	; page++
+	jr	nz, .wl
 	ld	a, (pf_page)
 	inc	a
 	ld	(pf_page), a
 	cp	4
-	jp	nz, .ploop
+	jp	nz, .pl
 	ret
 
 ;=====================================================================
-; 地形 STRIP (worlddata, unshifted) から 0/2/4/6px プリシフト版 x4 を
-; EMM アドレス 0 から連続で書き込む。
-;   EMM レイアウト: s*SHIFTSZ + col*COLBYTES + i
-;   shifted = (cur[i] << 2s) | (nxt[i] >> (8-2s))  (s=0 は cur[i])
-;   cur = worlddata + col*600, nxt = worlddata + ((col+1)%W)*600
-fill_emm:
-	; EMM アドレス 0 に設定
+; タイルID列(xmapdata, RAM)を EMM アドレス 0 へ転送。
+fill_emm_map:
 	xor	a
 	ld	(emm_a0), a
 	ld	(emm_a1), a
 	ld	(emm_a2), a
 	call	set_emm_addr
-	xor	a
-	ld	(fe_s), a		; shift index 0..3
-.sloop:
-	xor	a
-	ld	(fe_col), a		; col 0..W-1
-.cloop:
-	; cur = worlddata + col*600
-	ld	hl, worlddata
-	ld	a, (fe_col)
-	or	a
-	jr	z, .curok
-	ld	b, a
-	ld	de, COLBYTES
-.curadd:
-	add	hl, de
-	djnz	.curadd
-.curok:
-	ld	(fe_cur), hl
-	; nxt = worlddata + ((col+1)%W)*600
-	ld	a, (fe_col)
-	inc	a
-	cp	W_CELLS
-	jr	c, .nwrap
-	xor	a			; wrap -> 0
-.nwrap:
-	ld	hl, worlddata
-	or	a
-	jr	z, .nxtok
-	ld	b, a
-	ld	de, COLBYTES
-.nxtadd:
-	add	hl, de
-	djnz	.nxtadd
-.nxtok:
-	ld	(fe_nxt), hl
-	; i = 0..599: shifted byte を EMM へ
-	ld	hl, COLBYTES
-	ld	(fe_i), hl
-.iloop:
-	; cur byte
-	ld	hl, (fe_cur)
-	ld	a, (hl)
+	ld	hl, xmapdata
+	ld	de, W_CELLS * COLIDS	; 12800
+	ld	bc, EMM_DAT
+.l:	ld	a, (hl)
+	out	(c), a
 	inc	hl
-	ld	(fe_cur), hl
-	ld	d, a			; d = cur
-	; nxt byte
-	ld	hl, (fe_nxt)
-	ld	a, (hl)
-	inc	hl
-	ld	(fe_nxt), hl
-	ld	e, a			; e = nxt
-	; shift
-	ld	a, (fe_s)
-	or	a
-	jr	z, .s0
-	; shiftpx = 2s, cur<<2s
-	add	a, a			; a = 2s = shiftL
-	ld	b, a			; shiftL
+	dec	de
 	ld	a, d
-.shl:	add	a, a			; cur << 1
-	djnz	.shl
-	ld	c, a			; c = cur<<2s
-	; nxt >> (8-2s)
-	ld	a, (fe_s)
-	add	a, a			; 2s
+	or	e
+	jr	nz, .l
+	ret
+
+;=====================================================================
+; シフトルックアップ表を構築 (SHLTAB/SHRTAB, 各4ページ256B)。
+;   shl[np][a] = (a << 2np) & 0xFF,  shr[np][a] = a >> (8-2np)。
+build_tables:
+	xor	a
+	ld	(bt_np), a
+.nl:
+	ld	a, (bt_np)
+	add	a, a			; 2np
+	ld	(bt_shl), a
 	ld	b, a
 	ld	a, 8
-	sub	b			; 8-2s
-	ld	b, a			; shiftR
-	ld	a, e
-.shr:	srl	a
-	djnz	.shr
-	or	c			; (cur<<2s)|(nxt>>(8-2s))
-	jr	.put
-.s0:
-	ld	a, d			; s=0: cur そのまま
-.put:
-	; EMM へ書き込み (アドレス自動+1)
-	ld	bc, EMM_DAT
-	out	(c), a
-	; i--
-	ld	hl, (fe_i)
-	dec	hl
-	ld	(fe_i), hl
-	ld	a, h
-	or	l
-	jr	nz, .iloop
-	; col++
-	ld	a, (fe_col)
+	sub	b			; 8-2np
+	ld	(bt_shr), a
+	ld	a, (bt_np)
+	add	a, (SHLTAB >> 8)
+	ld	(bt_shlpg), a
+	ld	a, (bt_np)
+	add	a, (SHRTAB >> 8)
+	ld	(bt_shrpg), a
+	ld	c, 0			; byte value
+.bl:
+	; shl result = c << bt_shl
+	ld	a, (bt_shl)
+	ld	b, a
+	inc	b
+	ld	a, c
+	jr	.slt
+.sll:
+	add	a, a
+.slt:
+	dec	b
+	jr	nz, .sll
+	ld	e, a
+	ld	a, (bt_shlpg)
+	ld	h, a
+	ld	l, c
+	ld	(hl), e			; shl[c]
+	; shr result = c >> bt_shr
+	ld	a, (bt_shr)
+	ld	b, a
+	inc	b
+	ld	a, c
+	jr	.srt
+.srl:
+	srl	a
+.srt:
+	dec	b
+	jr	nz, .srl
+	ld	e, a
+	ld	a, (bt_shrpg)
+	ld	h, a
+	ld	l, c
+	ld	(hl), e			; shr[c]
+	inc	c
+	jr	nz, .bl			; 256 バイト
+	ld	a, (bt_np)
 	inc	a
-	ld	(fe_col), a
-	cp	W_CELLS
-	jp	nz, .cloop
-	; s++
-	ld	a, (fe_s)
-	inc	a
-	ld	(fe_s), a
+	ld	(bt_np), a
 	cp	4
-	jp	nz, .sloop
+	jp	nz, .nl
 	ret
 
 ;=====================================================================
@@ -887,32 +905,22 @@ crtc_tbl:			; 40桁x25行 15kHz (defreg と同一)
 	db	0x37, 0x28, 0x2d, 0x34, 0x1f, 0x02, 0x19, 0x1c, 0x00
 	db	0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
 
-; npbase[np] = np*SHIFTSZ (24bit, lo/mid/hi) - EMM の各シフト版の先頭
-npbase:
-	db	(SHIFTSZ*0)&0xFF, ((SHIFTSZ*0)>>8)&0xFF, ((SHIFTSZ*0)>>16)&0xFF
-	db	(SHIFTSZ*1)&0xFF, ((SHIFTSZ*1)>>8)&0xFF, ((SHIFTSZ*1)>>16)&0xFF
-	db	(SHIFTSZ*2)&0xFF, ((SHIFTSZ*2)>>8)&0xFF, ((SHIFTSZ*2)>>16)&0xFF
-	db	(SHIFTSZ*3)&0xFF, ((SHIFTSZ*3)>>8)&0xFF, ((SHIFTSZ*3)>>16)&0xFF
-
-; Z80 DMA コマンド列: EMM データ 0x0D03(I/O固定) -> colbuf(メモリ増加)
-;   emmtest.asm の GRAM 版との差: WR2 を 0x18(I/O) から 0x10(メモリ) に変更。
-dma_tbl:
+; Z80 DMA コマンド列: EMM データ 0x0D03(I/O固定) -> dma_id_dst(メモリ増加), 50B
+;   dma_id_dst は read_ids で IDBUFA/B に patch。WR2=0x10 でメモリ宛。
+dma_id:
 	db	0xC3			; WR6 リセット
 	db	0x7D			; WR0 A->B, A addr/len 続く
 	db	LOW EMM_DAT, HIGH EMM_DAT
-	db	LOW (COLBYTES - 1), HIGH (COLBYTES - 1)
+	db	LOW (COLIDS - 1), HIGH (COLIDS - 1)	; 49
 	db	0x2C			; WR1 port A = I/O 固定
 	db	0x10			; WR2 port B = メモリ 増加
 	db	0xAD			; WR4 連続, port B addr 続く
-	db	LOW colbuf, HIGH colbuf
+dma_id_dst:
+	dw	0			; 転送先 (patch)
 	db	0x82			; WR5
 	db	0xCF			; WR6 ロード
 	db	0x87			; WR6 開始
-dma_tbl_end:
-
-; 地形 STRIP (unshifted, W_CELLS 列 x COLBYTES) を埋め込み
-worlddata:
-	incbin	"roms/world.bin"
+dma_id_end:
 
 ; RAM 変数
 coarse:		dw	0		; 表示ページの粗スクロール位置 (f>>2)
@@ -920,25 +928,29 @@ coarsen:	dw	0		; 次フレームの粗位置 ((f+1)>>2)
 framecnt:	dw	0		; フレームカウンタ (16bit)
 phase:		db	0
 npage:		db	0		; 次フレームに見せるページ
-wcol:		db	0		; 描画対象の世界列 (0..W-1)
+wcol:		db	0		; 描画対象の世界列 (0..255)
 idlecnt:	dw	0		; M4: フレーム空き時間カウンタ
 pf_page:	db	0
 pf_base:	dw	0
 pf_wc:		db	0
 dc_base:	dw	0
 dc_row:		db	0
-bufptr:		dw	0		; scatter_col 用 colbuf ポインタ
 emm_a0:		db	0
 emm_a1:		db	0
 emm_a2:		db	0
-fe_s:		db	0		; fill_emm: shift index
-fe_col:		db	0		; fill_emm: col
-fe_cur:		dw	0
-fe_nxt:		dw	0
-fe_i:		dw	0
+shl_hi:		db	0		; shl ルックアップ表の上位アドレス (0xC0+np)
+shr_hi:		db	0		; shr ルックアップ表の上位アドレス (0xC4+np)
+ec_row:		db	0		; expand: 行 0..24
+ec_cell:	dw	0		; expand: 現セル
+ec_ta:		dw	0		; expand: タイルA アドレス
+ec_tb:		dw	0		; expand: タイルB アドレス
+bt_np:		db	0		; build_tables: np
+bt_shl:		db	0
+bt_shr:		db	0
+bt_shlpg:	db	0
+bt_shrpg:	db	0
 si_base:	dw	0
 si_idx:		db	0
 prev_base:	dw	0
-colbuf:		ds	COLBYTES	; 1列ぶんの STRIP バッファ (600B)
 
 	END

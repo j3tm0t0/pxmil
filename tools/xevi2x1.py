@@ -83,6 +83,9 @@ def main(argv=None):
     ap.add_argument("--area", type=int, default=1, help="エリア番号 (1..16)")
     ap.add_argument("--emit", action="store_true",
                     help="roms/ にタイルID列/タイル表バイナリを出力")
+    ap.add_argument("--tilebase", type=lambda s: int(s, 0), default=0x0103,
+                    help="タイル表(xtiles.bin)の配置 RAM アドレス。ID を "
+                         "tilebase+idx*24 の絶対アドレスにして展開時の×24を省く")
     args = ap.parse_args(argv)
 
     ex = load_extract()
@@ -134,15 +137,17 @@ def main(argv=None):
         with open(os.path.join(OUT_DIR, "xtiles.bin"), "wb") as f:
             for t in tiles:
                 f.write(t)
+        # ID = tilebase + idx*24 の絶対 RAM アドレス (LE16)。展開時 ×24 不要。
+        last = args.tilebase + (nuniq - 1) * 24
+        if last > 0xffff:
+            print("WARN: タイル表末尾 0x%x が 16bit 超" % last)
         with open(os.path.join(OUT_DIR, "xtilemap.bin"), "wb") as f:
             for col in tilemap:
                 for tid in col:
-                    if idbytes == 1:
-                        f.write(bytes([tid]))
-                    else:
-                        f.write(bytes([tid & 0xff, tid >> 8]))
-        print("出力: roms/xtiles.bin (%dB), roms/xtilemap.bin (%dB)" %
-              (tbl_size, map_size))
+                    addr = args.tilebase + tid * 24
+                    f.write(bytes([addr & 0xff, (addr >> 8) & 0xff]))
+        print("出力: roms/xtiles.bin (%dB @0x%04X), roms/xtilemap.bin (%dB, "
+              "ID=絶対アドレス)" % (tbl_size, args.tilebase, map_size))
     return 0
 
 
