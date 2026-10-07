@@ -26,6 +26,11 @@ EXPL_BASE	EQU	0xC0		; 爆発 PCG 先頭 (0xC0..0xCB, 3フレーム x 2x2)
 MAX_EXPL	EQU	4		; 同時爆発数
 RETICLE_BASE	EQU	0xCC		; [M8] 照準 PCG (0xCC..0xCF, 2x2 の角ブラケット)
 RETICLE_DIST	EQU	10 * 4		; 自機前方の表示距離 (hx 2px単位, 10セル先)
+BLASTER_BASE	EQU	0xD0		; [M8] ブラスター弾 PCG (0xD0..0xD3, 2x2)
+MAX_BLASTER	EQU	2		; 同時存在数
+BLASTER_SPEED	EQU	4		; 前進/呼出 (2px単位)
+TRIG2		EQU	0x40		; PSG port A bit6 (トリガ2, 負論理)
+BLASTER_DELAY	EQU	12		; 連射間隔
 
 ; 速度/間隔定数は sprite_update の呼ばれる頻度で意味が変わる。
 ;   既定: sprite_update は 8フレームごと(ステップフレームのみ)。
@@ -60,9 +65,17 @@ sprite_init:
 	call	gen_enemy
 	call	gen_expl
 	call	gen_reticle
+	call	gen_blaster
 	ld	hl, 0xFFFF		; 照準 prev 無効化
 	ld	(ret_prev), hl
 	ld	(ret_prev2), hl
+	ld	hl, bla_active		; ブラスター全非アクティブ
+	ld	b, MAX_BLASTER
+.cb:	ld	(hl), 0
+	inc	hl
+	djnz	.cb
+	xor	a
+	ld	(bfire_tmr), a
 	; 弾テーブルを全て非アクティブに
 	ld	hl, bul_active
 	ld	b, MAX_BULLETS
@@ -250,10 +263,301 @@ reticle_draw:
 	ret
 
 ;=====================================================================
+; [M8] ブラスター: トリガ2(bit6)で地上攻撃。自機前方へ飛び、照準位置(RETICLE_DIST
+;   先)で着弾=爆発(地上物ヒットは M8-3 で接続)。2x2 のオリジナル小弾(青 tc6)。
+gen_blaster:
+	ld	hl, blaster_data
+	ld	a, BLASTER_BASE
+	ld	(ene_code), a
+	ld	b, 4
+.l:	push	bc
+	ld	a, (ene_code)
+	call	pcg_select
+	ld	d, PCG_B >> 8
+	call	def_plane
+	ld	d, PCG_R >> 8
+	call	def_plane
+	ld	d, PCG_G >> 8
+	call	def_plane
+	ld	a, (ene_code)
+	inc	a
+	ld	(ene_code), a
+	pop	bc
+	djnz	.l
+	ret
+
+fire_blaster:
+	ld	a, (bfire_tmr)
+	or	a
+	jr	z, .rdy
+	dec	a
+	ld	(bfire_tmr), a
+	ret
+.rdy:
+	call	read_joy
+	bit	6, a			; トリガ2
+	ret	nz
+	; 空きスロット
+	ld	hl, bla_active
+	ld	b, MAX_BLASTER
+	ld	c, 0
+.fs:	ld	a, (hl)
+	or	a
+	jr	z, .sp
+	inc	hl
+	inc	c
+	djnz	.fs
+	ret
+.sp:	ld	(hl), 1
+	ld	a, c
+	ld	e, a
+	ld	d, 0
+	ld	a, (ship_hx)
+	add	a, 2 * 4		; 機首から
+	ld	hl, bla_hx
+	add	hl, de
+	ld	(hl), a
+	ld	a, (ship_hx)		; 着弾 x = 機首 + RETICLE_DIST
+	add	a, 2 * 4
+	add	a, RETICLE_DIST
+	ld	hl, bla_tx
+	add	hl, de
+	ld	(hl), a
+	ld	a, (ship_vy)
+	add	a, 6			; 自機中央(照準と同じ高さ)
+	ld	hl, bla_vy
+	add	hl, de
+	ld	(hl), a
+	ld	hl, bla_prev
+	add	hl, de
+	add	hl, de
+	ld	(hl), 0xFF
+	inc	hl
+	ld	(hl), 0xFF
+	ld	hl, bla_prev2
+	add	hl, de
+	add	hl, de
+	ld	(hl), 0xFF
+	inc	hl
+	ld	(hl), 0xFF
+	ld	a, BLASTER_DELAY
+	ld	(bfire_tmr), a
+	ret
+
+blaster_move:
+	xor	a
+	ld	(spr_i), a
+.ml:	ld	a, (spr_i)
+	cp	MAX_BLASTER
+	ret	z
+	ld	e, a
+	ld	d, 0
+	ld	hl, bla_active
+	add	hl, de
+	ld	a, (hl)
+	or	a
+	jr	z, .mn
+	ld	hl, bla_hx
+	add	hl, de
+	ld	a, (hl)
+	add	a, BLASTER_SPEED
+	ld	(hl), a
+	; 着弾? hx >= tx
+	ld	hl, bla_tx
+	add	hl, de
+	cp	(hl)
+	jr	c, .mn			; まだ
+	; 着弾: 非アクティブ化 + 爆発(着弾セル) ※地上物ヒットは M8-3
+	ld	hl, bla_active
+	add	hl, de
+	ld	(hl), 0
+	; col_ex/col_ey に着弾セルを入れて expl_spawn
+	ld	a, (spr_i)
+	ld	e, a
+	ld	d, 0
+	ld	hl, bla_tx
+	add	hl, de
+	ld	a, (hl)
+	srl	a
+	srl	a			; cell col
+	ld	(col_ex), a
+	ld	hl, bla_vy
+	add	hl, de
+	ld	a, (hl)
+	srl	a
+	srl	a			; cell row
+	ld	(col_ey), a
+	call	expl_spawn
+.mn:	ld	a, (spr_i)
+	inc	a
+	ld	(spr_i), a
+	jr	.ml
+
+blaster_erase:
+	xor	a
+	ld	(spr_i), a
+.el:	ld	a, (spr_i)
+	cp	MAX_BLASTER
+	ret	z
+	add	a, a
+	ld	e, a
+	ld	d, 0
+	ld	hl, bla_prev
+	add	hl, de
+	ld	a, (hl)
+	inc	hl
+	ld	h, (hl)
+	ld	l, a
+	ld	a, h
+	cp	0xFF
+	jp	z, .en
+	call	ene_clr2x2
+	ld	a, (spr_i)
+	add	a, a
+	ld	e, a
+	ld	d, 0
+	ld	hl, bla_prev2
+	add	hl, de
+	ld	a, (hl)
+	inc	hl
+	ld	h, (hl)
+	ld	l, a
+	call	ene_clr2x2
+	; 非アクティブなら両窓 slot 無効化
+	ld	a, (spr_i)
+	ld	e, a
+	ld	d, 0
+	ld	hl, bla_active
+	add	hl, de
+	ld	a, (hl)
+	or	a
+	jp	nz, .en
+	ld	a, (spr_i)
+	add	a, a
+	ld	e, a
+	ld	d, 0
+	ld	hl, bla_prev
+	add	hl, de
+	ld	(hl), 0xFF
+	inc	hl
+	ld	(hl), 0xFF
+	ld	a, (spr_i)
+	add	a, a
+	ld	e, a
+	ld	d, 0
+	ld	hl, bla_prev2
+	add	hl, de
+	ld	(hl), 0xFF
+	inc	hl
+	ld	(hl), 0xFF
+.en:	ld	a, (spr_i)
+	inc	a
+	ld	(spr_i), a
+	jp	.el
+
+blaster_draw:
+	xor	a
+	ld	(spr_i), a
+.dl:	ld	a, (spr_i)
+	cp	MAX_BLASTER
+	ret	z
+	ld	e, a
+	ld	d, 0
+	ld	hl, bla_active
+	add	hl, de
+	ld	a, (hl)
+	or	a
+	jp	z, .dn
+	; soff = (vy>>2)*COLS + (hx>>2)
+	ld	hl, bla_vy
+	add	hl, de
+	ld	a, (hl)
+	srl	a
+	srl	a
+	ld	h, 0
+	ld	l, a
+	add	hl, hl
+	add	hl, hl
+	add	hl, hl
+	ld	d, h
+	ld	e, l
+	add	hl, hl
+	add	hl, hl
+	add	hl, de			; *40
+	ld	a, (spr_i)
+	ld	e, a
+	ld	d, 0
+	push	hl
+	ld	hl, bla_hx
+	add	hl, de
+	ld	a, (hl)
+	srl	a
+	srl	a
+	pop	hl
+	ld	e, a
+	ld	d, 0
+	add	hl, de
+	ld	(spr_soff), hl
+	ld	a, BLASTER_BASE
+	ld	(spr_code), a
+	; 窓1
+	ld	hl, (spr_soff)
+	ld	de, (cur_pos)
+	add	hl, de
+	ld	a, h
+	and	0x07
+	ld	h, a
+	ld	(spr_cell), hl
+	ld	a, (spr_i)
+	add	a, a
+	ld	e, a
+	ld	d, 0
+	ld	hl, bla_prev
+	add	hl, de
+	ld	a, (spr_cell)
+	ld	(hl), a
+	inc	hl
+	ld	a, (spr_cell + 1)
+	ld	(hl), a
+	ld	hl, (spr_cell)
+	ld	a, BLASTER_BASE
+	call	ene_put2x2
+	; 窓2
+	ld	hl, (cur_pos)
+	ld	a, h
+	xor	0x04
+	ld	h, a
+	ld	de, (spr_soff)
+	add	hl, de
+	ld	a, h
+	and	0x07
+	ld	h, a
+	ld	(spr_cell), hl
+	ld	a, (spr_i)
+	add	a, a
+	ld	e, a
+	ld	d, 0
+	ld	hl, bla_prev2
+	add	hl, de
+	ld	a, (spr_cell)
+	ld	(hl), a
+	inc	hl
+	ld	a, (spr_cell + 1)
+	ld	(hl), a
+	ld	hl, (spr_cell)
+	ld	a, BLASTER_BASE
+	call	ene_put2x2
+.dn:	ld	a, (spr_i)
+	inc	a
+	ld	(spr_i), a
+	jp	.dl
+
+;=====================================================================
 ; 毎フレーム(vblank 中, ship_update の後)。発射/移動/消去/描画。
 ;   順序: 発射判定 → 全弾消去 → 移動/寿命 → 全弾描画 (重なり対策で分離)。
 sprite_update:
-	call	fire_check		; トリガで発射
+	call	fire_check		; トリガ1でザッパー発射
+	call	fire_blaster		; トリガ2でブラスター発射
 	call	enemy_spawn		; 一定間隔で右端から出現
 	; scroll_moved = (cur_pos != prev_cur_pos) : cur_pos は SPEED フレームごとにしか
 	;   変わらない。変わらないフレームは動いていない敵の描き直しを省略(idle-skip)。
@@ -272,6 +576,7 @@ sprite_update:
 .nomv:	ld	(scroll_moved), a
 	; 移動/アニメ(消去より先。敵は ene_dirty を立てる)
 	call	bullets_move
+	call	blaster_move		; 前進+着弾(expl_spawn)
 	call	enemies_move
 	call	expls_anim
 	; 衝突判定(弾vs敵, 敵vs自機) → 当たった弾/敵を非アクティブ化 + 爆発発生
@@ -281,8 +586,10 @@ sprite_update:
 	call	expls_erase
 	call	enemies_erase
 	call	bullets_erase
+	call	blaster_erase
 	; 全描画(アクティブのみ)。照準は最後=最前面。
 	call	bullets_draw
+	call	blaster_draw
 	call	enemies_draw
 	call	expls_draw
 	call	reticle_draw
@@ -1408,6 +1715,13 @@ bul_hx:		ds	MAX_BULLETS		; 横 2px単位
 bul_vy:		ds	MAX_BULLETS		; 縦 2ライン単位
 bul_prev:	ds	MAX_BULLETS * 2		; 前回 top-left セル 窓1
 bul_prev2:	ds	MAX_BULLETS * 2		; 窓2
+bfire_tmr:	db	0		; [M8] ブラスター連射タイマ
+bla_active:	ds	MAX_BLASTER
+bla_hx:		ds	MAX_BLASTER		; 横 2px単位
+bla_vy:		ds	MAX_BLASTER		; 縦 2ライン単位
+bla_tx:		ds	MAX_BLASTER		; 着弾 x (hx 2px単位)
+bla_prev:	ds	MAX_BLASTER * 2		; 前回 top-left 窓1
+bla_prev2:	ds	MAX_BLASTER * 2		; 窓2
 
 ene_code:	db	0
 ene_tl:		dw	0
@@ -1569,3 +1883,20 @@ reticle_data:
 	db	0x00,0x00,0x00,0x00,0x00,0x01,0x01,0x07	; BR B
 	db	0x00,0x00,0x00,0x00,0x00,0x01,0x01,0x07	; BR R
 	db	0x00,0x00,0x00,0x00,0x00,0x01,0x01,0x07	; BR G
+
+;=====================================================================
+; [M8] ブラスター弾 PCG データ (BLASTER_BASE から TL,TR,BL,BR)。
+;   中央寄せの 8x8 充填正方形(オリジナル)。青(tc6)=R+G プレーン(B=0)。
+blaster_data:
+	db	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00	; TL B
+	db	0x00,0x00,0x00,0x00,0x0F,0x0F,0x0F,0x0F	; TL R
+	db	0x00,0x00,0x00,0x00,0x0F,0x0F,0x0F,0x0F	; TL G
+	db	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00	; TR B
+	db	0x00,0x00,0x00,0x00,0xF0,0xF0,0xF0,0xF0	; TR R
+	db	0x00,0x00,0x00,0x00,0xF0,0xF0,0xF0,0xF0	; TR G
+	db	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00	; BL B
+	db	0x0F,0x0F,0x0F,0x0F,0x00,0x00,0x00,0x00	; BL R
+	db	0x0F,0x0F,0x0F,0x0F,0x00,0x00,0x00,0x00	; BL G
+	db	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00	; BR B
+	db	0xF0,0xF0,0xF0,0xF0,0x00,0x00,0x00,0x00	; BR R
+	db	0xF0,0xF0,0xF0,0xF0,0x00,0x00,0x00,0x00	; BR G
