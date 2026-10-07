@@ -17,7 +17,7 @@
 ; =====================================================================
 
 BULLET_BASE	EQU	0xA0		; 弾 PCG 先頭 (0xA0..0xAF)
-MAX_BULLETS	EQU	6		; 同時存在数 (ザッパー2発 x 3組)。PCG は共有16版で不変
+MAX_BULLETS	EQU	4		; 同時存在数 (ザッパー2発 x 3組)。PCG は共有16版で不変
 TRIG1		EQU	0x20		; PSG port A bit5 (トリガ1, 負論理)
 ENEMY_BASE	EQU	0xB0		; [M8] Toroid PCG (0xB0..0xBF, 4フレーム x 2x2)
 JARA_BASE	EQU	0xE0		; [M8④] Jara PCG (0xE0..0xEF, 4フレーム x 2x2)
@@ -29,7 +29,7 @@ EN_NTYPES	EQU	3		; [M8④] 敵タイプ数 (Toroid/Jara/Torkan)
 TOROID_STOP	EQU	16		; [M8④] Toroid が停止する画面セル列(寄って停止)
 TOROID_PAUSE	EQU	24		; 停止フレーム数(移動tick単位 ×ENEMY_MOVE)
 EXPL_BASE	EQU	0xC0		; 爆発 PCG 先頭 (0xC0..0xCB, 3フレーム x 2x2)
-MAX_EXPL	EQU	2		; 同時爆発数 (ピーク負荷削減)
+MAX_EXPL	EQU	1		; 同時爆発数 (ピーク負荷削減)
 RETICLE_BASE	EQU	0xCC		; [M8] 照準 PCG (0xCC..0xCF, 2x2 の角ブラケット)
 RETICLE_DIST	EQU	10 * 4		; 自機前方の表示距離 (hx 2px単位, 10セル先)
 BLASTER_BASE	EQU	0xD0		; [M8] ブラスター弾 PCG (0xD0..0xDB, 3サイズ x 2x2)
@@ -1549,7 +1549,7 @@ bullets_erase:
 	ld	a, h
 	cp	0xFF
 	jp	z, .en			; prev 無効 → 両窓とも何も無い
-	call	clr_cell		; 窓1 消去
+	CLRCELL				; 窓1 消去
 	ld	a, (spr_i)
 	add	a, a
 	ld	e, a
@@ -1560,7 +1560,7 @@ bullets_erase:
 	inc	hl
 	ld	h, (hl)
 	ld	l, a			; hl = cell(窓2)
-	call	clr_cell		; 窓2 消去
+	CLRCELL				; 窓2 消去
 	; 非アクティブ(画面外で消滅)なら両窓 slot を無効化(再消去/再利用の残留防止)
 	ld	a, (spr_i)
 	ld	e, a
@@ -1709,7 +1709,7 @@ bullets_draw:
 	ld	(hl), a
 	ld	hl, (spr_cell)
 	ld	a, (spr_code)
-	call	put_cell		; 窓1 描画
+	PUTCELL				; 窓1 描画
 	; 窓2: cell = ((cur_pos ^ 0x400) + soff) & 0x7FF
 	ld	hl, (cur_pos)
 	ld	a, h
@@ -1734,7 +1734,7 @@ bullets_draw:
 	ld	(hl), a
 	ld	hl, (spr_cell)
 	ld	a, (spr_code)
-	call	put_cell		; 窓2 描画
+	PUTCELL				; 窓2 描画
 .dn:	ld	a, (spr_i)
 	inc	a
 	ld	(spr_i), a
@@ -2347,25 +2347,24 @@ enemies_draw:
 ene_put2x2:
 	ld	(ene_tl), hl
 	ld	(ene_bc), a
-	ld	a, (ene_bc)
-	call	put_cell		; TL
+	PUTCELL				; TL (hl=TL, a=code)
 	ld	hl, (ene_tl)
 	inc	hl
 	ld	a, (ene_bc)
 	inc	a
-	call	put_cell		; TR
+	PUTCELL				; TR
 	ld	hl, (ene_tl)
 	ld	de, COLS
 	add	hl, de
 	ld	a, (ene_bc)
 	add	a, 2
-	call	put_cell		; BL
+	PUTCELL				; BL
 	ld	hl, (ene_tl)
 	ld	de, COLS + 1
 	add	hl, de
 	ld	a, (ene_bc)
 	add	a, 3
-	call	put_cell		; BR
+	PUTCELL				; BR
 	ret
 
 	IFDEF	GROBDA_EXTDATA
@@ -2833,18 +2832,18 @@ count_grob_onscreen:
 ; hl=top-left セル。2x2 を消去。
 ene_clr2x2:
 	ld	(ene_tl), hl
-	call	clr_cell
+	CLRCELL
 	ld	hl, (ene_tl)
 	inc	hl
-	call	clr_cell
+	CLRCELL
 	ld	hl, (ene_tl)
 	ld	de, COLS
 	add	hl, de
-	call	clr_cell
+	CLRCELL
 	ld	hl, (ene_tl)
 	ld	de, COLS + 1
 	add	hl, de
-	call	clr_cell
+	CLRCELL
 	ret
 
 ;=====================================================================

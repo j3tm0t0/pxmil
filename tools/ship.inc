@@ -45,6 +45,39 @@
 ; 横・縦とも 2px 単位で滑らかに動かすため、横4シフト x 縦4シフト = 16 版を持つ。
 ;   各版 = 3列x3行 = 9セル。計 16*9 = 144 セル (SHIP_BASE..+143)。
 ;   版番号 = (ship_vy&3)*4 + (ship_hx&3)。code = SHIP_BASE + 版*9 + cr*3 + col。
+; [perf(2)] PUTCELL/CLRCELL: put_cell/clr_cell のインライン版(call/ret 除去)。
+;   hl=セル(0x07xx), a=ANK コード(PUTCELL のみ)。a/b/c/e/h 破壊。最初の使用前に定義。
+	MACRO	PUTCELL
+	ld	e, a
+	ld	a, h
+	and	0x07
+	ld	h, a
+	or	(TVRAM >> 8)
+	ld	b, a
+	ld	c, l
+	out	(c), e
+	ld	a, h
+	or	(TATTR >> 8)
+	ld	b, a
+	ld	a, SHIP_ATR
+	out	(c), a
+	ENDM
+	MACRO	CLRCELL
+	ld	a, h
+	and	0x07
+	ld	h, a
+	or	(TVRAM >> 8)
+	ld	b, a
+	ld	c, l
+	xor	a
+	out	(c), a
+	ld	a, h
+	or	(TATTR >> 8)
+	ld	b, a
+	xor	a
+	out	(c), a
+	ENDM
+
 SHIP_BASE	EQU	0x10		; 自機 PCG コード先頭 (0x10..0x9F, 144セル)
 SHIP_VSTRIDE	EQU	9		; 1 版 = 3列x3行 = 9セル
 SHIP_HXMAX	EQU	(COLS - 3) * 4 + 3	; ship_hx 上限 (col2 が行内に収まる)
@@ -582,7 +615,7 @@ write_ship_3x3:
 .coll:	push	bc
 	push	hl
 	ld	a, (ws_code)
-	call	put_cell
+	PUTCELL
 	pop	hl
 	inc	hl
 	ld	a, (ws_code)
@@ -623,7 +656,7 @@ erase_3x3:
 	ld	b, 3
 .coll:	push	bc
 	push	hl
-	call	clr_cell
+	CLRCELL
 	pop	hl
 	inc	hl
 	pop	bc
