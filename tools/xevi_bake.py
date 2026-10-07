@@ -145,7 +145,7 @@ def main():
 
     # 地上物抽出 + 焼き込み
     rom = O.load_subrom(); ptrs = O.area_ptrs(rom)
-    objs = O.extract_ground(rom, ptrs[0], ptrs[1])
+    objs = O.extract_ground(rom, ptrs[area-1], ptrs[area] if area < 16 else 0x2000)
     placements = []   # (col,row,type,crater_tid_2x2)
     # 補正: get_map_row の bs0 = (trigger+0xF2) に +11 列、across は spriteY>>3 -2 行。
     #   クリアリング中心合わせ(全10物の2x2=40/40 が tan タイルに乗る)で実測。
