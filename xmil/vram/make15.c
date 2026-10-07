@@ -55,7 +55,7 @@ void width80x25_200l(void) {								// 80x25 200line
 		} while(--x);
 
 		pos = LOW11(pos + makescrn.surfrx);
-		if (TRAMUPDATE(LOW11(pos - 1)) & 4) {			// c”{Šp•`‰æ‚¾‚Á‚½‚ç
+		if (TRAMUPDATE(LOW11(pos - 1)) & 4) {			// ï¿½cï¿½{ï¿½pï¿½`ï¿½æ‚¾ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 			makescrn.fontycnt += makescrn.charcy;
 		}
 		else {
@@ -73,6 +73,69 @@ void width80x25_200l(void) {								// 80x25 200line
 		lp += lines;
 	} while(--y);
 }
+
+#if defined(SUPPORT_TURBOZ)
+void width40x25_64s(void) {						// 40x25 200line 64è‰² (6plane,1ç”»é¢)
+
+	UINT	fontcy;
+	UINT	pos;
+	BOOL	newline;
+	UINT8	*dst;
+	UINT	y;
+	UINT8	*lp;
+	UINT	x;
+	REG8	udtmp;
+	REG8	dirty;
+	UINT	lines;
+	UINT	i;
+
+	fontcy = min(makescrn.fontcy, MAKETEXT_ROW);
+	pos = makescrn.vramtop;
+	dst = screenmap;
+	newline = FALSE;
+	y = makescrn.surfcy;
+	lp = renewalline;
+	do {
+		x = makescrn.surfcx;
+		do {
+			udtmp = TRAMUPDATE(pos);
+			dirty = (udtmp & makescrn.dispflag);
+			if (dirty) {
+				TRAMUPDATE(pos) = (UINT8)(udtmp ^ dirty);
+				newline = TRUE;
+				/* 64è‰²ã¯ã‚°ãƒ©ãƒ•ã‚£ãƒƒã‚¯ã®ã¿ (ãƒ†ã‚­ã‚¹ãƒˆæ··åˆãªã—)ã€‚
+				   disp1=bank0, disp2=bank1 ã® 6 ãƒ—ãƒ¬ãƒ¼ãƒ³ã‚’å±•é–‹ã€‚ */
+				makemix_mixgrph64(dst, SURFACE_WIDTH * 2,
+								makescrn.disp1 + TRAM2GRAM(pos),
+								makescrn.disp2 + TRAM2GRAM(pos), fontcy);
+				if (fontcy < makescrn.fontcy) {
+					makemix_cpy200(dst, fontcy, makescrn.fontcy);
+				}
+			}
+			pos = LOW11(pos + 1);
+			dst += 8;
+		} while(--x);
+
+		pos = LOW11(pos + makescrn.surfrx);
+		if (TRAMUPDATE(LOW11(pos - 1)) & 4) {
+			makescrn.fontycnt += makescrn.charcy;
+		}
+		else {
+			makescrn.fontycnt = makescrn.charcy * 2;
+		}
+		makescrn.fontycnt &= 15;
+		dst += makescrn.surfstep;
+		lines = makescrn.charcy * 2;
+		if (newline) {
+			newline = FALSE;
+			for (i=0; i<lines; i++) {
+				lp[i] = 1;
+			}
+		}
+		lp += lines;
+	} while(--y);
+}
+#endif
 
 void width80x12_200l(void) {								// 80x12 200line
 
@@ -126,7 +189,7 @@ const UINT8	*src;
 		} while(--x);
 
 		pos = LOW11(pos + makescrn.surfrx);
-		if (TRAMUPDATE(LOW11(pos - 1)) & 4) {			// c”{Šp•`‰æ‚¾‚Á‚½‚ç
+		if (TRAMUPDATE(LOW11(pos - 1)) & 4) {			// ï¿½cï¿½{ï¿½pï¿½`ï¿½æ‚¾ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 			makescrn.fontycnt += makescrn.charcy;
 		}
 		else {
@@ -185,7 +248,7 @@ void width80x20l(void) {
 		} while(--x);
 
 		pos = LOW11(pos + makescrn.surfrx);
-		if (TRAMUPDATE(LOW11(pos - 1)) & 4) {			// c”{Šp•`‰æ‚¾‚Á‚½‚ç
+		if (TRAMUPDATE(LOW11(pos - 1)) & 4) {			// ï¿½cï¿½{ï¿½pï¿½`ï¿½æ‚¾ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 			makescrn.fontycnt += makescrn.charcy;
 		}
 		else {
@@ -246,7 +309,7 @@ void width80x10l(void) {
 		} while(--x);
 
 		pos = LOW11(pos + makescrn.surfrx);
-		if (TRAMUPDATE(LOW11(pos - 1)) & 4) {			// c”{Šp•`‰æ‚¾‚Á‚½‚ç
+		if (TRAMUPDATE(LOW11(pos - 1)) & 4) {			// ï¿½cï¿½{ï¿½pï¿½`ï¿½æ‚¾ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 			makescrn.fontycnt += makescrn.charcy;
 		}
 		else {

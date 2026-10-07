@@ -55,7 +55,7 @@ static void flashupdatetmp(void) {
 			udt = udtbase;
 			if (!y2) {
 				if (atr & (TRAMATR_Yx2 << 8)) {
-					udt |= (UPDATE_TRAM | 1) << 8;		// ¶’×‚êc”{Šp
+					udt |= (UPDATE_TRAM | 1) << 8;		// ï¿½ï¿½ï¿½×‚ï¿½cï¿½{ï¿½p
 				}
 				else {
 					y2 = TRUE;
@@ -63,16 +63,16 @@ static void flashupdatetmp(void) {
 			}
 			if (!y2) {
 				if (atr & (TRAMATR_Yx2 << 0)) {
-					udt |= (UPDATE_TRAM | 1) << 0;		// ‰E’×‚êc”{Šp
+					udt |= (UPDATE_TRAM | 1) << 0;		// ï¿½Eï¿½×‚ï¿½cï¿½{ï¿½p
 				}
 				else {
 					y2 = TRUE;
 				}
 			}
-			if (atr & (TRAMATR_Xx2 << 8)) {				// ¶‘¤”{Šp?
+			if (atr & (TRAMATR_Xx2 << 8)) {				// ï¿½ï¿½ï¿½ï¿½ï¿½{ï¿½p?
 				udt |= 0x0812;
 			}
-			if (atr & (TRAMATR_Xx2 << 0)) {				// ‰E‘¤”{Šp?
+			if (atr & (TRAMATR_Xx2 << 0)) {				// ï¿½Eï¿½ï¿½ï¿½{ï¿½p?
 				udt |= 0x0008;
 			}
 			if ((TRAMUPDATE(posl) ^ (udt >> 8)) & 0x1f) {
@@ -136,7 +136,7 @@ static const UINT8 screendraw[] = {
 				MAKESCRN_320x200S,	MAKESCRN_320x200H,
 
 #if defined(SUPPORT_TURBOZ)
-				MAKESCRN_320x200H,	MAKESCRN_320x200H,
+				MAKESCRN_320x200S,	MAKESCRN_320x200H,	/* 16:SCRN64_320x200 */
 				MAKESCRN_320x200H,	MAKESCRN_320x200H,
 				MAKESCRN_320x200H,	MAKESCRN_320x200H,
 				MAKESCRN_320x200H,	MAKESCRN_320x200H,
@@ -160,7 +160,7 @@ static const MAKEFN screenmake[] = {
 				width80x10l,		width80x10h,
 
 #if defined(SUPPORT_TURBOZ)
-				width_dummy,		width_dummy,
+				width40x25_64s,		width_dummy,		/* 16:SCRN64_320x200 */
 				width_dummy,		width_dummy,
 				width_dummy,		width_dummy,
 				width_dummy,		width_dummy,
@@ -185,6 +185,16 @@ static void changemodes(void) {
 	}
 	sysmng_scrnwidth((REG8)((dispmode & DISPMODE_WIDTH80) == 0));
 
+#if defined(SUPPORT_TURBOZ)
+	if (dispmode & SCRN64_ENABLE) {
+		/* 64è‰²/4096è‰²ã¯ 2 ãƒãƒ³ã‚¯(6 ãƒ—ãƒ¬ãƒ¼ãƒ³)ã‚’åŒæ™‚ä½¿ç”¨ã€‚
+		   disp1=bank0, disp2=bank1 å›ºå®šã€ä¸¡ VRAM ã®æ›´æ–°ã‚’ç›£è¦–ã™ã‚‹ã€‚ */
+		makescrn.disp1 = gram + GRAM_BANK0;
+		makescrn.disp2 = gram + GRAM_BANK1;
+		makescrn.dispflag = UPDATE_TRAM + UPDATE_VRAM0 + UPDATE_VRAM1;
+		return;
+	}
+#endif
 	if (!(dispmode & DISPMODE_BANK1)) {
 		makescrn.disp1 = gram + GRAM_BANK0;
 		makescrn.disp2 = gram + GRAM_BANK1;
@@ -252,9 +262,9 @@ static void changecrtc(void) {
 	}
 
 	surfsy = charcy * surfcy * 2;
-	// ƒnƒCƒhƒ‰ƒCƒh‚R‚Å‰æ–Ê‚ªÁ‚¦‚È‚¢‚Ì‚ÅƒƒWƒbƒN‚ğC³‚·‚×‚µ
+	// ï¿½nï¿½Cï¿½hï¿½ï¿½ï¿½Cï¿½hï¿½Rï¿½Å‰ï¿½Ê‚ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½È‚ï¿½ï¿½Ì‚Åƒï¿½ï¿½Wï¿½bï¿½Nï¿½ï¿½ï¿½Cï¿½ï¿½ï¿½ï¿½ï¿½×‚ï¿½
 	x = min(scrnxmax, makescrn.surfcx);
-	if (surfcx < x) {								// ¬‚³‚­‚È‚Á‚½
+	if (surfcx < x) {								// ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½È‚ï¿½ï¿½ï¿½
 		x = (x - surfcx) * 8;
 		p = screenmap + (surfcx * 8);
 		y = surfsy;

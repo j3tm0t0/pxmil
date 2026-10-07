@@ -62,6 +62,10 @@ void makechr16(UINT8 *dst, UINT pos, UINT count, REG8 udtmp);
 
 void makemix_mixtext(UINT8 *dst, UINT align, const UINT8 *txt, UINT count);
 void makemix_mixgrph(UINT8 *dst, UINT align, const UINT8 *grp, UINT count);
+#if defined(SUPPORT_TURBOZ)
+void makemix_mixgrph64(UINT8 *dst, UINT align,
+					const UINT8 *grp0, const UINT8 *grp1, UINT count);
+#endif
 
 void makemix_settext(UINT8 *dst, UINT align, const UINT8 *txt, UINT count);
 void makemix_ul20(UINT8 *dst, UINT pos);
@@ -84,6 +88,10 @@ void width80x12_200h(void);						// 80x12 200line
 void width80x12_400h(void);						// 80x12 400line
 void width80x20h(void);							// 80x20
 void width80x10h(void);							// 80x10
+
+#if defined(SUPPORT_TURBOZ)
+void width40x25_64s(void);						// 40x25 200line 64色(6plane,1画面)
+#endif
 
 
 #ifdef __cplusplus

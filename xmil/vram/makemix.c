@@ -4,7 +4,7 @@
 #include	"makesub.h"
 
 
-// �x���̂����Ȃ��ŃC�����C���ɂ���΂���
+// �x���̂����Ȃ��ŃC�����C���ɂ���΂���
 void makemix_mixtext(UINT8 *dst, UINT align, const UINT8 *txt, UINT count) {
 
 	UINT32	datl;
@@ -56,6 +56,50 @@ void makemix_mixgrph(UINT8 *dst, UINT align, const UINT8 *grp, UINT count) {
 		dst += align;
 	} while(--count);
 }
+
+#if defined(SUPPORT_TURBOZ)
+/* turboZ 64色 (6プレーン) モードのセル展開。
+   bank0(grp0) の B/R/G プレーン = 6bit インデックスの bit0/1/2、
+   bank1(grp1) の B/R/G = bit3/4/5。この並びは crtc.c palette_o(64色)の
+   インデックス計算 (bit0..2=bank0 BRG, bit3..5=bank1 BRG) と pal4096banktbl に
+   一致する。screenmap の各バイトに 0..63 のインデックスを書く(テキスト混合なし)。 */
+void makemix_mixgrph64(UINT8 *dst, UINT align,
+					const UINT8 *grp0, const UINT8 *grp1, UINT count) {
+
+	UINT	pos;
+	UINT32	datl;
+	UINT32	datr;
+	REG8	dat;
+
+	pos = 0;
+	do {
+		datl = 0;
+		datr = 0;
+		dat = grp0[pos + GRAM_B];
+		datl |= TO256COLL(dat, 0);
+		datr |= TO256COLR(dat, 0);
+		dat = grp0[pos + GRAM_R];
+		datl |= TO256COLL(dat, 1);
+		datr |= TO256COLR(dat, 1);
+		dat = grp0[pos + GRAM_G];
+		datl |= TO256COLL(dat, 2);
+		datr |= TO256COLR(dat, 2);
+		dat = grp1[pos + GRAM_B];
+		datl |= TO256COLL(dat, 3);
+		datr |= TO256COLR(dat, 3);
+		dat = grp1[pos + GRAM_R];
+		datl |= TO256COLL(dat, 4);
+		datr |= TO256COLR(dat, 4);
+		dat = grp1[pos + GRAM_G];
+		datl |= TO256COLL(dat, 5);
+		datr |= TO256COLR(dat, 5);
+		*(UINT32 *)(dst + 0) = datl;
+		*(UINT32 *)(dst + 4) = datr;
+		pos = (pos + GRAM_LINESTEP) & (GRAM_LINESTEP * 7);
+		dst += align;
+	} while(--count);
+}
+#endif
 
 
 void makemix_settext(UINT8 *dst, UINT align, const UINT8 *txt, UINT count) {
