@@ -128,12 +128,12 @@ void pccore_reset(void) {
 	pccore.SOUND_SW = xmilcfg.SOUND_SW;
 	if ((xmilcfg.ROM_TYPE >= 3) && (pccore.SOUND_SW == 0))
 	{
-		pccore.SOUND_SW = 1;					/* ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½1ï¿½Â“ï¿½ï¿½ï¿½ */
+		pccore.SOUND_SW = 1;					/* –³ðŒ‚Å1‚Â“‹Ú */
 	}
 #endif
 	pccore.DIP_SW = xmilcfg.DIP_SW;
 
-	/* ï¿½Xï¿½Nï¿½ï¿½ï¿½[ï¿½ï¿½ï¿½ï¿½ï¿½[ï¿½hï¿½Ì•ÏX... */
+	/* ƒXƒNƒŠ[ƒ“ƒ‚[ƒh‚Ì•ÏX... */
 #if defined(SUPPORT_TURBOZ)
 	if (pccore.ROM_TYPE >= 3) {
 		if (scrnmng_setcolormode(TRUE) != SUCCESS) {
