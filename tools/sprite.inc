@@ -24,6 +24,8 @@ MAX_ENEMIES	EQU	4		; 同時出現数
 ENEMY_SPEED	EQU	1		; 横移動(セル/移動tick) ※敵は8pxグリッド
 EXPL_BASE	EQU	0xC0		; 爆発 PCG 先頭 (0xC0..0xCB, 3フレーム x 2x2)
 MAX_EXPL	EQU	4		; 同時爆発数
+RETICLE_BASE	EQU	0xCC		; [M8] 照準 PCG (0xCC..0xCF, 2x2 の角ブラケット)
+RETICLE_DIST	EQU	10 * 4		; 自機前方の表示距離 (hx 2px単位, 10セル先)
 
 ; 速度/間隔定数は sprite_update の呼ばれる頻度で意味が変わる。
 ;   既定: sprite_update は 8フレームごと(ステップフレームのみ)。
@@ -57,6 +59,10 @@ sprite_init:
 	call	gen_bullet
 	call	gen_enemy
 	call	gen_expl
+	call	gen_reticle
+	ld	hl, 0xFFFF		; 照準 prev 無効化
+	ld	(ret_prev), hl
+	ld	(ret_prev2), hl
 	; 弾テーブルを全て非アクティブに
 	ld	hl, bul_active
 	ld	b, MAX_BULLETS
@@ -152,6 +158,98 @@ gen_bullet:
 	ret
 
 ;=====================================================================
+; [M8] 照準(リティクル): 自機前方 RETICLE_DIST に常時表示する 2x2 のオリジナル
+;   角ブラケット(orange tc7=B+R+G)。常時 active なので ship 同様に両窓 erase+draw。
+gen_reticle:
+	ld	hl, reticle_data
+	ld	a, RETICLE_BASE
+	ld	(ene_code), a
+	ld	b, 4
+.l:	push	bc
+	ld	a, (ene_code)
+	call	pcg_select
+	ld	d, PCG_B >> 8
+	call	def_plane
+	ld	d, PCG_R >> 8
+	call	def_plane
+	ld	d, PCG_G >> 8
+	call	def_plane
+	ld	a, (ene_code)
+	inc	a
+	ld	(ene_code), a
+	pop	bc
+	djnz	.l
+	ret
+
+; 照準の表示セル位置(soff)を計算して spr_soff に格納。
+reticle_soff:
+	ld	a, (ship_hx)
+	add	a, RETICLE_DIST
+	srl	a
+	srl	a			; cell col = (hx+dist)>>2
+	cp	COLS - 2
+	jr	c, .cok
+	ld	a, COLS - 2		; 画面内にクランプ
+.cok:	ld	c, a			; cell col
+	ld	a, (ship_vy)
+	add	a, 6			; 自機中央
+	srl	a
+	srl	a			; cell row
+	ld	h, 0
+	ld	l, a
+	add	hl, hl
+	add	hl, hl
+	add	hl, hl			; *8
+	ld	d, h
+	ld	e, l
+	add	hl, hl
+	add	hl, hl			; *32
+	add	hl, de			; *40
+	ld	a, c
+	ld	e, a
+	ld	d, 0
+	add	hl, de
+	ld	(spr_soff), hl
+	ret
+
+reticle_erase:
+	ld	hl, (ret_prev)
+	ld	a, h
+	cp	0xFF
+	ret	z
+	call	ene_clr2x2
+	ld	hl, (ret_prev2)
+	call	ene_clr2x2
+	ret
+
+reticle_draw:
+	call	reticle_soff
+	; 窓1
+	ld	hl, (spr_soff)
+	ld	de, (cur_pos)
+	add	hl, de
+	ld	a, h
+	and	0x07
+	ld	h, a
+	ld	(ret_prev), hl
+	ld	a, RETICLE_BASE
+	call	ene_put2x2
+	; 窓2
+	ld	hl, (cur_pos)
+	ld	a, h
+	xor	0x04
+	ld	h, a
+	ld	de, (spr_soff)
+	add	hl, de
+	ld	a, h
+	and	0x07
+	ld	h, a
+	ld	(ret_prev2), hl
+	ld	a, RETICLE_BASE
+	call	ene_put2x2
+	ret
+
+;=====================================================================
 ; 毎フレーム(vblank 中, ship_update の後)。発射/移動/消去/描画。
 ;   順序: 発射判定 → 全弾消去 → 移動/寿命 → 全弾描画 (重なり対策で分離)。
 sprite_update:
@@ -179,13 +277,15 @@ sprite_update:
 	; 衝突判定(弾vs敵, 敵vs自機) → 当たった弾/敵を非アクティブ化 + 爆発発生
 	call	collision_check
 	; 全消去(前回位置)。敵は idle-skip, 非アクティブ化された敵も消去される。
+	call	reticle_erase
 	call	expls_erase
 	call	enemies_erase
 	call	bullets_erase
-	; 全描画(アクティブのみ)
+	; 全描画(アクティブのみ)。照準は最後=最前面。
 	call	bullets_draw
 	call	enemies_draw
 	call	expls_draw
+	call	reticle_draw
 	ret
 
 ; 衝突判定(セル空間)。弾セルが敵2x2矩形内 → 両方消滅 + 爆発。
@@ -1341,6 +1441,8 @@ exp_frm:	ds	MAX_EXPL	; コマ 0..2
 exp_tmr:	ds	MAX_EXPL
 exp_prev:	ds	MAX_EXPL * 2
 exp_prev2:	ds	MAX_EXPL * 2
+ret_prev:	dw	0xFFFF		; 照準の前回 top-left (窓1)
+ret_prev2:	dw	0xFFFF		; 窓2
 
 ;=====================================================================
 ; 敵ベースデータ (4フレーム × 96B = 384B)。差し替えフック:
@@ -1450,3 +1552,20 @@ expl_data:
 	db	0xFC,0xFC,0xFC,0xFC,0xFC,0xFC,0x00,0x00	; BR B
 	db	0xFC,0xFC,0xFC,0xFC,0xFC,0xFC,0x00,0x00	; BR R
 	db	0xFC,0xFC,0xFC,0xFC,0xFC,0xFC,0x00,0x00	; BR G
+
+;=====================================================================
+; [M8] 照準 PCG データ (RETICLE_BASE から TL,TR,BL,BR の4セル)。
+;   オリジナルの角ブラケット型クロスヘア。orange(tc7)=B+R+G 全プレーン同パターン。
+reticle_data:
+	db	0xE0,0x80,0x80,0x00,0x00,0x00,0x00,0x00	; TL B
+	db	0xE0,0x80,0x80,0x00,0x00,0x00,0x00,0x00	; TL R
+	db	0xE0,0x80,0x80,0x00,0x00,0x00,0x00,0x00	; TL G
+	db	0x07,0x01,0x01,0x00,0x00,0x00,0x00,0x00	; TR B
+	db	0x07,0x01,0x01,0x00,0x00,0x00,0x00,0x00	; TR R
+	db	0x07,0x01,0x01,0x00,0x00,0x00,0x00,0x00	; TR G
+	db	0x00,0x00,0x00,0x00,0x00,0x80,0x80,0xE0	; BL B
+	db	0x00,0x00,0x00,0x00,0x00,0x80,0x80,0xE0	; BL R
+	db	0x00,0x00,0x00,0x00,0x00,0x80,0x80,0xE0	; BL G
+	db	0x00,0x00,0x00,0x00,0x00,0x01,0x01,0x07	; BR B
+	db	0x00,0x00,0x00,0x00,0x00,0x01,0x01,0x07	; BR R
+	db	0x00,0x00,0x00,0x00,0x00,0x01,0x01,0x07	; BR G
