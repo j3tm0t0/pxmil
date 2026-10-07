@@ -132,6 +132,8 @@ void pxmil_statedump(void) {
 	static int	sd_init = 0;
 	static const char *sd_pfx = NULL;
 	static unsigned long sd_every = 30;
+	static unsigned long sd_from = 0;
+	static unsigned long sd_to = 0xffffffffUL;
 	static UINT32	sd_prev = 0;
 	UINT32	h;
 	int	i, tcells, pcgcells;
@@ -143,6 +145,10 @@ void pxmil_statedump(void) {
 		sd_pfx = getenv("XMIL_STATEDUMP");
 		e = getenv("XMIL_STATEDUMP_EVERY");
 		if (e) { sd_every = strtoul(e, NULL, 0); if (!sd_every) sd_every = 1; }
+		e = getenv("XMIL_STATEDUMP_FROM");
+		if (e) { sd_from = strtoul(e, NULL, 0); }
+		e = getenv("XMIL_STATEDUMP_TO");
+		if (e) { sd_to = strtoul(e, NULL, 0); }
 	}
 	if (sd_pfx == NULL) {
 		return;
@@ -177,12 +183,19 @@ void pxmil_statedump(void) {
 	for (i = 0; i < GRAM_SIZE; i++) {
 		if (gram[i]) { gramnz++; }
 	}
+	/* crtc: SCRN_BITS (bit3=SCRN_DISPVRAM graphics-hide), dispmode,
+	 *   start address pos / POSH:POSL (R12:R13) for scroll tracking. */
 	fprintf(stderr, "SD frame=%u tcells=%d pcgcells=%d gramnz=%ld "
-					"pcghash=%08x pcgchg=%d\n",
+					"pcghash=%08x pcgchg=%d scrn=%02x dispvram=%d "
+					"dispmode=%02x pos=%u poshl=%02x%02x\n",
 			(unsigned)pxmil_frame, tcells, pcgcells, gramnz,
-			h, (h != sd_prev));
+			h, (h != sd_prev),
+			crtc.s.SCRN_BITS, ((crtc.s.SCRN_BITS & SCRN_DISPVRAM) ? 0 : 1),
+			crtc.e.dispmode, (unsigned)crtc.e.pos,
+			crtc.s.reg[CRTCREG_POSH], crtc.s.reg[CRTCREG_POSL]);
 	sd_prev = h;
-	if ((pxmil_frame % sd_every) == 0) {
+	if ((pxmil_frame % sd_every) == 0
+		&& pxmil_frame >= sd_from && pxmil_frame <= sd_to) {
 		char path[256];
 		FILE *fp;
 		snprintf(path, sizeof(path), "%s_%06u.bin", sd_pfx,
@@ -194,6 +207,7 @@ void pxmil_statedump(void) {
 				fputc(tram[i].atr, fp);
 			}
 			fwrite(pcg.d, 1, 0x1800, fp);
+			fwrite(gram, 1, GRAM_SIZE, fp);	/* GRAM for layer-role check */
 			fclose(fp);
 		}
 	}

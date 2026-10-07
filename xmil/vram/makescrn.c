@@ -304,6 +304,7 @@ void scrnupdate(void) {
 #if defined(XMIL_PROBE_SUPPORT)
 	/* pxmil: drawn-frame counter (for XMIL_JOYSCRIPT playback / statedump) */
 	pxmil_frame++;
+	{ extern void pxmil_keyscript(void); extern void pxmil_statedump(void); pxmil_keyscript(); pxmil_statedump(); }
 #endif
 
 	/* pxmil debug: state diff (Mac dev build only, inside XMIL_PROBE_SUPPORT;
