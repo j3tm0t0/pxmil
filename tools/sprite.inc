@@ -22,18 +22,33 @@ BULLET_SPEED	EQU	4		; 1フレームの前進 (2px単位; 4=8px/frame)
 FIRE_DELAY	EQU	6		; 連射間隔(フレーム)
 TRIG1		EQU	0x20		; PSG port A bit5 (トリガ1, 負論理)
 
+ENEMY_BASE	EQU	0xB0		; 敵 PCG 先頭 (0xB0..0xBF, 4フレーム x 2x2)
+MAX_ENEMIES	EQU	4		; 同時出現数
+ENEMY_ANIM	EQU	6		; アニメ更新間隔(フレーム)
+ENEMY_SPAWN	EQU	48		; 出現間隔(フレーム)
+ENEMY_SPEED	EQU	1		; 横移動(セル/移動tick)
+ENEMY_MOVE	EQU	4		; 移動間隔(フレーム)
+
 ;=====================================================================
 ; 起動時: 弾 PCG(16版)生成 + テーブル初期化。PCGモード有効時に呼ぶ。
 sprite_init:
 	call	gen_bullet
-	; 弾テーブルを全て非アクティブ(prev=0xFFFF)に
+	call	gen_enemy
+	; 弾テーブルを全て非アクティブに
 	ld	hl, bul_active
 	ld	b, MAX_BULLETS
 .ci:	ld	(hl), 0
 	inc	hl
 	djnz	.ci
+	; 敵テーブルを全て非アクティブに
+	ld	hl, ene_active
+	ld	b, MAX_ENEMIES
+.ce:	ld	(hl), 0
+	inc	hl
+	djnz	.ce
 	xor	a
 	ld	(fire_tmr), a
+	ld	(spawn_tmr), a
 	ret
 
 ; 弾 PCG 生成: 小ドット(左上 2x2, B プレーン=白 slot1)の 16 シフト版。
@@ -112,9 +127,13 @@ gen_bullet:
 ;   順序: 発射判定 → 全弾消去 → 移動/寿命 → 全弾描画 (重なり対策で分離)。
 sprite_update:
 	call	fire_check		; トリガで発射
-	call	bullets_erase		; 全弾を前回位置から消去(両窓)
-	call	bullets_move		; 前進 + 画面外で消滅
-	call	bullets_draw		; 新位置へ描画(両窓), prev 記録
+	call	enemy_spawn		; 一定間隔で右端から出現
+	call	enemies_erase		; 敵を前回位置から消去(両窓)
+	call	bullets_erase		; 弾を前回位置から消去(両窓)
+	call	bullets_move		; 弾 前進 + 画面外で消滅
+	call	enemies_move		; 敵 移動/アニメ + 画面外で消滅
+	call	bullets_draw		; 弾 描画(両窓), prev 記録
+	call	enemies_draw		; 敵 描画(両窓), prev 記録
 	ret
 
 ; トリガ(bit5,負論理)で、連射間隔ごとに空きスロットへ弾を発射。
@@ -363,6 +382,334 @@ bullets_draw:
 	jp	.dl
 
 ;=====================================================================
+; 敵 PCG 生成: enemy_data(4フレーム×96B = 16セル×24B, TL/TR/BL/BR順)を
+;   ENEMY_BASE から 16 セル連番で定義。
+gen_enemy:
+	ld	hl, enemy_data
+	ld	a, ENEMY_BASE
+	ld	(ene_code), a
+	ld	b, 16
+.el:	push	bc
+	ld	a, (ene_code)
+	call	pcg_select
+	ld	d, PCG_B >> 8
+	call	def_plane		; B (hl += 8)
+	ld	d, PCG_R >> 8
+	call	def_plane		; R
+	ld	d, PCG_G >> 8
+	call	def_plane		; G (hl は次セル +24 へ)
+	ld	a, (ene_code)
+	inc	a
+	ld	(ene_code), a
+	pop	bc
+	djnz	.el
+	ret
+
+; 一定間隔で右端から敵出現(空きスロットがあれば)。ey は数行を循環。
+enemy_spawn:
+	ld	a, (spawn_tmr)
+	or	a
+	jr	z, .go
+	dec	a
+	ld	(spawn_tmr), a
+	ret
+.go:
+	ld	a, ENEMY_SPAWN
+	ld	(spawn_tmr), a
+	; 空きスロット探索
+	xor	a
+	ld	(spr_i), a
+.fs:	ld	a, (spr_i)
+	cp	MAX_ENEMIES
+	ret	z			; 空き無し
+	ld	e, a
+	ld	d, 0
+	ld	hl, ene_active
+	add	hl, de
+	ld	a, (hl)
+	or	a
+	jr	z, .spawn
+	ld	a, (spr_i)
+	inc	a
+	ld	(spr_i), a
+	jr	.fs
+.spawn:
+	ld	(hl), 1			; active
+	ld	hl, ene_ex
+	add	hl, de
+	ld	a, COLS - 2		; 右端
+	ld	(hl), a
+	; ey: spawn_row を 3,8,13,18 で循環
+	ld	a, (spawn_row)
+	inc	a
+	cp	4
+	jr	c, .rok
+	xor	a
+.rok:	ld	(spawn_row), a
+	add	a, a
+	ld	c, a
+	add	a, a
+	add	a, c			; *5 ... (row = 3 + idx*5 近似)
+	add	a, 3
+	ld	hl, ene_ey
+	add	hl, de
+	ld	(hl), a
+	ld	hl, ene_frm
+	add	hl, de
+	ld	(hl), 0
+	ld	hl, ene_atmr
+	add	hl, de
+	ld	(hl), ENEMY_ANIM
+	ld	hl, ene_mtmr
+	add	hl, de
+	ld	(hl), ENEMY_MOVE
+	ld	hl, ene_prev
+	add	hl, de
+	add	hl, de
+	ld	(hl), 0xFF
+	inc	hl
+	ld	(hl), 0xFF
+	ret
+
+; 全敵を前回位置(両窓, 2x2)から消去。
+enemies_erase:
+	xor	a
+	ld	(spr_i), a
+.el:	ld	a, (spr_i)
+	cp	MAX_ENEMIES
+	ret	z
+	ld	e, a
+	ld	d, 0
+	ld	hl, ene_active
+	add	hl, de
+	ld	a, (hl)
+	or	a
+	jr	z, .en
+	; prev 窓1
+	ld	a, (spr_i)
+	add	a, a
+	ld	e, a
+	ld	d, 0
+	ld	hl, ene_prev
+	add	hl, de
+	ld	a, (hl)
+	inc	hl
+	ld	h, (hl)
+	ld	l, a
+	ld	a, h
+	cp	0xFF
+	jr	z, .en
+	call	ene_clr2x2		; de 保持
+	ld	a, (spr_i)
+	add	a, a
+	ld	e, a
+	ld	d, 0
+	ld	hl, ene_prev2
+	add	hl, de
+	ld	a, (hl)
+	inc	hl
+	ld	h, (hl)
+	ld	l, a
+	call	ene_clr2x2
+.en:	ld	a, (spr_i)
+	inc	a
+	ld	(spr_i), a
+	jr	.el
+
+; 全敵のアニメ更新 + 左へ移動 + 画面外で消滅。
+enemies_move:
+	xor	a
+	ld	(spr_i), a
+.ml:	ld	a, (spr_i)
+	cp	MAX_ENEMIES
+	ret	z
+	ld	e, a
+	ld	d, 0
+	ld	hl, ene_active
+	add	hl, de
+	ld	a, (hl)
+	or	a
+	jr	z, .mn
+	; アニメ
+	ld	hl, ene_atmr
+	add	hl, de
+	dec	(hl)
+	jr	nz, .amv
+	ld	(hl), ENEMY_ANIM
+	ld	hl, ene_frm
+	add	hl, de
+	ld	a, (hl)
+	inc	a
+	and	3
+	ld	(hl), a
+.amv:
+	; 移動
+	ld	hl, ene_mtmr
+	add	hl, de
+	dec	(hl)
+	jr	nz, .mn
+	ld	(hl), ENEMY_MOVE
+	ld	hl, ene_ex
+	add	hl, de
+	ld	a, (hl)
+	sub	ENEMY_SPEED
+	ld	(hl), a
+	cp	COLS			; 0 未満で 0xFF 等 >= COLS → 消滅
+	jr	c, .mn
+	ld	hl, ene_active
+	add	hl, de
+	ld	(hl), 0
+.mn:	ld	a, (spr_i)
+	inc	a
+	ld	(spr_i), a
+	jr	.ml
+
+; 全敵を新位置に描画(両窓, 2x2), prev 記録。
+enemies_draw:
+	xor	a
+	ld	(spr_i), a
+.dl:	ld	a, (spr_i)
+	cp	MAX_ENEMIES
+	ret	z
+	ld	e, a
+	ld	d, 0
+	ld	hl, ene_active
+	add	hl, de
+	ld	a, (hl)
+	or	a
+	jp	z, .dn
+	; soff = ey*COLS + ex
+	ld	hl, ene_ey
+	add	hl, de
+	ld	a, (hl)
+	ld	h, 0
+	ld	l, a
+	add	hl, hl
+	add	hl, hl
+	add	hl, hl			; *8
+	ld	d, h
+	ld	e, l
+	add	hl, hl
+	add	hl, hl			; *32
+	add	hl, de			; *40
+	ld	a, (spr_i)
+	ld	e, a
+	ld	d, 0
+	push	hl
+	ld	hl, ene_ex
+	add	hl, de
+	ld	a, (hl)
+	pop	hl
+	ld	e, a
+	ld	d, 0
+	add	hl, de
+	ld	(spr_soff), hl
+	; code base = ENEMY_BASE + frame*4
+	ld	a, (spr_i)
+	ld	e, a
+	ld	d, 0
+	ld	hl, ene_frm
+	add	hl, de
+	ld	a, (hl)
+	add	a, a
+	add	a, a			; frame*4
+	add	a, ENEMY_BASE
+	ld	(spr_code), a
+	; 窓1
+	ld	hl, (spr_soff)
+	ld	de, (cur_pos)
+	add	hl, de
+	ld	a, h
+	and	0x07
+	ld	h, a
+	ld	(spr_cell), hl
+	ld	a, (spr_i)
+	add	a, a
+	ld	e, a
+	ld	d, 0
+	ld	hl, ene_prev
+	add	hl, de
+	ld	a, (spr_cell)
+	ld	(hl), a
+	inc	hl
+	ld	a, (spr_cell + 1)
+	ld	(hl), a
+	ld	hl, (spr_cell)
+	ld	a, (spr_code)
+	call	ene_put2x2
+	; 窓2
+	ld	hl, (cur_pos)
+	ld	a, h
+	xor	0x04
+	ld	h, a
+	ld	de, (spr_soff)
+	add	hl, de
+	ld	a, h
+	and	0x07
+	ld	h, a
+	ld	(spr_cell), hl
+	ld	a, (spr_i)
+	add	a, a
+	ld	e, a
+	ld	d, 0
+	ld	hl, ene_prev2
+	add	hl, de
+	ld	a, (spr_cell)
+	ld	(hl), a
+	inc	hl
+	ld	a, (spr_cell + 1)
+	ld	(hl), a
+	ld	hl, (spr_cell)
+	ld	a, (spr_code)
+	call	ene_put2x2
+.dn:	ld	a, (spr_i)
+	inc	a
+	ld	(spr_i), a
+	jp	.dl
+
+; hl=top-left セル, a=先頭コード。2x2 (code+0,+1 / +2,+3) を配置。
+ene_put2x2:
+	ld	(ene_tl), hl
+	ld	(ene_bc), a
+	ld	a, (ene_bc)
+	call	put_cell		; TL
+	ld	hl, (ene_tl)
+	inc	hl
+	ld	a, (ene_bc)
+	inc	a
+	call	put_cell		; TR
+	ld	hl, (ene_tl)
+	ld	de, COLS
+	add	hl, de
+	ld	a, (ene_bc)
+	add	a, 2
+	call	put_cell		; BL
+	ld	hl, (ene_tl)
+	ld	de, COLS + 1
+	add	hl, de
+	ld	a, (ene_bc)
+	add	a, 3
+	call	put_cell		; BR
+	ret
+
+; hl=top-left セル。2x2 を消去。
+ene_clr2x2:
+	ld	(ene_tl), hl
+	call	clr_cell
+	ld	hl, (ene_tl)
+	inc	hl
+	call	clr_cell
+	ld	hl, (ene_tl)
+	ld	de, COLS
+	add	hl, de
+	call	clr_cell
+	ld	hl, (ene_tl)
+	ld	de, COLS + 1
+	add	hl, de
+	call	clr_cell
+	ret
+
+;=====================================================================
 ; データ / RAM
 SPR_ZERO:	db	0,0,0,0,0,0,0,0		; def_plane 用 0 プレーン
 
@@ -378,3 +725,81 @@ bul_hx:		ds	MAX_BULLETS		; 横 2px単位
 bul_vy:		ds	MAX_BULLETS		; 縦 2ライン単位
 bul_prev:	ds	MAX_BULLETS * 2		; 前回 top-left セル 窓1
 bul_prev2:	ds	MAX_BULLETS * 2		; 窓2
+
+ene_code:	db	0
+ene_tl:		dw	0
+ene_bc:		db	0
+spawn_tmr:	db	0
+spawn_row:	db	0
+ene_active:	ds	MAX_ENEMIES
+ene_ex:		ds	MAX_ENEMIES		; セル列 (8px)
+ene_ey:		ds	MAX_ENEMIES		; セル行
+ene_frm:	ds	MAX_ENEMIES		; アニメフレーム 0..3
+ene_atmr:	ds	MAX_ENEMIES
+ene_mtmr:	ds	MAX_ENEMIES
+ene_prev:	ds	MAX_ENEMIES * 2		; 前回 top-left セル 窓1
+ene_prev2:	ds	MAX_ENEMIES * 2		; 窓2
+
+;=====================================================================
+; 敵ベースデータ (4フレーム × 96B = 384B)。差し替えフック:
+;   -DENEMY_EXTDATA 指定時は roms/enemy_ext.inc を使う(外部提供, gitignore)。
+;   未指定(既定)は下のオリジナル円盤(灰色の八角形↔菱形 + 赤コア)を使う。
+;   色(公式Dスロット): ボディ=R のみ→tc2→slot2(明灰), 中心=B+G→tc5→slot5(赤)。
+;   per-pixel tc=スロット, ATR=0x27。形はオリジナル(著名キャラは不使用)。
+enemy_data:
+	IFDEF	ENEMY_EXTDATA
+	INCLUDE	"roms/enemy_ext.inc"	; 外部提供 384B db (gitignore)
+	ELSE
+; --- frame0: 八角形 + 赤コア ---
+	db	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x01	; TL B
+	db	0x07,0x1F,0x3F,0x7F,0xFF,0xFF,0xFF,0xFE	; TL R
+	db	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x01	; TL G
+	db	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x80	; TR B
+	db	0xE0,0xF8,0xFC,0xFE,0xFF,0xFF,0xFF,0x7F	; TR R
+	db	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x80	; TR G
+	db	0x01,0x00,0x00,0x00,0x00,0x00,0x00,0x00	; BL B
+	db	0xFE,0xFF,0xFF,0xFF,0x7F,0x3F,0x1F,0x07	; BL R
+	db	0x01,0x00,0x00,0x00,0x00,0x00,0x00,0x00	; BL G
+	db	0x80,0x00,0x00,0x00,0x00,0x00,0x00,0x00	; BR B
+	db	0x7F,0xFF,0xFF,0xFF,0xFE,0xFC,0xF8,0xE0	; BR R
+	db	0x80,0x00,0x00,0x00,0x00,0x00,0x00,0x00	; BR G
+; --- frame1: 菱形 + 赤コア ---
+	db	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x01	; TL B
+	db	0x01,0x03,0x07,0x0F,0x1F,0x3F,0x7F,0xFE	; TL R
+	db	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x01	; TL G
+	db	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x80	; TR B
+	db	0x80,0xC0,0xE0,0xF0,0xF8,0xFC,0xFE,0x7F	; TR R
+	db	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x80	; TR G
+	db	0x01,0x00,0x00,0x00,0x00,0x00,0x00,0x00	; BL B
+	db	0xFE,0x7F,0x3F,0x1F,0x0F,0x07,0x03,0x01	; BL R
+	db	0x01,0x00,0x00,0x00,0x00,0x00,0x00,0x00	; BL G
+	db	0x80,0x00,0x00,0x00,0x00,0x00,0x00,0x00	; BR B
+	db	0x7F,0xFE,0xFC,0xF8,0xF0,0xE0,0xC0,0x80	; BR R
+	db	0x80,0x00,0x00,0x00,0x00,0x00,0x00,0x00	; BR G
+; --- frame2 = frame0 ---
+	db	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x01
+	db	0x07,0x1F,0x3F,0x7F,0xFF,0xFF,0xFF,0xFE
+	db	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x01
+	db	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x80
+	db	0xE0,0xF8,0xFC,0xFE,0xFF,0xFF,0xFF,0x7F
+	db	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x80
+	db	0x01,0x00,0x00,0x00,0x00,0x00,0x00,0x00
+	db	0xFE,0xFF,0xFF,0xFF,0x7F,0x3F,0x1F,0x07
+	db	0x01,0x00,0x00,0x00,0x00,0x00,0x00,0x00
+	db	0x80,0x00,0x00,0x00,0x00,0x00,0x00,0x00
+	db	0x7F,0xFF,0xFF,0xFF,0xFE,0xFC,0xF8,0xE0
+	db	0x80,0x00,0x00,0x00,0x00,0x00,0x00,0x00
+; --- frame3 = frame1 ---
+	db	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x01
+	db	0x01,0x03,0x07,0x0F,0x1F,0x3F,0x7F,0xFE
+	db	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x01
+	db	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x80
+	db	0x80,0xC0,0xE0,0xF0,0xF8,0xFC,0xFE,0x7F
+	db	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x80
+	db	0x01,0x00,0x00,0x00,0x00,0x00,0x00,0x00
+	db	0xFE,0x7F,0x3F,0x1F,0x0F,0x07,0x03,0x01
+	db	0x01,0x00,0x00,0x00,0x00,0x00,0x00,0x00
+	db	0x80,0x00,0x00,0x00,0x00,0x00,0x00,0x00
+	db	0x7F,0xFE,0xFC,0xF8,0xF0,0xE0,0xC0,0x80
+	db	0x80,0x00,0x00,0x00,0x00,0x00,0x00,0x00
+	ENDIF
