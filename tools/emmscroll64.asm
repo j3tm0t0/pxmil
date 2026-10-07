@@ -727,42 +727,37 @@ expand_col:
 
 ; compose48: ec_ta/ec_tb のタイル(各48B)を shl/shr 合成し (ec_dst) へ48B, ec_dst+=48。
 compose48:
-	ld	de, (ec_ta)
+	; 高速版: テーブルはページ境界(SHLTAB/SHRTAB)なので BC=(ページ:値) で
+	;   `ld a,(bc)` 1命令参照。HL=dst, DE=src, B=ページ(固定)。REPT で完全展開。
+	;   旧版の push/pop hl と `ld a,(shl_hi);ld h,a` のループ内反復を排除。
+	; p1: COLBUF[i] = shl[A[i]]
 	ld	hl, (ec_dst)
-	ld	b, TILEBYTES
-.p1:
+	ld	de, (ec_ta)
+	ld	a, (shl_hi)
+	ld	b, a			; b = shl テーブルページ(固定)
+	REPT	TILEBYTES
 	ld	a, (de)
 	inc	de
-	push	hl
-	ld	l, a
-	ld	a, (shl_hi)
-	ld	h, a
-	ld	a, (hl)			; shl[A[i]]
-	pop	hl
+	ld	c, a
+	ld	a, (bc)			; shl[A[i]]
 	ld	(hl), a
 	inc	hl
-	djnz	.p1
-	; OR shr[B[i]]
+	ENDR
+	; p2: COLBUF[i] |= shr[B[i]]
+	ld	hl, (ec_dst)		; dst 先頭へ戻す
 	ld	de, (ec_tb)
-	ld	hl, (ec_dst)
-	ld	b, TILEBYTES
-.p2:
+	ld	a, (shr_hi)
+	ld	b, a			; b = shr テーブルページ(固定)
+	REPT	TILEBYTES
 	ld	a, (de)
 	inc	de
-	push	hl
-	ld	l, a
-	ld	a, (shr_hi)
-	ld	h, a
-	ld	a, (hl)			; shr[B[i]]
-	pop	hl
+	ld	c, a
+	ld	a, (bc)			; shr[B[i]]
 	or	(hl)
 	ld	(hl), a
 	inc	hl
-	djnz	.p2
-	ld	hl, (ec_dst)
-	ld	de, TILEBYTES
-	add	hl, de
-	ld	(ec_dst), hl
+	ENDR
+	ld	(ec_dst), hl		; hl は既に dst+48
 	ret
 
 ; scatter_half: (sc_half)=0(bank0) or 24(bank1)。25行、各 B/R/G 8ラスタ。
@@ -826,16 +821,16 @@ scatter_half:
 	ret
 
 ; wr8: bc=port(b=high,c=low), de=src 8バイト。de+=8, b+=8/raster。
+;   8ラスタをアンロールし dec/jr のループオーバヘッドを除去。
 wr8:
-	ld	l, 8
-.w:	ld	a, (de)
+	REPT	8
+	ld	a, (de)
 	inc	de
 	out	(c), a
 	ld	a, b
 	add	a, 0x08
 	ld	b, a
-	dec	l
-	jr	nz, .w
+	ENDR
 	ret
 
 ;=====================================================================
