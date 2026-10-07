@@ -210,25 +210,25 @@ gen_reticle_cells:
 	ld	a, (rr_mode)
 	or	a
 	jr	nz, .red
-	; シアン: B<-shape, R<-0, G<-shape
-	call	.shape
+	; 通常=tc6=slot6 シアン(0x27): R+G プレーン(B=0)。RT3 テキストパレットD 経由。
+	ld	hl, rr_zero
 	ld	d, PCG_B >> 8
 	call	def_plane
-	ld	hl, rr_zero
+	call	.shape
 	ld	d, PCG_R >> 8
 	call	def_plane
 	call	.shape
 	ld	d, PCG_G >> 8
 	call	def_plane
 	jr	.done
-.red:	; 赤: B<-0, R<-shape, G<-0
-	ld	hl, rr_zero
+.red:	; ロック=tc5=slot5 赤(0x0C): B+G プレーン(R=0)。
+	call	.shape
 	ld	d, PCG_B >> 8
 	call	def_plane
-	call	.shape
+	ld	hl, rr_zero
 	ld	d, PCG_R >> 8
 	call	def_plane
-	ld	hl, rr_zero
+	call	.shape
 	ld	d, PCG_G >> 8
 	call	def_plane
 .done:
