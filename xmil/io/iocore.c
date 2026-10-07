@@ -4,6 +4,7 @@
 #include	"compiler.h"
 #include	"pccore.h"
 #include	"iocore.h"
+#include	"emm.h"
 
 	IOCORE		iocore;
 	CGROM		cgrom;
@@ -145,7 +146,7 @@ static const IOINP definp[0x20] = {
 
 			dummy_inp,			dummy_inp,
 			dummy_inp,			dummy_inp,
-			dummy_inp,			dummy_inp,
+			dummy_inp,			emm_i,
 			cgrom_i,			fdc_i,
 
 			dummy_inp,			dummy_inp,
@@ -166,7 +167,7 @@ static const IOOUT defout[0x20] = {
 
 			dummy_out,			dummy_out,
 			dummy_out,			dummy_out,
-			dummy_out,			dummy_out,
+			dummy_out,			emm_o,
 			cgrom_o,			fdc_o,
 
 			palette_o,			palette_o,
@@ -187,7 +188,7 @@ static const INITFN initfn[] = {
 			ctc_reset,		dmac_reset,		fdc_reset,
 			memio_reset,	pcg_reset,		ppi_reset,
 			sio_reset,		sndboard_reset,	subcpu_reset,
-			vramio_reset};
+			vramio_reset,	emm_reset};
 
 
 /* ---- */

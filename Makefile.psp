@@ -40,7 +40,7 @@ FONTOBJS = \
 	xmil/font/font.o xmil/font/fontdata.o xmil/font/fontmake.o xmil/font/fontx1.o
 
 IOOBJS = \
-	xmil/io/cgrom.o xmil/io/cmt.o xmil/io/crtc.o xmil/io/ctc.o xmil/io/dipsw.o xmil/io/dmac.o \
+	xmil/io/cgrom.o xmil/io/cmt.o xmil/io/crtc.o xmil/io/ctc.o xmil/io/dipsw.o xmil/io/dmac.o xmil/io/emm.o \
 	xmil/io/fdc.o xmil/io/iocore.o xmil/io/memio.o xmil/io/pcg.o xmil/io/ppi.o xmil/io/sio.o \
 	xmil/io/sndboard.o xmil/io/subcpu.o xmil/io/vramio.o
 

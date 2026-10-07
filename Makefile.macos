@@ -40,7 +40,7 @@ FDDOBJS = xmil/fdd/diskdrv.mo xmil/fdd/fdd_2d.mo xmil/fdd/fdd_d88.mo xmil/fdd/fd
 	xmil/fdd/fdd_mtr.mo xmil/fdd/fddfile.mo xmil/fdd/newdisk.mo
 FONTOBJS = xmil/font/font.mo xmil/font/fontdata.mo xmil/font/fontmake.mo xmil/font/fontx1.mo
 IOOBJS = xmil/io/cgrom.mo xmil/io/cmt.mo xmil/io/crtc.mo xmil/io/ctc.mo xmil/io/dipsw.mo \
-	xmil/io/dmac.mo xmil/io/fdc.mo xmil/io/iocore.mo xmil/io/memio.mo xmil/io/pcg.mo xmil/io/ppi.mo \
+	xmil/io/dmac.mo xmil/io/emm.mo xmil/io/fdc.mo xmil/io/iocore.mo xmil/io/memio.mo xmil/io/pcg.mo xmil/io/ppi.mo \
 	xmil/io/sio.mo xmil/io/sndboard.mo xmil/io/subcpu.mo xmil/io/vramio.mo
 SOUNDOBJS = xmil/sound/opm.mo xmil/sound/opmgenc.mo xmil/sound/opmgeng.mo xmil/sound/psg.mo \
 	xmil/sound/psggenc.mo xmil/sound/psggeng.mo xmil/sound/sndcsec.mo xmil/sound/sndctrl.mo \
