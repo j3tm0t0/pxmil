@@ -85,7 +85,11 @@ def main():
         f.write('; Torkan (空中敵スカウト, arcade code=0x10 -> tile16/17).\n')
         for i, t in enumerate([16, 17]):
             f.write(inc_block(gen96(ex, g3, sp, rgb, t, 7), 'f%d ' % i) + '\n')
-    print('wrote roms/shipdata_ext.inc, solvalou_ship.inc/.bin, jara_ext.inc, torkan_ext.inc')
+    with open(os.path.join(rd, 'grobda_ext.inc'), 'w') as f:
+        f.write('; Grobda (動く地上物=戦車, arcade code=0x4C -> tile76/77). 道沿い移動+照準接近で前進。\n')
+        for i, t in enumerate([76, 77]):
+            f.write(inc_block(gen96(ex, g3, sp, rgb, t, 7), 'f%d ' % i) + '\n')
+    print('wrote shipdata_ext.inc, solvalou_ship.inc/.bin, jara_ext.inc, torkan_ext.inc, grobda_ext.inc')
 
 if __name__ == '__main__':
     main()

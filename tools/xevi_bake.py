@@ -197,13 +197,36 @@ def main():
         crater_ids[(col0,row0)] = cids
     crater_n = len(tiles)
 
+    # Sol(隠し塔): 命中時に出現。tile168-171=せり上がり4コマ(灰柱+赤キャップ)を
+    #   Sol位置(col,row)の地形へ合成した 4コマ(各2x2)を追加タイルとして出す。
+    #   base tilemap には出さない(命中時に emm-scroll が上書き)ので tilemap は元へ戻す。
+    sol_ids = []
+    sol = [o for o in placements if o[2] == 0x1D]
+    if sol:
+        scol, srow = sol[0][0], sol[0][1]
+        save = [(((scol+cx)&0xFF), srow+cy) for cx in range(2) for cy in range(2)]
+        orig = [tilemap[c][r] for (c, r) in save if 0 <= r < T.ACROSS_USE]
+        for fr in (168, 169, 170, 171):
+            over = sprite_rgb16(ex, rgb, sp_pen, fr, 7)
+            sol_ids.append(bake(scol, srow, over))
+        oi = 0
+        for (c, r) in save:                   # tilemap を元の地形へ戻す(Sol は隠し)
+            if 0 <= r < T.ACROSS_USE:
+                tilemap[c][r] = orig[oi]; oi += 1
+    sol_n = len(tiles)
+
     # レポート
     print("=== エリア1 地上物 焼き込み ===")
     print("ベース地形ユニークタイル: %d" % base_n)
     print("+ 地上物焼込で追加: %d (計 %d)" % (obj_n-base_n, obj_n))
     print("+ クレーターで追加: %d (計 %d)" % (crater_n-obj_n, crater_n))
+    print("+ Sol せり上がり4コマ(命中時上書き)で追加: %d (計 %d)" % (sol_n-crater_n, sol_n))
     TB = 0x0103
-    print("タイル表末尾 addr: 0x%04X (tilebase 0x%04X + %d*48)" % (TB+(crater_n-1)*48, TB, crater_n-1))
+    print("タイル表末尾 addr: 0x%04X (tilebase 0x%04X + %d*48)" % (TB+(sol_n-1)*48, TB, sol_n-1))
+    if sol_ids:
+        print("Sol せり上がり tile IDs (frame0..3 の [TL,TR,BL,BR] addr):")
+        for fi, ids in enumerate(sol_ids):
+            print("  f%d: %s" % (fi, [hex(TB+t*48) for t in ids]))
     print()
     print("位置リスト (tilemap_col, row, type_id, crater_tile_ids[TL,TR,BL,BR]):")
     TID={0x1E:1,0x1F:2,0x26:3,0x1D:4,0x2C:5}
