@@ -406,19 +406,23 @@ def cmd_build(ex, rgb, sp_pen, gfx3):
     print("\nwrote images + aircolor_report.md to", OUT_DIR)
 
 
-# A案 7色(slot1..7)の port値・表示RGB。build の A_globalDE 結果(確定)。
-APLAN = [
-    (0x3E, (255, 255, 170)),
-    (0x0C, (255, 0, 0)),
-    (0x30, (0, 255, 0)),
-    (0x2D, (255, 170, 85)),
-    (0x15, (85, 85, 85)),
-    (0x3F, (255, 255, 255)),
+# パレット定義(slot1..7)の port値・表示RGB。
+# 旧A案(緑/淡あり)と 推奨D(黒/明灰, 青据置)。
+APLAN_A = [
+    (0x3E, (255, 255, 170)), (0x0C, (255, 0, 0)), (0x30, (0, 255, 0)),
+    (0x2D, (255, 170, 85)), (0x15, (85, 85, 85)), (0x3F, (255, 255, 255)),
     (0x27, (85, 170, 255)),
 ]
+APLAN_D = [
+    (0x3F, (255, 255, 255)), (0x2A, (170, 170, 170)), (0x15, (85, 85, 85)),
+    (0x00, (0, 0, 0)), (0x0C, (255, 0, 0)), (0x27, (85, 170, 255)),
+    (0x2D, (255, 170, 85)),
+]
+APLAN = APLAN_A  # build の比較画像 D/A 計算は別途 idx ベースなのでここは A のまま
 
 
-def cmd_ship(ex, rgb, sp_pen, gfx3, tile=162, code=7):
+def cmd_ship(ex, rgb, sp_pen, gfx3, tile=162, code=1, pal="D"):
+    APLAN = APLAN_D if pal.upper() == "D" else APLAN_A
     """Solvalou を A案スロットに割り当て、png2ship 入力PNG + 表示プレビューを出す。
     向きは地形と同じ rotate(-90)(xevi_extract の map_arcade_rot90 と同じ)。"""
     os.makedirs(OUT_DIR, exist_ok=True)
@@ -481,6 +485,8 @@ def cmd_ship(ex, rgb, sp_pen, gfx3, tile=162, code=7):
     print("使用スロット:", sorted(usage), " SHIP_PLANES=0x07(全プレーン)")
     print("png2ship 入力:", enc_p)
     print("プレビュー:", os.path.join(out_root, "solvalou_ship_preview.png"))
+    tpal = ",".join("0x%02X" % p for p, _ in APLAN)
+    print("PAL=%s tpal_a: db %s" % (pal.upper(), tpal))
 
 
 def main(argv):
@@ -497,8 +503,9 @@ def main(argv):
         cmd_build(ex, rgb, sp_pen, gfx3)
     elif cmd == "ship":
         t = int(argv[2]) if len(argv) > 2 else 162
-        c = int(argv[3]) if len(argv) > 3 else 7
-        cmd_ship(ex, rgb, sp_pen, gfx3, t, c)
+        c = int(argv[3]) if len(argv) > 3 else 1
+        pal = argv[4] if len(argv) > 4 else "D"
+        cmd_ship(ex, rgb, sp_pen, gfx3, t, c, pal)
     else:
         print("unknown cmd", cmd)
 
