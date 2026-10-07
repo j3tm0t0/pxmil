@@ -1,0 +1,950 @@
+; emmscroll64.asm - X1turboZ 15kHz 320x200 64色 2ページ 4px スムーズ横スクロール。
+;   emmscroll.asm (8色4ページ2px) の 64色・2ページ版 (xevi-extract 単独作成)。
+;
+; ■ 64色 = 6プレーン (bank0 B/R/G + bank1 B/R/G)。320x200=1000セル、プレーン16KB=
+;   2048セルなので、1プレーン内に窓を2つ (POS=coarse / POS=coarse+1024) 取れる。
+;   2窓 = 2ページ = shift 0px / 4px。CRTC POS(R12/R13) で表示窓を切替。
+;     page0: POS=coarse        shift 0px
+;     page1: POS=coarse+1024    shift 4px
+;   粗 (8px) = coarse を +1。 => 4px 単位スクロール。
+;   表示は常に両バンク(DISPVRAM=0 固定, banktbl[0])。書込は ACCESSVRAM で
+;   bank0/bank1 を切替 (非表示窓の cell へ書くので表示は乱れない)。
+;
+; ■ 速度: アーケード準拠 0.5px/frame (解析: 0x8010 を毎フレーム-16 = 1タイル/16frame
+;   = 0.5px/frame)。4px 単位なので adv = framecnt>>3 (8フレームに1回 4px 進む)。
+;   新規列の展開(1200B)は adv 変化時のみ (8フレームに1回) 行う。
+;
+; ■ タイルID方式 (xevi2x1_64.py): ID=タイル絶対RAMアドレス(tilebase+idx*48)。
+;   ユニークタイル=6プレーン48バイト。ID列を EMM へ置き、毎 adv で新規列 wc/wc+1 の
+;   ID列(各50B)を DMA で RAM へ読み、shl[A]|shr[B] で展開時シフト合成して GRAM へ。
+;
+; ビルド:
+;   python3 -P tools/xevi2x1_64.py --area 1 --emit
+;   sjasmplus --raw=emmscroll64.bin tools/emmscroll64.asm
+;   python3 tools/mkx1disk.py emmscroll64.bin -o roms/XEV64.2d -n XEV64 --load 0x0100
+;   (RT=3: xmil.cfg に [Xmillennium]/IPL_TYPE=3)
+;
+; M4: アクティブ表示中の idle ループ回数 (= 空き容量) を 0x00FE/0x00FF へ probe 出力。
+;     VBLANK 取りこぼし検出: 作業が VBLANK を超えた回数を dropped に数える。
+
+GRAM_B		EQU	0x4000
+GRAM_R		EQU	0x8000
+GRAM_G		EQU	0xC000
+CRTC_REG	EQU	0x1800
+CRTC_VAL	EQU	0x1801
+PORT_SCRN	EQU	0x1FD0
+PORT_PPIB	EQU	0x1A01		; bit7=DISP
+PORT_PPIC	EQU	0x1A02		; bit6: 1=width40
+PORT_EXTPAL	EQU	0x1FB0
+PORT_EXTTDISP	EQU	0x1FC0
+PORT_EXTGPAL	EQU	0x1FC5
+TVRAM		EQU	0x3000
+TATTR		EQU	0x2000
+
+SCRN_15K	EQU	0x02		; 15kHz 200line, DISPVRAM=0 ACCESS=0
+SCRN_ACC1	EQU	0x12		; + ACCESSVRAM=1
+
+COLS		EQU	40
+ROWS		EQU	25
+OFF1024		EQU	1024
+W_CELLS		EQU	256
+TILEBYTES	EQU	48		; 6プレーン x 8ラスタ
+IDBYTES		EQU	2
+COLIDS		EQU	ROWS * IDBYTES	; 50
+TILEBASE	EQU	0x0103
+SPEED		EQU	3		; adv = framecnt >> SPEED (8frame=4px => 0.5px/frame)
+
+; EMM
+EMM_A0		EQU	0x0D00
+EMM_DAT		EQU	0x0D03
+
+; 作業領域 (0xC000〜)
+SHLTAB		EQU	0xC000		; 2ページ: 0xC000(np0) 0xC100(np1)
+SHRTAB		EQU	0xC200		; 0xC200 0xC300
+TBUF		EQU	0xC400		; compose 48B 作業 (未使用: COLBUF へ直接)
+IDBUFA		EQU	0xC500		; 50B
+IDBUFB		EQU	0xC560		; 50B
+COLBUF		EQU	0xC600		; 25タイル x 48B = 1200B (〜0xCAB0)
+
+	DEVICE	NOSLOT64K
+	ORG	0x0100
+
+start:				; exec=0x0100
+	jp	realstart
+tiletbl:			; 0x0103
+	incbin	"roms/xtiles64.bin"
+xmapdata:
+	incbin	"roms/xtilemap64.bin"
+xpaldata:
+	incbin	"roms/xpal64.bin"
+
+realstart:
+	di
+	ld	sp, 0xF000
+	call	init_screen
+	call	clear_tvram
+	call	setup_turboz64
+	call	load_palette64
+	; ★アナログパレット書込(grph4096)は crtc.e.palandply を立てないため、
+	;   pal_update(pal4096to64 で grph4096->64pen を構築)が再実行されず表示が
+	;   黒のままになる。blackctrl(0x1FE0)を変化させて palandply を立て、次フレームの
+	;   pal_update でパレットを反映させる(モードは変えない)。
+	ld	bc, 0x1FE0
+	ld	a, 0xFF
+	out	(c), a
+	xor	a
+	out	(c), a
+	call	fill_emm_map
+	call	build_tables
+	call	prefill
+
+	ld	hl, 0
+	ld	(framecnt), hl
+	ld	hl, 0xFFFF
+	ld	(last_adv), hl		; 強制再描画
+	xor	a
+	ld	(dropped), a
+	ld	(dropped+1), a
+
+mainloop:
+	call	wait_vblank
+	; adv = framecnt >> SPEED
+	ld	hl, (framecnt)
+	srl	h
+	rr	l
+	srl	h
+	rr	l
+	srl	h
+	rr	l			; hl = f>>3  (SPEED=3)
+	; adv 変化?
+	ld	de, (last_adv)
+	ld	a, l
+	cp	e
+	jr	nz, .changed
+	ld	a, h
+	cp	d
+	jr	z, .nowork
+.changed:
+	ld	(last_adv), hl
+	; phase=adv&1, coarse=adv>>1
+	ld	a, l
+	and	1
+	ld	(phase), a
+	srl	h
+	rr	l
+	ld	(coarse), hl
+	; np=(adv+1)&1, coarsen=(adv+1)>>1
+	ld	hl, (last_adv)
+	inc	hl
+	ld	a, l
+	and	1
+	ld	(npage), a
+	srl	h
+	rr	l
+	ld	(coarsen), hl
+	; 表示: SCRN=15kHz(DISPVRAM0,ACCESS0)
+	ld	bc, PORT_SCRN
+	ld	a, SCRN_15K
+	out	(c), a
+	; POS = (coarse + (phase?1024:0)) & 0x7FF
+	ld	hl, (coarse)
+	ld	a, (phase)
+	and	1
+	jr	z, .showpos
+	ld	bc, OFF1024
+	add	hl, bc
+.showpos:
+	ld	a, h
+	and	0x07
+	ld	h, a
+	call	setpos
+	call	start_redraw		; np col39 の再描画を開始 (DMA+合成準備)
+.nowork:
+	call	do_redraw_chunk		; 毎フレーム K 行ずつ展開 (負荷分散)
+	; --- idle 計測 + 取りこぼし検出 ---
+	; VBLANK は極小で、再描画がアクティブ表示に食い込むのは正常(非表示窓へ書くので
+	; 乱れない)。真の取りこぼし = フレームの作業がアクティブ期間を使い切り、
+	; 次フレームに食い込むこと = idle(アクティブ中の空きループ回数)が 0。
+	call	wait_active		; DISP=1 (アクティブ開始) まで
+	ld	de, 0
+	ld	bc, PORT_PPIB
+.spin:	in	a, (c)
+	add	a, a
+	jr	nc, .spindone
+	inc	de
+	jr	.spin
+.spindone:
+	ld	(idlecnt), de
+	; idle==0 なら取りこぼし
+	ld	a, d
+	or	e
+	jr	nz, .okframe
+	ld	hl, (dropped)
+	inc	hl
+	ld	(dropped), hl
+.okframe:
+	; probe: 下位=dropped, その後 idle (交互でなく、まず dropped を単調に見る)
+	ld	hl, (dropped)
+	ld	bc, 0x00FE
+	out	(c), l
+	ld	bc, 0x00FF
+	out	(c), h
+	ld	hl, (framecnt)
+	inc	hl
+	ld	(framecnt), hl
+	jp	mainloop
+
+;=====================================================================
+setpos:
+	ld	bc, CRTC_REG
+	ld	a, 13
+	out	(c), a
+	inc	c
+	out	(c), l			; POSL
+	ld	bc, CRTC_REG
+	ld	a, 12
+	out	(c), a
+	inc	c
+	out	(c), h			; POSH
+	ret
+
+;=====================================================================
+; 次ページ np の col39 再描画を「開始」: wc/wc+1 の ID を DMA 読み、
+; dc_base/シフト表を設定し、分散展開の状態をリセットする(展開は do_redraw_chunk)。
+start_redraw:
+	ld	hl, (coarsen)
+	ld	bc, COLS - 1
+	add	hl, bc
+	ld	a, l
+	ld	(wcol), a
+	ld	e, a
+	ld	hl, IDBUFA
+	call	read_ids
+	ld	a, (wcol)
+	inc	a
+	ld	e, a
+	ld	hl, IDBUFB
+	call	read_ids
+	; dc_base = (coarsen + (np?1024:0) - 1) & 0x7FF
+	ld	hl, (coarsen)
+	ld	a, (npage)
+	and	1
+	jr	z, .nooff
+	ld	bc, OFF1024
+	add	hl, bc
+.nooff:
+	dec	hl
+	ld	a, h
+	and	0x07
+	ld	h, a
+	ld	(dc_base), hl
+	ld	a, (npage)
+	add	a, (SHLTAB >> 8)
+	ld	(shl_hi), a
+	ld	a, (npage)
+	add	a, (SHRTAB >> 8)
+	ld	(shr_hi), a
+	; 分散展開を開始
+	xor	a
+	ld	(ec_row), a
+	ld	a, 1
+	ld	(rd_active), a
+	ret
+
+;=====================================================================
+; do_redraw_chunk: rd_active 中、ec_row から最大 CHUNK 行を合成+散布する。
+;   (負荷分散: 1列1200Bを数フレームに分けて展開 -> VBLANK 取りこぼし 0)
+CHUNK		EQU	4
+do_redraw_chunk:
+	ld	a, (rd_active)
+	or	a
+	ret	z
+	; chunk_start = ec_row
+	ld	a, (ec_row)
+	ld	(chunk_start), a
+	; 合成: 最大 CHUNK 行を COLBUF へ
+	ld	hl, COLBUF
+	ld	(ec_dst), hl
+	xor	a
+	ld	(chunk_cnt), a
+	ld	b, CHUNK
+.cl:
+	ld	a, (ec_row)
+	cp	ROWS
+	jr	z, .composed
+	push	bc
+	; tileA = IDBUFA[ec_row*2], tileB = IDBUFB[ec_row*2]
+	ld	a, (ec_row)
+	add	a, a
+	ld	e, a
+	ld	d, 0
+	ld	hl, IDBUFA
+	add	hl, de
+	ld	a, (hl)
+	inc	hl
+	ld	h, (hl)
+	ld	l, a
+	ld	(ec_ta), hl
+	ld	a, (ec_row)
+	add	a, a
+	ld	e, a
+	ld	d, 0
+	ld	hl, IDBUFB
+	add	hl, de
+	ld	a, (hl)
+	inc	hl
+	ld	h, (hl)
+	ld	l, a
+	ld	(ec_tb), hl
+	call	compose48
+	ld	a, (ec_row)
+	inc	a
+	ld	(ec_row), a
+	ld	a, (chunk_cnt)
+	inc	a
+	ld	(chunk_cnt), a
+	pop	bc
+	djnz	.cl
+.composed:
+	; 散布: chunk_cnt 行 (chunk_start から) を bank0/bank1 へ
+	call	scatter_chunk
+	; 全行完了なら rd_active=0
+	ld	a, (ec_row)
+	cp	ROWS
+	ret	nz
+	xor	a
+	ld	(rd_active), a
+	ret
+
+; scatter_chunk: COLBUF[0..chunk_cnt*48) を、行 chunk_start.. の cell へ。
+;   cell = (dc_base + 40*(row+1)) & 0x7FF。bank0=COLBUF+0, bank1=COLBUF+24。
+scatter_chunk:
+	; bank0
+	ld	bc, PORT_SCRN
+	ld	a, SCRN_15K
+	out	(c), a
+	ld	a, 0
+	ld	(sc_half), a
+	call	sc_pass
+	; bank1
+	ld	bc, PORT_SCRN
+	ld	a, SCRN_ACC1
+	out	(c), a
+	ld	a, 24
+	ld	(sc_half), a
+	call	sc_pass
+	ld	bc, PORT_SCRN
+	ld	a, SCRN_15K
+	out	(c), a
+	ret
+
+; sc_pass: (sc_half)=0/24。chunk_cnt 行。src=COLBUF+row_in_chunk*48+sc_half。
+sc_pass:
+	ld	a, (chunk_cnt)
+	or	a
+	ret	z
+	ld	(sc_row), a		; 残り行数
+	; sc_src = COLBUF + sc_half
+	ld	hl, COLBUF
+	ld	a, (sc_half)
+	ld	e, a
+	ld	d, 0
+	add	hl, de
+	ld	(sc_src), hl
+	; cell_off = (chunk_start+1) * 40
+	ld	a, (chunk_start)
+	inc	a
+	ld	l, a
+	ld	h, 0
+	call	mul_hl_40
+	ld	(sc_off), hl
+.sr:
+	; cell = (dc_base + sc_off) & 0x7FF
+	ld	hl, (sc_off)
+	ld	de, (dc_base)
+	add	hl, de
+	ld	a, h
+	and	0x07
+	ld	h, a
+	ld	(sc_cell), hl
+	; B
+	ld	hl, (sc_src)
+	ex	de, hl
+	ld	hl, (sc_cell)
+	ld	a, h
+	or	(GRAM_B >> 8)
+	ld	b, a
+	ld	c, l
+	call	wr8
+	; R
+	ld	hl, (sc_cell)
+	ld	a, h
+	or	(GRAM_R >> 8)
+	ld	b, a
+	ld	c, l
+	call	wr8
+	; G
+	ld	hl, (sc_cell)
+	ld	a, h
+	or	(GRAM_G >> 8)
+	ld	b, a
+	ld	c, l
+	call	wr8
+	; 次行: sc_src += 48, sc_off += 40
+	ld	hl, (sc_src)
+	ld	de, TILEBYTES
+	add	hl, de
+	ld	(sc_src), hl
+	ld	hl, (sc_off)
+	ld	de, COLS
+	add	hl, de
+	ld	(sc_off), hl
+	ld	a, (sc_row)
+	dec	a
+	ld	(sc_row), a
+	jr	nz, .sr
+	ret
+
+; hl = hl * 40 (bc破壊)。小さい値用。
+mul_hl_40:
+	ld	d, h
+	ld	e, l
+	add	hl, hl			; *2
+	add	hl, hl			; *4
+	add	hl, de			; *5
+	add	hl, hl			; *10
+	add	hl, hl			; *20
+	add	hl, hl			; *40
+	ret
+
+;=====================================================================
+; ID列読み込み: e=col(0..255), hl=dst(IDBUFA/B)。EMM addr=col*50 で 50B DMA。
+read_ids:
+	ld	(dma_id_dst), hl
+	ld	h, 0
+	ld	l, e
+	ld	b, h
+	ld	c, l			; bc=col
+	add	hl, hl
+	add	hl, hl
+	add	hl, hl			; *8
+	ld	d, h
+	ld	e, l
+	add	hl, hl			; *16
+	add	hl, de			; *24
+	add	hl, bc			; *25
+	add	hl, hl			; *50
+	ld	a, l
+	ld	(emm_a0), a
+	ld	a, h
+	ld	(emm_a1), a
+	xor	a
+	ld	(emm_a2), a
+	call	set_emm_addr
+	ld	hl, dma_id
+	ld	bc, 0x1F80
+	ld	e, dma_id_end - dma_id
+.d:	ld	a, (hl)
+	out	(c), a
+	inc	hl
+	dec	e
+	jr	nz, .d
+	ret
+
+set_emm_addr:
+	ld	bc, EMM_A0
+	ld	a, (emm_a0)
+	out	(c), a
+	inc	c
+	ld	a, (emm_a1)
+	out	(c), a
+	inc	c
+	ld	a, (emm_a2)
+	out	(c), a
+	ret
+
+;=====================================================================
+; 列展開: 25タイルを COLBUF へ合成し, bank0/bank1 の2パスで GRAM へ scatter。
+expand_col:
+	; --- pass compose: COLBUF[row*48..] = shl[A]|shr[B] ---
+	ld	a, 0
+	ld	(ec_row), a
+	ld	hl, COLBUF
+	ld	(ec_dst), hl
+.crow:
+	; tileA addr
+	ld	a, (ec_row)
+	add	a, a
+	ld	e, a
+	ld	d, 0
+	ld	hl, IDBUFA
+	add	hl, de
+	ld	a, (hl)
+	inc	hl
+	ld	h, (hl)
+	ld	l, a
+	ld	(ec_ta), hl
+	ld	a, (ec_row)
+	add	a, a
+	ld	e, a
+	ld	d, 0
+	ld	hl, IDBUFB
+	add	hl, de
+	ld	a, (hl)
+	inc	hl
+	ld	h, (hl)
+	ld	l, a
+	ld	(ec_tb), hl
+	call	compose48
+	ld	a, (ec_row)
+	inc	a
+	ld	(ec_row), a
+	cp	ROWS
+	jr	nz, .crow
+	; --- pass scatter bank0 (ACCESS=0): COLBUF+0..23 ---
+	ld	bc, PORT_SCRN
+	ld	a, SCRN_15K
+	out	(c), a
+	ld	a, 0
+	ld	(sc_half), a
+	call	scatter_half
+	; --- pass scatter bank1 (ACCESS=1): COLBUF+24..47 ---
+	ld	bc, PORT_SCRN
+	ld	a, SCRN_ACC1
+	out	(c), a
+	ld	a, 24
+	ld	(sc_half), a
+	call	scatter_half
+	; ACCESS=0 戻す
+	ld	bc, PORT_SCRN
+	ld	a, SCRN_15K
+	out	(c), a
+	ret
+
+; compose48: ec_ta/ec_tb のタイル(各48B)を shl/shr 合成し (ec_dst) へ48B, ec_dst+=48。
+compose48:
+	ld	de, (ec_ta)
+	ld	hl, (ec_dst)
+	ld	b, TILEBYTES
+.p1:
+	ld	a, (de)
+	inc	de
+	push	hl
+	ld	l, a
+	ld	a, (shl_hi)
+	ld	h, a
+	ld	a, (hl)			; shl[A[i]]
+	pop	hl
+	ld	(hl), a
+	inc	hl
+	djnz	.p1
+	; OR shr[B[i]]
+	ld	de, (ec_tb)
+	ld	hl, (ec_dst)
+	ld	b, TILEBYTES
+.p2:
+	ld	a, (de)
+	inc	de
+	push	hl
+	ld	l, a
+	ld	a, (shr_hi)
+	ld	h, a
+	ld	a, (hl)			; shr[B[i]]
+	pop	hl
+	or	(hl)
+	ld	(hl), a
+	inc	hl
+	djnz	.p2
+	ld	hl, (ec_dst)
+	ld	de, TILEBYTES
+	add	hl, de
+	ld	(ec_dst), hl
+	ret
+
+; scatter_half: (sc_half)=0(bank0) or 24(bank1)。25行、各 B/R/G 8ラスタ。
+;   cell = (dc_base + 40*(row+1)) & 0x7FF。src = COLBUF + row*48 + sc_half (+0/8/16)。
+scatter_half:
+	ld	a, 0
+	ld	(sc_row), a
+	ld	hl, 0			; offset = 40*(row+1) 累積 (初期0, 毎行+40)
+	ld	(sc_off), hl
+	ld	hl, COLBUF
+	ld	a, (sc_half)
+	ld	e, a
+	ld	d, 0
+	add	hl, de
+	ld	(sc_src), hl		; COLBUF + sc_half
+.sr:
+	; cell = (dc_base + sc_off + 40) & 0x7FF
+	ld	hl, (sc_off)
+	ld	de, COLS
+	add	hl, de
+	ld	(sc_off), hl
+	ld	de, (dc_base)
+	add	hl, de
+	ld	a, h
+	and	0x07
+	ld	h, a
+	ld	(sc_cell), hl
+	; B plane
+	ld	hl, (sc_src)
+	ex	de, hl			; de=src
+	ld	hl, (sc_cell)
+	ld	a, h
+	or	(GRAM_B >> 8)
+	ld	b, a
+	ld	c, l
+	call	wr8			; de+=8
+	; R plane (src = sc_src+8)
+	ld	hl, (sc_cell)
+	ld	a, h
+	or	(GRAM_R >> 8)
+	ld	b, a
+	ld	c, l
+	call	wr8
+	; G plane (src = sc_src+16)
+	ld	hl, (sc_cell)
+	ld	a, h
+	or	(GRAM_G >> 8)
+	ld	b, a
+	ld	c, l
+	call	wr8
+	; sc_src += 48 (次行)
+	ld	hl, (sc_src)
+	ld	de, TILEBYTES
+	add	hl, de
+	ld	(sc_src), hl
+	ld	a, (sc_row)
+	inc	a
+	ld	(sc_row), a
+	cp	ROWS
+	jr	nz, .sr
+	ret
+
+; wr8: bc=port(b=high,c=low), de=src 8バイト。de+=8, b+=8/raster。
+wr8:
+	ld	l, 8
+.w:	ld	a, (de)
+	inc	de
+	out	(c), a
+	ld	a, b
+	add	a, 0x08
+	ld	b, a
+	dec	l
+	jr	nz, .w
+	ret
+
+;=====================================================================
+; シフト表 2ページ: shl[np][a]=(a<<4np)&0xFF, shr[np][a]=a>>(8-4np)。
+;   np=0: shl=a, shr=0 (shift 0px)。 np=1: shl=a<<4, shr=a>>4 (shift 4px)。
+build_tables:
+	xor	a
+	ld	(bt_np), a
+.nl:
+	ld	a, (bt_np)
+	add	a, a
+	add	a, a			; 4np
+	ld	(bt_shl), a
+	ld	b, a
+	ld	a, 8
+	sub	b
+	ld	(bt_shr), a
+	ld	a, (bt_np)
+	add	a, (SHLTAB >> 8)
+	ld	(bt_shlpg), a
+	ld	a, (bt_np)
+	add	a, (SHRTAB >> 8)
+	ld	(bt_shrpg), a
+	ld	c, 0
+.bl:
+	ld	a, (bt_shl)
+	ld	b, a
+	inc	b
+	ld	a, c
+	jr	.slt
+.sll:	add	a, a
+.slt:	dec	b
+	jr	nz, .sll
+	ld	e, a
+	ld	a, (bt_shlpg)
+	ld	h, a
+	ld	l, c
+	ld	(hl), e
+	ld	a, (bt_shr)
+	ld	b, a
+	inc	b
+	ld	a, c
+	jr	.srt
+.srl:	srl	a
+.srt:	dec	b
+	jr	nz, .srl
+	ld	e, a
+	ld	a, (bt_shrpg)
+	ld	h, a
+	ld	l, c
+	ld	(hl), e
+	inc	c
+	jr	nz, .bl
+	ld	a, (bt_np)
+	inc	a
+	ld	(bt_np), a
+	cp	2
+	jp	nz, .nl
+	ret
+
+;=====================================================================
+; タイルID列を EMM addr 0 へ転送。
+fill_emm_map:
+	xor	a
+	ld	(emm_a0), a
+	ld	(emm_a1), a
+	ld	(emm_a2), a
+	call	set_emm_addr
+	ld	hl, xmapdata
+	ld	de, W_CELLS * COLIDS	; 12800
+	ld	bc, EMM_DAT
+.l:	ld	a, (hl)
+	out	(c), a
+	inc	hl
+	dec	de
+	ld	a, d
+	or	e
+	jr	nz, .l
+	ret
+
+;=====================================================================
+; 初期プリフィル: 2窓(page0,page1)の col0..39 を埋める。
+prefill:
+	xor	a
+	ld	(pf_page), a
+.pl:
+	ld	a, (pf_page)
+	ld	(npage), a		; redraw系の shift/offset に流用
+	add	a, (SHLTAB >> 8)
+	ld	(shl_hi), a
+	ld	a, (pf_page)
+	add	a, (SHRTAB >> 8)
+	ld	(shr_hi), a
+	xor	a
+	ld	(pf_wc), a
+.wl:
+	ld	a, (pf_wc)
+	ld	e, a
+	ld	hl, IDBUFA
+	call	read_ids
+	ld	a, (pf_wc)
+	inc	a
+	ld	e, a
+	ld	hl, IDBUFB
+	call	read_ids
+	; base = (pf_wc + (page?1024:0) - 40) & 0x7FF
+	ld	hl, 0
+	ld	a, (pf_page)
+	and	1
+	jr	z, .b0
+	ld	hl, OFF1024
+.b0:
+	ld	a, (pf_wc)
+	ld	c, a
+	ld	b, 0
+	add	hl, bc
+	ld	bc, COLS
+	or	a
+	sbc	hl, bc
+	ld	a, h
+	and	0x07
+	ld	h, a
+	ld	(dc_base), hl
+	call	expand_col
+	ld	a, (pf_wc)
+	inc	a
+	ld	(pf_wc), a
+	cp	COLS
+	jr	nz, .wl
+	ld	a, (pf_page)
+	inc	a
+	ld	(pf_page), a
+	cp	2
+	jp	nz, .pl
+	ret
+
+;=====================================================================
+wait_vblank:
+	ld	bc, PORT_PPIB
+.w:	in	a, (c)
+	add	a, a
+	jr	c, .w			; DISP=1 の間待つ
+	ret
+
+wait_active:
+	ld	bc, PORT_PPIB
+.w:	in	a, (c)
+	add	a, a
+	jr	nc, .w			; DISP=0 の間待つ
+	ret
+
+;=====================================================================
+; turboZ 64色モード設定 (width40, 15kHz, AEN|64色, EXTGRPHPAL)
+setup_turboz64:
+	ld	bc, PORT_PPIC
+	xor	a
+	out	(c), a
+	ld	a, 0x40
+	out	(c), a			; width40
+	ld	bc, PORT_SCRN
+	ld	a, SCRN_15K
+	out	(c), a
+	ld	bc, PORT_EXTTDISP
+	xor	a
+	out	(c), a			; ZPRY=0
+	ld	bc, PORT_EXTPAL
+	ld	a, 0x90
+	out	(c), a			; AEN|64色
+	ld	bc, PORT_EXTGPAL
+	ld	a, 0x80
+	out	(c), a
+	ret
+
+; 64色パレット設定: xpaldata の 64エントリ [addr_lo,addr_hi,Bnib,Rnib,Gnib]。
+load_palette64:
+	ld	ix, xpaldata
+	ld	a, 64
+	ld	(palcnt), a
+.lp:
+	ld	e, (ix+0)
+	ld	d, (ix+1)
+	ld	a, e
+	rrca
+	rrca
+	rrca
+	rrca
+	and	0x0F
+	ld	c, a
+	ld	a, d
+	rlca
+	rlca
+	rlca
+	rlca
+	and	0xF0
+	or	c
+	ld	c, a
+	ld	a, e
+	and	0x0F
+	rlca
+	rlca
+	rlca
+	rlca
+	ld	l, a
+	ld	a, (ix+2)
+	or	l
+	ld	b, 0x10
+	out	(c), a
+	ld	a, (ix+3)
+	or	l
+	ld	b, 0x11
+	out	(c), a
+	ld	a, (ix+4)
+	or	l
+	ld	b, 0x12
+	out	(c), a
+	ld	de, 5
+	add	ix, de
+	ld	a, (palcnt)
+	dec	a
+	ld	(palcnt), a
+	jr	nz, .lp
+	ret
+
+;=====================================================================
+init_screen:
+	ld	hl, crtc_tbl
+	ld	d, 0
+.crtc:	ld	bc, CRTC_REG
+	out	(c), d
+	inc	c
+	ld	a, (hl)
+	out	(c), a
+	inc	hl
+	inc	d
+	ld	a, d
+	cp	18
+	jr	nz, .crtc
+	ret
+
+clear_tvram:
+	ld	hl, 0
+.c:	ld	a, h
+	or	(TVRAM >> 8)
+	ld	b, a
+	ld	c, l
+	xor	a
+	out	(c), a
+	ld	a, h
+	or	(TATTR >> 8)
+	ld	b, a
+	xor	a
+	out	(c), a
+	inc	hl
+	ld	a, h
+	cp	0x08
+	jr	nz, .c
+	ret
+
+;=====================================================================
+crtc_tbl:
+	db	0x37, 0x28, 0x2d, 0x34, 0x1f, 0x02, 0x19, 0x1c, 0x00
+	db	0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+
+dma_id:
+	db	0xC3
+	db	0x7D
+	db	LOW EMM_DAT, HIGH EMM_DAT
+	db	LOW (COLIDS - 1), HIGH (COLIDS - 1)
+	db	0x2C
+	db	0x10
+	db	0xAD
+dma_id_dst:
+	dw	0
+	db	0x82
+	db	0xCF
+	db	0x87
+dma_id_end:
+
+; --- RAM 変数 ---
+framecnt:	dw	0
+last_adv:	dw	0
+coarse:		dw	0
+coarsen:	dw	0
+phase:		db	0
+npage:		db	0
+wcol:		db	0
+idlecnt:	dw	0
+dropped:	dw	0
+pf_page:	db	0
+pf_wc:		db	0
+dc_base:	dw	0
+emm_a0:		db	0
+emm_a1:		db	0
+emm_a2:		db	0
+shl_hi:		db	0
+shr_hi:		db	0
+ec_row:		db	0
+ec_dst:		dw	0
+ec_ta:		dw	0
+ec_tb:		dw	0
+bt_np:		db	0
+bt_shl:		db	0
+bt_shr:		db	0
+bt_shlpg:	db	0
+bt_shrpg:	db	0
+sc_half:	db	0
+sc_row:		db	0
+sc_off:		dw	0
+sc_src:		dw	0
+sc_cell:	dw	0
+palcnt:		db	0
+rd_active:	db	0
+chunk_start:	db	0
+chunk_cnt:	db	0
+
+	END
