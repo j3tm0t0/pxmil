@@ -1791,16 +1791,27 @@ enemy_spawn:
 	ld	hl, ene_frm
 	add	hl, de
 	ld	(hl), 0
-	; [M8] タイプを割当て spawn_type を循環 (足場)
-	ld	a, (spawn_type)
+	ld	hl, ene_dir		; [M8④] 振動方向 初期=下
+	add	hl, de
+	ld	(hl), 0
+	; [M8④] タイプ = spawn_seq[spawn_idx] (エリア1はToroid主体, たまにJara/Torkan)
+	push	de			; slot index 退避
+	ld	a, (spawn_idx)
+	ld	e, a
+	ld	d, 0
+	ld	hl, spawn_seq
+	add	hl, de
+	ld	a, (hl)			; 出現タイプ
+	pop	de			; slot index
 	ld	hl, ene_type
 	add	hl, de
 	ld	(hl), a
+	ld	a, (spawn_idx)
 	inc	a
-	cp	EN_NTYPES
+	cp	SPAWN_SEQ_LEN
 	jr	c, .tok
 	xor	a
-.tok:	ld	(spawn_type), a
+.tok:	ld	(spawn_idx), a
 	; 負荷分散: スロット index でタイマー位相をずらす(1フレームに描き直す敵を減らす)
 	ld	a, (spr_i)		; ene_atmr = slot+1 (アニメ位相ずらし)
 	inc	a
@@ -1959,7 +1970,7 @@ enemies_move:
 	ld	hl, ene_mtmr
 	add	hl, de
 	dec	(hl)
-	jr	nz, .mn
+	jp	nz, .mn
 	ld	(hl), ENEMY_MOVE
 	ld	hl, ene_dirty		; 移動 → dirty
 	add	hl, de
@@ -1988,26 +1999,52 @@ enemies_move:
 	add	hl, de
 	ld	a, (hl)			; traj_id
 	or	a
-	jr	z, .trajdone		; 0=Toroid: 縦移動なし
-	ld	b, a			; traj_id 退避
-	ld	a, (spr_i)		; 1/2: ene_ey を下へ(clamp 22)
+	jp	z, .trajdone		; 0=Toroid: 縦移動なし(直進)
+	cp	2
+	jp	z, .tk_dive		; 2=Torkan: ダイブ
+	; --- 1=Jara: ene_ey を ene_dir 方向に振動(4..20, 端で反転) ---
+	ld	a, (spr_i)
+	ld	e, a
+	ld	d, 0
+	ld	hl, ene_dir
+	add	hl, de
+	ld	a, (hl)
+	or	a
+	jr	nz, .ja_up
+	ld	hl, ene_ey		; dir=0: 下へ
+	add	hl, de
+	ld	a, (hl)
+	inc	a
+	ld	(hl), a
+	cp	20
+	jp	c, .trajdone
+	ld	hl, ene_dir
+	add	hl, de
+	ld	(hl), 1			; 下端 → 上へ
+	jp	.trajdone
+.ja_up:	ld	hl, ene_ey		; dir=1: 上へ
+	add	hl, de
+	ld	a, (hl)
+	dec	a
+	ld	(hl), a
+	cp	4
+	jp	nc, .trajdone
+	ld	hl, ene_dir
+	add	hl, de
+	ld	(hl), 0			; 上端 → 下へ
+	jp	.trajdone
+.tk_dive:
+	ld	a, (spr_i)		; Torkan: ene_ey を下へ(clamp 22)
 	ld	e, a
 	ld	d, 0
 	ld	hl, ene_ey
 	add	hl, de
 	ld	a, (hl)
 	cp	22
-	jr	nc, .edone
+	jr	nc, .tk2
 	inc	a
 	ld	(hl), a
-.edone:
-	ld	a, b
-	cp	2
-	jr	nz, .trajdone		; 1=Jara はここまで
-	ld	a, (spr_i)		; 2=Torkan: 横を追加で1速く(ダイブ)
-	ld	e, a
-	ld	d, 0
-	ld	hl, ene_ex
+.tk2:	ld	hl, ene_ex		; + 横加速(ダイブ)
 	add	hl, de
 	dec	(hl)
 .trajdone:
@@ -2596,7 +2633,12 @@ ene_ex:		ds	MAX_ENEMIES		; セル列 (8px)
 ene_ey:		ds	MAX_ENEMIES		; セル行
 ene_frm:	ds	MAX_ENEMIES		; アニメフレーム 0..3
 ene_type:	ds	MAX_ENEMIES		; [M8] 敵タイプ index (0..EN_NTYPES-1)
-spawn_type:	db	0		; 次に出す敵タイプ(循環)
+ene_dir:	ds	MAX_ENEMIES		; [M8④] Jara 振動方向(0=下/1=上)
+spawn_type:	db	0		; (旧)未使用
+spawn_idx:	db	0		; [M8④] spawn_seq のインデックス
+; [M8④] 出現タイプ列(エリア1≒Toroid主体, たまに Jara(1)/Torkan(2))。12個循環。
+SPAWN_SEQ_LEN	EQU	12
+spawn_seq:	db	0,0,0,0, 1,0,0,0, 2,0,0,1
 ; [M8④] 敵タイプ記述子: per type = (pcg_base, nframes, traj_id)。
 ;   traj_id: 0=Toroid(直進) / 1=Jara(縦振動) / 2=Torkan(斜めダイブ)。
 entype_tab:
