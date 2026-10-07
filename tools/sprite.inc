@@ -22,6 +22,7 @@ TRIG1		EQU	0x20		; PSG port A bit5 (トリガ1, 負論理)
 ENEMY_BASE	EQU	0xB0		; 敵 PCG 先頭 (0xB0..0xBF, 4フレーム x 2x2)
 MAX_ENEMIES	EQU	4		; 同時出現数
 ENEMY_SPEED	EQU	1		; 横移動(セル/移動tick) ※敵は8pxグリッド
+EN_NTYPES	EQU	2		; [M8] 敵タイプ数 (足場: type0=直進/type1=斜め)
 EXPL_BASE	EQU	0xC0		; 爆発 PCG 先頭 (0xC0..0xCB, 3フレーム x 2x2)
 MAX_EXPL	EQU	4		; 同時爆発数
 RETICLE_BASE	EQU	0xCC		; [M8] 照準 PCG (0xCC..0xCF, 2x2 の角ブラケット)
@@ -1101,6 +1102,16 @@ enemy_spawn:
 	ld	hl, ene_frm
 	add	hl, de
 	ld	(hl), 0
+	; [M8] タイプを割当て spawn_type を循環 (足場)
+	ld	a, (spawn_type)
+	ld	hl, ene_type
+	add	hl, de
+	ld	(hl), a
+	inc	a
+	cp	EN_NTYPES
+	jr	c, .tok
+	xor	a
+.tok:	ld	(spawn_type), a
 	; 負荷分散: スロット index でタイマー位相をずらす(1フレームに描き直す敵を減らす)
 	ld	a, (spr_i)		; ene_atmr = slot+1 (アニメ位相ずらし)
 	inc	a
@@ -1247,6 +1258,44 @@ enemies_move:
 	ld	a, (hl)
 	sub	ENEMY_SPEED
 	ld	(hl), a
+	; [M8] 軌道ディスパッチ: type の traj_id で縦移動 (足場。0=直進/1=斜め)
+	push	af			; ene_ex(新) を off-screen 判定用に保存
+	ld	a, (spr_i)
+	ld	e, a
+	ld	d, 0
+	ld	hl, ene_type
+	add	hl, de
+	ld	a, (hl)			; type
+	ld	c, a
+	add	a, a
+	add	a, c			; type*3
+	inc	a
+	inc	a			; +2 = traj_id オフセット
+	ld	e, a
+	ld	d, 0
+	ld	hl, entype_tab
+	add	hl, de
+	ld	a, (hl)			; traj_id
+	cp	1
+	jr	nz, .trajdone		; 0=直進は縦移動なし
+	ld	a, (spr_i)		; traj1=斜め: ene_ey を 1 増やす(clamp 22)
+	ld	e, a
+	ld	d, 0
+	ld	hl, ene_ey
+	add	hl, de
+	ld	a, (hl)
+	cp	22
+	jr	nc, .trajdone
+	inc	a
+	ld	(hl), a
+.trajdone:
+	pop	af			; ene_ex 復帰
+	ld	e, a			; ene_ex 退避
+	ld	a, (spr_i)		; de = i に復元 (traj 分岐で de が壊れているため)
+	ld	c, a
+	ld	a, e
+	ld	e, c
+	ld	d, 0
 	cp	COLS			; 0 未満で 0xFF 等 >= COLS → 消滅
 	jr	c, .mn
 	ld	hl, ene_active
@@ -1255,7 +1304,7 @@ enemies_move:
 .mn:	ld	a, (spr_i)
 	inc	a
 	ld	(spr_i), a
-	jr	.ml
+	jp	.ml
 
 ; 全敵を新位置に描画(両窓, 2x2), prev 記録。
 enemies_draw:
@@ -1320,7 +1369,7 @@ enemies_draw:
 	ld	d, 0
 	add	hl, de
 	ld	(spr_soff), hl
-	; code base = ENEMY_BASE + frame*4
+	; [M8] code base = (type の pcg_base) + frame*4
 	ld	a, (spr_i)
 	ld	e, a
 	ld	d, 0
@@ -1329,7 +1378,22 @@ enemies_draw:
 	ld	a, (hl)
 	add	a, a
 	add	a, a			; frame*4
-	add	a, ENEMY_BASE
+	ld	b, a			; 退避
+	ld	a, (spr_i)
+	ld	e, a
+	ld	d, 0
+	ld	hl, ene_type
+	add	hl, de
+	ld	a, (hl)			; type
+	ld	c, a
+	add	a, a
+	add	a, c			; type*3
+	ld	e, a
+	ld	d, 0
+	ld	hl, entype_tab
+	add	hl, de
+	ld	a, (hl)			; pcg_base
+	add	a, b			; + frame*4
 	ld	(spr_code), a
 	; 窓1
 	ld	hl, (spr_soff)
@@ -1732,6 +1796,13 @@ ene_active:	ds	MAX_ENEMIES
 ene_ex:		ds	MAX_ENEMIES		; セル列 (8px)
 ene_ey:		ds	MAX_ENEMIES		; セル行
 ene_frm:	ds	MAX_ENEMIES		; アニメフレーム 0..3
+ene_type:	ds	MAX_ENEMIES		; [M8] 敵タイプ index (0..EN_NTYPES-1)
+spawn_type:	db	0		; 次に出す敵タイプ(循環)
+; [M8] 敵タイプ記述子: per type = (pcg_base, nframes, traj_id)。
+;   traj_id: 0=直進(左)/1=斜め(左下に漂う)。PCG は distinct データ到着まで共用。
+entype_tab:
+	db	ENEMY_BASE, 4, 0	; type0: 円盤・直進
+	db	ENEMY_BASE, 4, 1	; type1: 円盤・斜め(オリジナル軌道。PCGは後で差替)
 ene_atmr:	ds	MAX_ENEMIES
 ene_mtmr:	ds	MAX_ENEMIES
 ene_prev:	ds	MAX_ENEMIES * 2		; 前回 top-left セル 窓1
