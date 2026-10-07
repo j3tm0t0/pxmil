@@ -767,13 +767,25 @@ crater_write_cell:
 	ld	d, 0
 	add	a, a			; row*2
 	ld	e, a
+	add	hl, de			; hl = col*50 + row*2
+	IFDEF	ALLAREAS
+	ld	de, (amb_lo16)		; [⑦(3)] + area_map_base
 	add	hl, de
+	ld	a, l
+	ld	(emm_a0), a
+	ld	a, h
+	ld	(emm_a1), a
+	ld	a, (amb_hi8)
+	adc	a, 0
+	ld	(emm_a2), a
+	ELSE
 	ld	a, l
 	ld	(emm_a0), a
 	ld	a, h
 	ld	(emm_a1), a
 	xor	a
 	ld	(emm_a2), a
+	ENDIF
 	call	set_emm_addr
 	pop	de			; crater addr
 	ld	bc, EMM_DAT

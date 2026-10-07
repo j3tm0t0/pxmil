@@ -146,7 +146,10 @@ realstart:
 	call	init_screen
 	call	clear_tvram
 	call	setup_turboz64
+	IFNDEF	ALLAREAS
+	ld	ix, xpaldata		; 単一エリア: incbin パレット
 	call	load_palette64
+	ENDIF
 	; (以前はここで blackctrl(0x1FE0)を叩いて palandply を立てる回避が必要だった。
 	;  xmil 本体の修正 = アナログパレット(grph4096)書込で crtc.e.palandply=1 を立てる
 	;  により不要になった。実機でも書込んだ色は即反映されるのでこれが正しい挙動。)
@@ -154,6 +157,24 @@ realstart:
 	call	allarea_load		; [⑦] FDC で全エリアデータを EMM へ展開
 	xor	a			; [⑦(2)] area1(index0)の タイルを RAM タイル表へ集約
 	call	area_switch
+	; [⑦(3)] common_pal(EMM_PAL)を pal_buf へ読み HW パレット適用
+	xor	a
+	ld	(emm_a0), a
+	ld	(emm_a1), a
+	ld	(emm_a2), a
+	call	set_emm_addr
+	ld	hl, pal_buf
+	ld	bc, EMM_DAT
+	ld	de, 320
+.cp_rd:	in	a, (c)
+	ld	(hl), a
+	inc	hl
+	dec	de
+	ld	a, d
+	or	e
+	jr	nz, .cp_rd
+	ld	ix, pal_buf
+	call	load_palette64
 	IFDEF	ALLAREAS_DBG
 	; 検証(2): RAM タイル表先頭(TILEBASE)の2バイトを PROBE(0xC8:byte)。
 	ld	a, (TILEBASE + 0)
@@ -196,7 +217,9 @@ realstart:
 	out	(c), a			; PROBE 0xC1xx
 	ENDIF
 	ENDIF
-	call	fill_emm_map
+	IFNDEF	ALLAREAS
+	call	fill_emm_map		; 単一エリア: map を EMM addr0 へ。全エリアは EMM_MAPS 常駐。
+	ENDIF
 	call	build_tables
 	call	prefill
 
@@ -791,13 +814,25 @@ read_ids:
 	add	hl, hl			; *16
 	add	hl, de			; *24
 	add	hl, bc			; *25
-	add	hl, hl			; *50
+	add	hl, hl			; *50 (hl = col*50)
+	IFDEF	ALLAREAS
+	ld	de, (amb_lo16)		; [⑦(3)] + area_map_base
+	add	hl, de
+	ld	a, l
+	ld	(emm_a0), a
+	ld	a, h
+	ld	(emm_a1), a
+	ld	a, (amb_hi8)
+	adc	a, 0			; +carry
+	ld	(emm_a2), a
+	ELSE
 	ld	a, l
 	ld	(emm_a0), a
 	ld	a, h
 	ld	(emm_a1), a
 	xor	a
 	ld	(emm_a2), a
+	ENDIF
 	call	set_emm_addr
 	ld	hl, dma_id
 	ld	bc, 0x1F80
@@ -1158,6 +1193,26 @@ al_emm_addr:
 ;   common_tiles[idx](EMM_TILES+idx*48)を RAM タイル表(TILEBASE+i*48)へ 48B ずつ集約。
 ;   map/gobj は EMM 常駐のまま(engine が area base を加算して読む=(3))。
 area_switch:
+	; --- [⑦(3)] area_map_base = EMM_MAPS + area*0x3200 を保存(read_ids/crater が使う) ---
+	ld	c, a			; area
+	ld	hl, EMM_MAPS & 0xFFFF
+	ld	a, EMM_MAPS >> 16
+	ld	(amb_hi8), a
+	ld	a, c
+	or	a
+	jr	z, .mbdone
+	ld	de, EMM_MAPS_STR
+	ld	b, c
+.mbl:	add	hl, de
+	jr	nc, .mbnc
+	push	hl
+	ld	hl, amb_hi8
+	inc	(hl)
+	pop	hl
+.mbnc:	djnz	.mbl
+.mbdone:
+	ld	(amb_lo16), hl
+	ld	a, c			; area 復帰
 	; --- used list header(n): EMM addr = EMM_USED + area*0x800 ---
 	add	a, a
 	add	a, a
@@ -1235,6 +1290,9 @@ area_switch:
 as_n:		dw	0
 as_cnt:		dw	0
 as_dst:		dw	0
+amb_lo16:	dw	0		; [⑦(3)] area_map_base(EMM_MAPS+area*0x3200) 低16
+amb_hi8:	db	0		; 高8
+pal_buf:	ds	320		; [⑦(3)] common_pal(64×5B)
 used_buf:	ds	802		; 共通index列(最大~401×2B)
 man_buf:	ds	256		; sector0(マニフェスト)
 al_count:	db	0
@@ -1334,8 +1392,8 @@ setup_turboz64:
 	ret
 
 ; 64色パレット設定: xpaldata の 64エントリ [addr_lo,addr_hi,Bnib,Rnib,Gnib]。
+; load_palette64: ix=パレットデータ(64エントリ×5B [addr:2B, B4,R4,G4])。呼出側が ix 設定。
 load_palette64:
-	ld	ix, xpaldata
 	ld	a, 64
 	ld	(palcnt), a
 .lp:
