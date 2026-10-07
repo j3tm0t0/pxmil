@@ -52,6 +52,15 @@ TILEBYTES	EQU	48		; 6プレーン x 8ラスタ
 IDBYTES		EQU	2
 COLIDS		EQU	ROWS * IDBYTES	; 50
 TILEBASE	EQU	0x0103
+; [⑦ 全エリア化] EMM 常駐レイアウト(xevi-extract 案)。-DALLAREAS 時に FDC で展開。
+EMM_PAL		EQU	0x000000	; common_pal 320B
+EMM_TILES	EQU	0x001000	; common_tiles 44928B(48B/tile)
+EMM_USED	EQU	0x010000	; +a*0x0800 : areaNN_used(先頭2B=n, +index×n)
+EMM_USED_STR	EQU	0x0800
+EMM_MAPS	EQU	0x020000	; +a*0x3200 : areaNN_map 12800B
+EMM_MAPS_STR	EQU	0x3200
+EMM_GOBJ	EQU	0x060000	; +a*0x0400 : areaNN_gobj
+EMM_GOBJ_STR	EQU	0x0400
 SPEED		EQU	3		; adv = framecnt >> SPEED (8frame=4px => 0.5px/frame)
 
 ; EMM
@@ -141,6 +150,35 @@ realstart:
 	; (以前はここで blackctrl(0x1FE0)を叩いて palandply を立てる回避が必要だった。
 	;  xmil 本体の修正 = アナログパレット(grph4096)書込で crtc.e.palandply=1 を立てる
 	;  により不要になった。実機でも書込んだ色は即反映されるのでこれが正しい挙動。)
+	IFDEF	ALLAREAS
+	call	allarea_load		; [⑦] FDC で全エリアデータを EMM へ展開
+	IFDEF	ALLAREAS_DBG
+	; 検証: EMM_MAPS(area01_map)先頭2バイトを読み PROBE(0xC0:byte)で出力。
+	ld	a, EMM_MAPS & 0xFF
+	ld	(emm_a0), a
+	ld	a, (EMM_MAPS >> 8) & 0xFF
+	ld	(emm_a1), a
+	ld	a, EMM_MAPS >> 16
+	ld	(emm_a2), a
+	call	set_emm_addr
+	ld	bc, EMM_DAT
+	in	a, (c)			; EMM_MAPS[0] (=0x03 期待)
+	ld	e, a
+	ld	bc, 0x00FE
+	out	(c), e
+	ld	a, 0xC0
+	ld	bc, 0x00FF
+	out	(c), a			; PROBE 0xC0xx
+	ld	bc, EMM_DAT
+	in	a, (c)			; EMM_MAPS[1] (=0x01 期待)
+	ld	e, a
+	ld	bc, 0x00FE
+	out	(c), e
+	ld	a, 0xC1
+	ld	bc, 0x00FF
+	out	(c), a			; PROBE 0xC1xx
+	ENDIF
+	ENDIF
 	call	fill_emm_map
 	call	build_tables
 	call	prefill
@@ -1004,6 +1042,106 @@ fill_emm_map:
 	jr	nz, .l
 	ret
 
+	IFDEF	ALLAREAS
+;=====================================================================
+; [⑦] 全エリア版 FDC ブートローダ: sector0 マニフェスト(count + 1件[start_sec:2,len:4])
+;   を読み、各データを EMM レイアウト位置へ fdc_load で展開する。
+;   file index→EMM addr: 0=PAL, 1=TILES, 2+=(area=(i-2)/3, sub=(i-2)%3: used/map/gobj)。
+allarea_load:
+	call	fdc_init
+	ld	hl, man_buf
+	call	fdc_read0_ram		; sector0 → man_buf(256B)
+	ld	a, (man_buf + 0x20)
+	ld	(al_count), a
+	or	a
+	ret	z
+	xor	a
+	ld	(al_i), a
+	ld	ix, man_buf + 0x21	; 先頭エントリ
+.loop:
+	ld	a, (al_i)
+	ld	hl, al_count
+	cp	(hl)
+	ret	nc			; 全件完了
+	call	al_emm_addr		; al_i → EMM dst 設定(set_emm_dst 済)
+	ld	c, (ix + 0)
+	ld	b, (ix + 1)		; BC = start linear sector
+	ld	l, (ix + 2)
+	ld	h, (ix + 3)		; HL = len 低16(ファイル<64KB 前提: map 12800)
+	ld	de, 255			; sector数 = ceil(len/256) = (len+255)>>8
+	add	hl, de
+	ld	e, h
+	ld	d, 0			; DE = sector数
+	push	ix
+	call	fdc_load		; BC..DE を現 EMM dst へ読む
+	pop	ix
+	ld	de, 6			; 次エントリ(6B)
+	add	ix, de
+	ld	a, (al_i)
+	inc	a
+	ld	(al_i), a
+	jr	.loop
+
+; al_emm_addr: al_i から EMM dst を計算し set_emm_dst。
+al_emm_addr:
+	ld	a, (al_i)
+	or	a
+	jr	nz, .n0
+	ld	hl, EMM_PAL & 0xFFFF
+	ld	a, EMM_PAL >> 16
+	jp	set_emm_dst
+.n0:	cp	1
+	jr	nz, .area
+	ld	hl, EMM_TILES & 0xFFFF
+	ld	a, EMM_TILES >> 16
+	jp	set_emm_dst
+.area:
+	sub	2			; j = i-2
+	ld	c, 0			; area = j/3
+.dl:	cp	3
+	jr	c, .dok
+	sub	3
+	inc	c
+	jr	.dl
+.dok:	; a=sub(0/1/2), c=area。base24 + area*stride を計算。
+	or	a
+	jr	nz, .s1
+	ld	hl, EMM_USED & 0xFFFF
+	ld	a, EMM_USED >> 16
+	ld	de, EMM_USED_STR
+	jr	.acc
+.s1:	cp	1
+	jr	nz, .s2
+	ld	hl, EMM_MAPS & 0xFFFF
+	ld	a, EMM_MAPS >> 16
+	ld	de, EMM_MAPS_STR
+	jr	.acc
+.s2:	ld	hl, EMM_GOBJ & 0xFFFF
+	ld	a, EMM_GOBJ >> 16
+	ld	de, EMM_GOBJ_STR
+.acc:	; (al_hi:hl) = base + area*de。a=high8, hl=low16, de=stride, c=area。
+	ld	(al_hi), a
+	ld	a, c
+	or	a
+	jr	z, .accdone
+	ld	b, c
+.accl:	add	hl, de
+	jr	nc, .nc
+	push	hl
+	ld	hl, al_hi
+	inc	(hl)
+	pop	hl
+.nc:	djnz	.accl
+.accdone:
+	ld	a, (al_hi)
+	jp	set_emm_dst
+
+man_buf:	ds	256		; sector0(マニフェスト)
+al_count:	db	0
+al_i:		db	0
+al_hi:		db	0
+	ENDIF
+
 ;=====================================================================
 ; 初期プリフィル: 2窓(page0,page1)の col0..39 を埋める。
 prefill:
@@ -1290,6 +1428,10 @@ snd_bgm_mgr:
 	jp	snd_play_bgm
 bgm_phase:	db	0
 	ENDIF
+	ENDIF
+
+	IFDEF	ALLAREAS
+	INCLUDE	"tools/fdcload.inc"	; [⑦] FDC→EMM ローダ(fdc_init/fdc_load/fdc_read0_ram/set_emm_dst)
 	ENDIF
 
 	END
