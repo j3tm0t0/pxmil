@@ -219,6 +219,17 @@ mainloop:
 	ld	(sr_pending), a
 	jr	.framesync
 .nowork:
+	IFDEF	SHIP
+	IFDEF	SPR_SMOOTH
+	; [M8] -DSPR_SMOOTH 時のみ: スプライトを毎フレーム更新 (ステップ=.changed
+	; 側で済、非ステップ=ここでも更新)。自機/弾が 8フレーム刻みでなく毎フレーム
+	; 動き滑らかになる。ただし非ステップは chunk(列展開)が走るため、毎フレーム
+	; 描画を足すと 4MHz では予算超過する(8MHz 専用)。既定(ガード無し)は 8フレーム
+	; 刻み=4MHz クリーン。start_redraw/chunk より前=VBLANK 直後に表示窓へ書く。
+	call	ship_update
+	call	sprite_update
+	ENDIF
+	ENDIF
 	ld	a, (sr_pending)		; 非ステップ: 保留の start_redraw を1回だけ
 	or	a
 	jr	z, .dochunk

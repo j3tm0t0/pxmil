@@ -18,20 +18,31 @@
 
 BULLET_BASE	EQU	0xA0		; 弾 PCG 先頭 (0xA0..0xAF)
 MAX_BULLETS	EQU	4		; 同時発射数
-BULLET_SPEED	EQU	4		; 1フレームの前進 (2px単位; 4=8px/frame)
-FIRE_DELAY	EQU	6		; 連射間隔(フレーム)
 TRIG1		EQU	0x20		; PSG port A bit5 (トリガ1, 負論理)
-
 ENEMY_BASE	EQU	0xB0		; 敵 PCG 先頭 (0xB0..0xBF, 4フレーム x 2x2)
 MAX_ENEMIES	EQU	4		; 同時出現数
-ENEMY_ANIM	EQU	6		; アニメ更新間隔(フレーム)
-ENEMY_SPAWN	EQU	48		; 出現間隔(フレーム)
-ENEMY_SPEED	EQU	1		; 横移動(セル/移動tick)
-ENEMY_MOVE	EQU	4		; 移動間隔(フレーム)
-
+ENEMY_SPEED	EQU	1		; 横移動(セル/移動tick) ※敵は8pxグリッド
 EXPL_BASE	EQU	0xC0		; 爆発 PCG 先頭 (0xC0..0xCB, 3フレーム x 2x2)
 MAX_EXPL	EQU	4		; 同時爆発数
-EXPL_ANIM	EQU	4		; 1コマの表示フレーム数
+
+; 速度/間隔定数は sprite_update の呼ばれる頻度で意味が変わる。
+;   既定: sprite_update は 8フレームごと(ステップフレームのみ)。
+;   -DSPR_SMOOTH: 毎フレーム呼ばれる → 速度を小さく・間隔を広く再調整(実時間維持)。
+	IFDEF	SPR_SMOOTH
+BULLET_SPEED	EQU	3		; 前進/呼出 (2px単位; 3=6px/frame, 速め)
+FIRE_DELAY	EQU	8		; 連射間隔(フレーム)
+ENEMY_ANIM	EQU	12		; アニメ更新間隔(フレーム)
+ENEMY_SPAWN	EQU	96		; 出現間隔(フレーム)
+ENEMY_MOVE	EQU	8		; 移動間隔(フレーム) 8=1セル/8frame≒1px/frame平均
+EXPL_ANIM	EQU	8		; 1コマの表示フレーム数
+	ELSE
+BULLET_SPEED	EQU	4		; 前進/呼出 (2px単位; 4=8px)
+FIRE_DELAY	EQU	6		; 連射間隔(呼出)
+ENEMY_ANIM	EQU	6		; アニメ更新間隔(呼出)
+ENEMY_SPAWN	EQU	48		; 出現間隔(呼出)
+ENEMY_MOVE	EQU	4		; 移動間隔(呼出)
+EXPL_ANIM	EQU	4		; 1コマの表示呼出数
+	ENDIF
 
 ;=====================================================================
 ; 起動時: 弾 PCG(16版)生成 + テーブル初期化。PCGモード有効時に呼ぶ。
