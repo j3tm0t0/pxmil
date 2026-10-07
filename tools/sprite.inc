@@ -518,7 +518,7 @@ blaster_move:
 	call	gobj_check
 	jr	nc, .nobj		; 当たり無し
 	call	crater_write_obj	; 当たり: 2x2の4セルを crater タイルで EMM 上書き
-	call	crater_gram		; 表示中 GRAM(両ページ・両シフト)へクレーターを即時反映
+	call	crater_enqueue		; [#2] GRAM クレーターを保留登録(pump が数フレームで描く)
 .nobj:
 	call	expl_spawn
 .mn:	ld	a, (spr_i)
@@ -821,23 +821,17 @@ crater_write_obj:
 ;   dc_base/shl_hi/shr_hi のみ save/restore(ec_row/IDBUFA/B は非使用、
 ;   chunk_start/cnt/ec_dst は本処理で設定)。
 CG_IDBUF	EQU	TBUF		; 0xC400: 4*50=200B (W-1..W+2 のタイルID)
-crater_gram:
-	IFDEF	CRATER_DBG
-	ld	a, 0xAA
-	ld	bc, 0x00FE
-	out	(c), a
-	ld	a, 0xAA
-	ld	bc, 0x00FF
-	out	(c), a			; emit PROBE 0xAAAA=43690 (crater_gram 実行検出)
-	ENDIF
-	; --- save 跨フレーム状態 ---
-	ld	hl, (dc_base)
-	ld	(cg_sav_dc), hl
-	ld	a, (shl_hi)
-	ld	(cg_sav_shl), a
-	ld	a, (shr_hi)
-	ld	(cg_sav_shr), a
-	; --- タイル ID 読み込み(ページ非依存): W-1..W+2 -> CG_IDBUF[0..3] ---
+; [M8-3 #2] クレーター GRAM 再描画をフレーム分散する。ヒット時は EMM 更新後
+;   crater_enqueue で ID をキャッシュし保留登録、crater_pump が毎フレーム1ユニット
+;   (1ページ1列=2行)ずつ描く(全6ユニット=2ページ×3列)。表示中ページを先に描く。
+;   これで着弾時の一括 ~2フレーム停止を避ける(見た目のクレーターは数フレームで完成)。
+
+; crater_enqueue: EMM 更新後に GRAM クレーターを保留登録。保留中なら先に flush。
+crater_enqueue:
+	ld	a, (pc_active)
+	or	a
+	call	nz, crater_flush	; 重複ヒット: 前回を先に完了
+	; ID キャッシュ(ページ非依存): W-1..W+2 -> CG_IDBUF[0..3]
 	ld	a, (gc_col)
 	dec	a
 	ld	e, a
@@ -858,56 +852,138 @@ crater_gram:
 	ld	e, a
 	ld	hl, CG_IDBUF + 150
 	call	read_ids
-	; --- page 0/1 ---
+	; 位置を保存(以後のフレームで pump が使う)
+	ld	a, (gc_row)
+	ld	(pc_row), a
+	ld	a, (col_ex)
+	ld	(pc_ex), a
+	ld	hl, (coarse)		; ヒット時の coarse を固定(pump は各フレームで使う)
+	ld	(pc_coarse), hl		; 物体の GRAM リング位置はヒット時に確定・不変
+	ld	a, (cur_pos + 1)	; 表示中ページ = cur_pos bit10
+	and	0x04
+	jr	z, .dp0
+	ld	a, 1
+.dp0:	ld	(pc_dpage), a
 	xor	a
+	ld	(pc_prog), a
+	inc	a
+	ld	(pc_active), a		; a=1
+	ret
+
+; crater_pump: 毎フレーム1回。保留クレーターがあれば1ユニットを描く。
+crater_pump:
+	ld	a, (pc_active)
+	or	a
+	ret	z
+	IFDEF	CRATER_DBG
+	ld	a, 0xAB
+	ld	bc, 0x00FE
+	out	(c), a
+	ld	a, 0xAA
+	ld	bc, 0x00FF
+	out	(c), a			; PROBE 0xAAAB=43691 (pump 1ユニット実行)
+	ENDIF
+	; prog -> (page, k): 0-2=表示中ページ(先), 3-5=裏ページ
+	ld	a, (pc_prog)
+	cp	3
+	jr	c, .front
+	sub	3
+	ld	(cg_k), a
+	ld	a, (pc_dpage)
+	xor	1
 	ld	(cg_page), a
-.ploop:
+	jr	.doit
+.front:
+	ld	(cg_k), a
+	ld	a, (pc_dpage)
+	ld	(cg_page), a
+.doit:
+	; save 跨フレーム状態(スクロール chunk が使う)
+	ld	hl, (dc_base)
+	ld	(cg_sav_dc), hl
+	ld	a, (shl_hi)
+	ld	(cg_sav_shl), a
+	ld	a, (shr_hi)
+	ld	(cg_sav_shr), a
+	call	crater_unit
+	ld	hl, (cg_sav_dc)
+	ld	(dc_base), hl
+	ld	a, (cg_sav_shl)
+	ld	(shl_hi), a
+	ld	a, (cg_sav_shr)
+	ld	(shr_hi), a
+	ld	a, (pc_prog)
+	inc	a
+	ld	(pc_prog), a
+	cp	6
+	ret	nz
+	xor	a
+	ld	(pc_active), a		; 全6ユニット完了
+	ret
+
+; crater_flush: 保留クレーターを同期で全部描く(self-test/重複ヒット時)。
+crater_flush:
+	ld	a, (pc_active)
+	or	a
+	ret	z
+	call	crater_pump
+	jr	crater_flush
+
+; crater_gram: 同期版(self-test 用)。enqueue + flush で即座に全描画。
+crater_gram:
+	IFDEF	CRATER_DBG
+	ld	a, 0xAA
+	ld	bc, 0x00FE
+	out	(c), a
+	ld	a, 0xAA
+	ld	bc, 0x00FF
+	out	(c), a			; PROBE 0xAAAA=43690 (同期 crater_gram)
+	ENDIF
+	call	crater_enqueue
+	jp	crater_flush
+
+; crater_unit: cg_page/cg_k の1ユニット(pc_row/pc_ex 基準, CG_IDBUF 使用)を GRAM へ。
+crater_unit:
 	ld	a, (cg_page)
 	add	a, (SHLTAB >> 8)
 	ld	(shl_hi), a
 	ld	a, (cg_page)
 	add	a, (SHRTAB >> 8)
 	ld	(shr_hi), a
-	xor	a
-	ld	(cg_k), a		; k=0..2: dc_base 列 = (W-1)+k
-.kloop:
-	; dc_base = (coarse + col_ex + k - 1 - COLS + page*OFF1024) & 0x7FF
-	;   screen位置基準(col_ex=物体の画面列=gc_col-coarse)。16bit coarse を使うので
-	;   map pass>=1 でも表示中列の GRAM リング位置に一致する。pass0 では旧式と同値。
-	ld	hl, (coarse)
+	; dc_base = (pc_coarse + pc_ex + k - 1 - COLS + page*OFF1024) & 0x7FF
+	;   pc_coarse=ヒット時 coarse(固定)。分散中に coarse が進んでも GRAM 位置は不変。
+	ld	hl, (pc_coarse)
 	ld	a, (cg_page)
 	or	a
 	jr	z, .np0
 	ld	de, OFF1024
 	add	hl, de
 .np0:
-	ld	a, (col_ex)
+	ld	a, (pc_ex)
 	ld	e, a
 	ld	a, (cg_k)
-	add	a, e			; col_ex + k
+	add	a, e
 	ld	e, a
 	ld	d, 0
 	add	hl, de
-	ld	de, 1 + COLS		; - (1 + COLS)
+	ld	de, 1 + COLS
 	or	a
 	sbc	hl, de
 	ld	a, h
 	and	0x07
 	ld	h, a
 	ld	(dc_base), hl
-	; compose rows R, R+1 -> COLBUF (A=CG_IDBUF[k], B=CG_IDBUF[k+1])
-	ld	a, (gc_row)
+	ld	a, (pc_row)
 	ld	(chunk_start), a
 	ld	a, 2
 	ld	(chunk_cnt), a
 	ld	hl, COLBUF
 	ld	(ec_dst), hl
-	ld	a, (gc_row)
+	ld	a, (pc_row)
 	ld	(cg_rr), a
 	ld	b, 2
 .rloop:
 	push	bc
-	; ec_ta = (CG_IDBUF + k*50)[rr*2]
 	ld	a, (cg_k)
 	call	cg_colbase		; hl = CG_IDBUF + k*50
 	ld	a, (cg_rr)
@@ -920,7 +996,6 @@ crater_gram:
 	ld	h, (hl)
 	ld	l, a
 	ld	(ec_ta), hl
-	; ec_tb = (CG_IDBUF + (k+1)*50)[rr*2]
 	ld	a, (cg_k)
 	inc	a
 	call	cg_colbase
@@ -940,24 +1015,7 @@ crater_gram:
 	ld	(cg_rr), a
 	pop	bc
 	djnz	.rloop
-	call	scatter_chunk		; 2 行(chunk_start=R から)を dc_base へ散布
-	ld	a, (cg_k)
-	inc	a
-	ld	(cg_k), a
-	cp	3
-	jp	nz, .kloop
-	ld	a, (cg_page)
-	inc	a
-	ld	(cg_page), a
-	cp	2
-	jp	nz, .ploop
-	; --- restore ---
-	ld	hl, (cg_sav_dc)
-	ld	(dc_base), hl
-	ld	a, (cg_sav_shl)
-	ld	(shl_hi), a
-	ld	a, (cg_sav_shr)
-	ld	(shr_hi), a
+	call	scatter_chunk
 	ret
 
 ; cg_colbase: a=0..3 -> hl = CG_IDBUF + a*50
@@ -2378,6 +2436,12 @@ cg_page:	db	0
 cg_k:		db	0
 cg_rr:		db	0
 gc_cbase:	dw	0		; crater_write_obj: crater_base 一時保持
+pc_active:	db	0		; [#2] 保留クレーター有効
+pc_prog:	db	0		; 進捗 0..5 (2ページ×3列)
+pc_row:		db	0		; 保留クレーターの row(R)
+pc_ex:		db	0		; 保留クレーターの画面列(col_ex)
+pc_dpage:	db	0		; ヒット時の表示中ページ(先に描く)
+pc_coarse:	dw	0		; ヒット時の coarse(16bit, 分散描画中 GRAM 位置を固定)
 ; 地上物リスト: 1件 = dw tilemap_col, db row, db type, dw crater_id (6B)。
 ;   実データは -DGOBJ_EXTDATA で roms/ から(gobj_n/gobj_list を定義)。既定は空。
 	IFDEF	GOBJ_EXTDATA

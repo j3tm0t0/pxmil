@@ -359,6 +359,9 @@ mainloop:
 	ld	(vbl_seen), hl
 	xor	a
 	ld	(prev_disp), a		; DISP=0
+	IFDEF	SHIP
+	call	crater_pump		; [#2] 保留クレーターを1ユニット/フレームで分散描画
+	ENDIF
 	; framecnt++
 	ld	hl, (framecnt)
 	inc	hl
@@ -382,7 +385,11 @@ CST_FRAME	EQU	3040		; coarse=190 → col211 は画面 col21 に表示
 	ld	hl, coarse
 	sub	(hl)
 	ld	(col_ex), a
-	call	crater_gram
+	IFDEF	CST_ENQUEUE
+	call	crater_enqueue		; 分散経路テスト(pump が数フレームで描く)
+	ELSE
+	call	crater_gram		; 同期経路テスト
+	ENDIF
 .cst_skip:
 	ld	hl, (framecnt)		; dropped 計算が依存する HL=framecnt を復元
 	ENDIF
