@@ -421,7 +421,7 @@ APLAN_D = [
 APLAN = APLAN_A  # build の比較画像 D/A 計算は別途 idx ベースなのでここは A のまま
 
 
-def cmd_ship(ex, rgb, sp_pen, gfx3, tile=162, code=1, pal="D"):
+def cmd_ship(ex, rgb, sp_pen, gfx3, tile=162, code=1, pal="D", out="solvalou_ship"):
     APLAN = APLAN_D if pal.upper() == "D" else APLAN_A
     """Solvalou を A案スロットに割り当て、png2ship 入力PNG + 表示プレビューを出す。
     向きは地形と同じ rotate(-90)(xevi_extract の map_arcade_rot90 と同じ)。"""
@@ -458,7 +458,7 @@ def cmd_ship(ex, rgb, sp_pen, gfx3, tile=162, code=1, pal="D"):
     #   emmscroll64 の gen_ship/overlay 側で 180 相当の向きになるため、X1_ROT=0 が機首=右。
     X1_ROT = int(os.environ.get("XEVI_SHIPROT", "0"))
     enc_r = enc.rotate(X1_ROT, expand=True)
-    enc_p = os.path.join(out_root, "solvalou_ship.png")
+    enc_p = os.path.join(out_root, out + ".png")
     enc_r.save(enc_p)
 
     # プレビュー: 暗緑背景に合成し、確認用に複数向きを並べる。
@@ -477,7 +477,7 @@ def cmd_ship(ex, rgb, sp_pen, gfx3, tile=162, code=1, pal="D"):
     for i, (nm, im) in enumerate(views):
         cmp.paste(on_bg(im), (i * (cw + 6), 14))
         dr.text((i * (cw + 6) + 2, 2), nm, fill=(230, 230, 230))
-    cmp.save(os.path.join(out_root, "solvalou_ship_preview.png"))
+    cmp.save(os.path.join(out_root, out + "_preview.png"))
     print("Solvalou tile=%d code=%d (白/灰/赤, 青なし)" % (tile, code))
     print("slot 使用ピクセル数(= tc):")
     for s in sorted(usage):
@@ -485,7 +485,7 @@ def cmd_ship(ex, rgb, sp_pen, gfx3, tile=162, code=1, pal="D"):
                                               APLAN[s - 1][1], usage[s]))
     print("使用スロット:", sorted(usage), " SHIP_PLANES=0x07(全プレーン)")
     print("png2ship 入力:", enc_p)
-    print("プレビュー:", os.path.join(out_root, "solvalou_ship_preview.png"))
+    print("プレビュー:", os.path.join(out_root, out + "_preview.png"))
     tpal = ",".join("0x%02X" % p for p, _ in APLAN)
     print("PAL=%s tpal_a: db %s" % (pal.upper(), tpal))
 
@@ -507,6 +507,12 @@ def main(argv):
         c = int(argv[3]) if len(argv) > 3 else 1
         pal = argv[4] if len(argv) > 4 else "D"
         cmd_ship(ex, rgb, sp_pen, gfx3, t, c, pal)
+    elif cmd == "sprite":
+        # sprite <outname> <tile> <code> [pal]
+        out = argv[2]
+        t = int(argv[3]); c = int(argv[4])
+        pal = argv[5] if len(argv) > 5 else "D"
+        cmd_ship(ex, rgb, sp_pen, gfx3, t, c, pal, out)
     else:
         print("unknown cmd", cmd)
 
