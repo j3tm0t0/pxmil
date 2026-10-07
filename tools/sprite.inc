@@ -1803,11 +1803,26 @@ enemy_spawn:
 .go:
 	ld	a, ENEMY_SPAWN
 	ld	(spawn_tmr), a
-	; [M8④] 同時数制限: active >= num_flying なら出さない
-	call	count_active		; a = active 数
-	ld	hl, num_flying
+	; [M8④] 同時数制限: active >= 実効上限 なら出さない。
+	;   [M8⑥(A)] 実効上限 = num_flying - 表示中Grobda数(最低1)。敵+Grobda を bounded に。
+	ld	a, (num_flying)
+	ld	(eff_cap), a
+	IFDEF	GROBDA_EXTDATA
+	call	count_grob_onscreen	; a = 表示中Grobda数
+	ld	c, a
+	ld	a, (eff_cap)
+	sub	c
+	jr	nc, .cok
+	xor	a
+.cok:	or	a
+	jr	nz, .cnz
+	inc	a			; 最低1
+.cnz:	ld	(eff_cap), a		; 実効上限
+	ENDIF
+	call	count_active		; a = active 数 (b,c 破壊)
+	ld	hl, eff_cap
 	cp	(hl)
-	ret	nc
+	ret	nc			; active >= 実効上限 → 出さない
 	; 空きスロット探索
 	xor	a
 	ld	(spr_i), a
@@ -2765,6 +2780,34 @@ grobda_hit_check:
 	inc	a
 	ld	(grob_hi), a
 	jr	.hl
+
+; [M8⑥(A)] 画面内の Grobda 数 → a。敵の実効同時上限を下げる(負荷分散)。
+count_grob_onscreen:
+	xor	a
+	ld	(grob_hi), a
+	ld	c, 0
+.l:	ld	a, (grob_hi)
+	cp	MAX_GROBDA
+	jr	z, .done
+	ld	e, a
+	ld	d, 0
+	ld	hl, grob_active
+	add	hl, de
+	ld	a, (hl)
+	or	a
+	jr	z, .nx
+	ld	hl, grob_ex
+	add	hl, de
+	ld	a, (hl)
+	cp	COLS
+	jr	nc, .nx
+	inc	c
+.nx:	ld	a, (grob_hi)
+	inc	a
+	ld	(grob_hi), a
+	jr	.l
+.done:	ld	a, c
+	ret
 	ENDIF
 
 ; hl=top-left セル。2x2 を消去。
@@ -3177,6 +3220,7 @@ spawn_idx:	db	0		; [M8④] spawn_seq のインデックス
 num_flying:	db	3		; [M8④] 現在の同時出現上限(3→4→5)
 difficulty:	db	0		; [M8④] 難易度(0..2)。経過で上昇、型解禁を制御
 diff_tmr:	dw	DIFF_INTERVAL	; [M8④] 次の難易度上昇までのフレーム
+eff_cap:	db	3		; [M8⑥(A)] 今回の実効同時上限(num_flying - 表示中Grobda)
 	IFDEF	GROBDA_EXTDATA
 grob_active:	ds	MAX_GROBDA	; [M8⑥] Grobda 生存
 grob_wcol:	ds	MAX_GROBDA	; world列(8bit, スクロール追従)
