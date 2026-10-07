@@ -17,7 +17,7 @@ X1 PSG(AY-3-8910相当, clock=1.9968MHz=4MHz/2): period = round(clk/(16*f)) = ro
 54xx 爆発ノイズは別MCUのため抽出不可 → PSGノイズのエンベロープで近似(明記)。
 出力: roms/arcade/xevious-out/sound/(非コミット)。
 """
-import os, struct, wave, math
+import os, struct, wave, math, random
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ROM = os.path.join(ROOT, "roms", "arcade", "xevious")
@@ -39,6 +39,28 @@ TEMPO = [snd[0x4ED + i] for i in range(15)]
 WSG_HZ = 3072000.0 / (2**20)   # 2.9297 Hz / freq_reg(標準 Namco WSG)
 FPS = 60.0
 PSG_CLK = 1996800.0            # X1 AY-3-8910 clock(4MHz/2。beep実測 period256→~464Hz で裏付け)
+
+def chan_env(slot):
+    """channel-slot(byte_48A index)の (wave, vmode, attack)。byte_517 由来。"""
+    wave = snd[0x517 + slot]
+    vmode = snd[0x532 + slot]        # byte_517+0x1B
+    attack = snd[0x54D + slot]       # byte_517+0x36
+    return wave, vmode, attack
+
+def env_vol(cnt, vmode, attack, rest):
+    """ノート開始からの経過フレーム cnt → 音量 0-15(sub_307 の音量計算を再現)。"""
+    if rest:
+        return 0
+    if vmode >= 2 and cnt < 6:
+        return 15 - cnt               # 鋭いアタック 15..10
+    if vmode == 1 and cnt < 8:
+        return cnt * 2                # 緩いアタック 0,2,..14
+    if attack == 0:
+        return 10                     # 減衰なし(サステイン10)
+    if cnt < attack:
+        return 10
+    v = 10 - (cnt - attack)           # frame=attack から10フレームで 10→0
+    return v if v > 0 else 0
 
 def read_seq(ptr_idx):
     a = PTR[ptr_idx]; out = []
@@ -62,14 +84,20 @@ def psg_period(hz):
     p = int(round(PSG_CLK / (16.0 * hz)))
     return max(1, min(4095, p))
 
-# ---- tune 定義(prototype スコープ)----
-#   sound番号 -> (name, 'bgm'|'sfx')
-TUNES = {
-    0:  ("fanfare", "bgm"),   # 開始テーマ(2ch)
-    1:  ("bgm",     "bgm"),   # ゲーム中BGM(3ch, ゼビウスのテーマ)
-    0xB:("zapper",  "sfx"),   # ザッパー
-    0xC:("blaster", "sfx"),   # ブラスター
-}
+# ---- tune / SFX 定義 ----
+BGM_SND = {"fanfare": 0, "bgm": 1}           # BGM系(複数ch)
+SE_LIST = [                                  # snd_play_se の id 順(0..)
+    ("zapper",       "tone",  0xB),
+    ("blaster",      "tone",  0xC),
+    ("flyhit",       "tone",  0x5),
+    ("teleport",     "tone",  0x9),
+    ("oneup",        "tone",  0x4),
+    ("bonus",        "tone",  0xD),
+    ("bacura",       "tone",  0xA),
+    ("exp_aerial",   "noise", "exp_aerial"),
+    ("exp_ground",   "noise", "exp_ground"),
+    ("exp_solvalou", "noise", "exp_solvalou"),
+]
 
 def tune_seqs(snd_no):
     base, cnt, wsel = TRIPLET[snd_no]
@@ -79,103 +107,142 @@ def tune_seqs(snd_no):
         if idx >= len(PTR):
             break
         chans.append(read_seq(idx))
-    return chans, wsel, TEMPO[snd_no]
+    return chans, wsel, TEMPO[snd_no], base
 
 # ---- WSG WAV 合成(wavetable, 試聴用)----
 SR = 44100
-def synth_channel(seq, tempo, wave_idx):
-    wavetbl = WAVES[wave_idx % 8]
-    samples = []
-    phase = 0.0
+def synth_channel(seq, tempo, slot):
+    """チャンネルを env_vol + 実WSG波形で合成(試聴用)。"""
+    wave_i, vmode, attack = chan_env(slot)
+    wavetbl = WAVES[wave_i % 8]
+    samples = []; phase = 0.0
     for (pitch, dur) in seq:
+        frames = max(1, dur * tempo)
+        nsamp = int(SR * frames / FPS)
         hz = note_hz(pitch)
-        nframes = max(1, dur * tempo)
-        nsamp = int(SR * nframes / FPS)
-        if hz <= 0:
-            samples.extend([0.0] * nsamp); continue
-        step = hz * 32.0 / SR     # wavetable 進行/サンプル
-        # 簡易デケイエンベロープ(アタック即時, 緩やか減衰)
+        rest = (pitch == 0xC0) or hz <= 0
+        step = (hz * 32.0 / SR) if hz > 0 else 0.0
         for n in range(nsamp):
-            idx = int(phase) & 31
-            v = (wavetbl[idx] - 7.5) / 7.5
-            env = 1.0 - 0.3 * (n / nsamp)   # 軽い減衰
-            samples.append(v * env)
+            fr = int(n * FPS / SR)                       # ノート内フレーム番号
+            vol = env_vol(fr, vmode, attack, rest)
+            v = (wavetbl[int(phase) & 31] - 7.5) / 7.5
+            samples.append(v * (vol / 15.0))
             phase += step
     return samples
 
-def render_tune_wav(snd_no, path, wave_override=None):
-    chans, wsel, tempo = tune_seqs(snd_no)
-    chan_samps = []
-    for ci, seq in enumerate(chans):
-        wi = wave_override if wave_override is not None else 0
-        chan_samps.append(synth_channel(seq, tempo, wi))
-    n = max(len(c) for c in chan_samps) if chan_samps else 0
+def render_tune_wav(snd_no, path):
+    chans, wsel, tempo, base = tune_seqs(snd_no)
+    chan_samps = [synth_channel(s, tempo, base + i) for i, s in enumerate(chans)]
+    n = max((len(c) for c in chan_samps), default=0)
     mix = [0.0] * n
     for c in chan_samps:
         for i, s in enumerate(c):
             mix[i] += s
-    g = 0.9 / max(1, len(chans))
+    g = 0.7 / max(1, len(chans))
     pcm = b"".join(struct.pack("<h", int(max(-1, min(1, s * g)) * 32767)) for s in mix)
     with wave.open(path, "wb") as w:
         w.setnchannels(1); w.setsampwidth(2); w.setframerate(SR); w.writeframes(pcm)
     return n / SR
 
-# ---- PSG プレイヤデータ(.bin)----
-#   ヘッダ: ch_count(1B)。続いて ch_count 本のチャンネルストリーム。
-#   各チャンネル: event 列。1 event = 3B [period_lo, (vol<<4)|period_hi, duration_frames]。
-#     休符: vol=0。終端: duration=0。
-#   チャンネルは順に連結、各末尾に終端(00 00 00)。オフセット表を先頭に置く。
-VOL = 12   # 固定音量(prototype; 本来は byte_517 エンベロープ)
-def tune_psg_bin(snd_no):
-    chans, wsel, tempo = tune_seqs(snd_no)
-    streams = []
-    for seq in chans:
-        buf = bytearray()
-        for (pitch, dur) in seq:
-            hz = note_hz(pitch)
-            per = psg_period(hz)
-            vol = 0 if hz <= 0 else VOL
-            frames = max(1, min(255, dur * tempo))
-            buf += bytes([per & 0xFF, ((vol & 0xF) << 4) | ((per >> 8) & 0xF), frames])
-        buf += bytes([0, 0, 0])   # 終端
-        streams.append(bytes(buf))
-    # レイアウト: ch_count(1B) + ch_count*2B オフセット + ストリーム連結
-    head = bytes([len(streams)])
-    off0 = 1 + len(streams) * 2
-    offs = bytearray(); body = bytearray(); cur = off0
-    for s in streams:
-        offs += struct.pack("<H", cur); body += s; cur += len(s)
-    return head + bytes(offs) + bytes(body)
+# ---- PSG データ(.bin)新形式(音量エンベロープ対応)----
+#   BGM:  ch_count(1B) + ch毎[offset:2B(LE), vmode:1B, attack:1B] + ストリーム群。
+#   tone SFX: [type=0x00, vmode, attack] + 1ストリーム(ch0のみ使用)。
+#   noise SFX: [type=0x01, noise_period, dur_frames, init_vol]。
+#   ストリーム event=3B [period_lo, (rest<<7)|period_hi, dur_frames]。終端=dur0。
+#   音量は再生時に env_vol(cnt,vmode,attack,rest) で毎フレーム算出(データに持たない)。
+def encode_stream(seq, tempo):
+    buf = bytearray()
+    for (pitch, dur) in seq:
+        frames = max(1, min(255, dur * tempo))
+        if pitch == 0xC0:
+            buf += bytes([0, 0x80, frames])                  # 休符(bit7)
+        else:
+            per = psg_period(note_hz(pitch))
+            buf += bytes([per & 0xFF, (per >> 8) & 0x0F, frames])
+    buf += bytes([0, 0, 0])                                  # 終端(dur=0)
+    return bytes(buf)
+
+def bgm_bin(snd_no):
+    chans, wsel, tempo, base = tune_seqs(snd_no)
+    n = len(chans)
+    streams = [encode_stream(s, tempo) for s in chans]
+    out = bytearray([n]); body = bytearray(); cur = 1 + n * 4
+    for i, s in enumerate(streams):
+        _, vmode, attack = chan_env(base + i)
+        out += struct.pack("<H", cur) + bytes([vmode, attack])
+        body += s; cur += len(s)
+    return bytes(out) + bytes(body)
+
+def sfx_tone_bin(snd_no):
+    chans, wsel, tempo, base = tune_seqs(snd_no)
+    _, vmode, attack = chan_env(base)
+    return bytes([0x00, vmode, attack]) + encode_stream(chans[0], tempo)
+
+def sfx_noise_bin(name):
+    #   [type=0x01, noise_period, dur_frames, init_vol, dstep_lo, dstep_hi]
+    #   dstep = (init_vol<<8)//dur = 8.8 固定小数の毎フレーム減衰量。
+    p = EXPLOSIONS[name]
+    iv, dur = p["vol"], p["dur"]
+    dstep = (iv << 8) // max(1, dur)
+    return bytes([0x01, p["nperiod"], dur, iv, dstep & 0xFF, (dstep >> 8) & 0xFF])
+
+# ---- 爆発音(54xx 抽出不可 → PSG ノイズ + 減衰で近似。params は設計値)----
+#   PSG: R6=noise period(0-31, 大=低く唸る), R7 でノイズをchに有効, R(8+ch)=音量(減衰)。
+#   noise周波数 = clock/(16*nperiod)。
+EXPLOSIONS = {
+    "exp_aerial":   dict(nperiod=10, dur=12, vol=10),   # 空中敵(小・速)
+    "exp_ground":   dict(nperiod=16, dur=20, vol=13),   # 地上物(中)
+    "exp_solvalou": dict(nperiod=22, dur=40, vol=15),   # ソルバルウ(大・長・最大)
+}
+def gen_explosion_wav(path, nperiod, dur, vol):
+    rng = random.Random(0x5EED)
+    nsamp = int(SR * dur / FPS)
+    noise_hz = PSG_CLK / (16.0 * max(1, nperiod))
+    step = noise_hz / SR
+    cur = 1.0; acc = 0.0; out = []
+    for n in range(nsamp):
+        acc += step
+        while acc >= 1.0:
+            cur = 1.0 if rng.random() < 0.5 else -1.0
+            acc -= 1.0
+        env = (1.0 - n / nsamp) ** 2     # 二乗減衰(アタック即・緩やか尾)
+        out.append(cur * (vol / 15.0) * env)
+    pcm = b"".join(struct.pack("<h", int(max(-1, min(1, s)) * 32767)) for s in out)
+    with wave.open(path, "wb") as w:
+        w.setnchannels(1); w.setsampwidth(2); w.setframerate(SR); w.writeframes(pcm)
+    return nsamp / SR
 
 def main():
     os.makedirs(OUT, exist_ok=True)
-    print("=== Xevious サウンド抽出 ===")
+    print("=== Xevious サウンド抽出(音量エンベロープ + SFX)===")
     print("freq表(byte_568):", " ".join("%04X" % f for f in FREQ))
-    print("波形PROM xvi-2.7n: 8波×32サンプル(w1=矩形, w0=サイン系)")
-    manifest = []
-    for snd_no, (name, kind) in TUNES.items():
-        chans, wsel, tempo = tune_seqs(snd_no)
-        wav = os.path.join(OUT, "xevi_%s.wav" % name)
-        dur = render_tune_wav(snd_no, wav, wave_override=0)
-        b = tune_psg_bin(snd_no)
-        binp = os.path.join(OUT, "xevi_%s.bin" % name)
-        open(binp, "wb").write(b)
-        manifest.append((name, kind, snd_no, len(chans), dur, len(b)))
-        print("  snd%X %-8s %s ch=%d tempo=%d wsel=%d  wav=%.1fs  psg=%dB"
-              % (snd_no, name, kind, len(chans), tempo, wsel, dur, len(b)))
-    # 連結 WAV(sndtest 順: fanfare -> bgm -> zapper -> blaster)
-    order = ["fanfare", "bgm", "zapper", "blaster"]
-    allpcm = bytearray()
-    for nm in order:
-        p = os.path.join(OUT, "xevi_%s.wav" % nm)
-        with wave.open(p, "rb") as w:
-            allpcm += w.readframes(w.getnframes())
-        allpcm += b"\x00\x00" * int(SR * 0.3)   # 0.3s 無音
-    with wave.open(os.path.join(OUT, "xevi_all.wav"), "wb") as w:
-        w.setnchannels(1); w.setsampwidth(2); w.setframerate(SR); w.writeframes(bytes(allpcm))
-    print("出力: roms/arcade/xevious-out/sound/ (xevi_*.wav 試聴用, xevi_*.bin PSGデータ)")
-    print("※54xx爆発は別MCUのため非抽出。本試作では未実装(将来PSGノイズ+減衰で近似予定)。")
-    print("※音量=固定%d(本来byte_517の減衰エンベロープ), 音色=PSG矩形(WSG波形は未再現)。" % VOL)
+    # BGM系(fanfare, bgm)
+    for name, snd_no in BGM_SND.items():
+        chans, wsel, tempo, base = tune_seqs(snd_no)
+        render_tune_wav(snd_no, os.path.join(OUT, "xevi_%s.wav" % name))
+        b = bgm_bin(snd_no)
+        open(os.path.join(OUT, "xevi_%s.bin" % name), "wb").write(b)
+        envs = [chan_env(base + i)[1:] for i in range(len(chans))]
+        print("  BGM %-8s snd%X ch=%d tempo=%2d env(vmode,attack)=%s psg=%dB"
+              % (name, snd_no, len(chans), tempo, envs, len(b)))
+    # SFX(id 順)。se_<id>_<name>.bin + WAV
+    print("SFX(snd_play_se id 順):")
+    for sid, (name, typ, ref) in enumerate(SE_LIST):
+        if typ == "tone":
+            b = sfx_tone_bin(ref)
+            render_tune_wav(ref, os.path.join(OUT, "xevi_%s.wav" % name))
+            _, vmode, attack = chan_env(TRIPLET[ref][0])
+            info = "tone snd%X vmode=%d attack=%d" % (ref, vmode, attack)
+        else:
+            b = sfx_noise_bin(ref)
+            p = EXPLOSIONS[ref]
+            gen_explosion_wav(os.path.join(OUT, "xevi_%s.wav" % name), **p)
+            info = "noise nperiod=%d dur=%d vol=%d" % (p["nperiod"], p["dur"], p["vol"])
+        open(os.path.join(OUT, "se_%02d_%s.bin" % (sid, name)), "wb").write(b)
+        print("  id%2d %-13s %-30s psg=%dB" % (sid, name, info, len(b)))
+    print("出力: roms/arcade/xevious-out/sound/(xevi_*.wav 試聴, xevi_bgm/fanfare.bin, se_NN_*.bin)")
+    print("※音色=PSG矩形(WSG波形は未再現)。tone SFX再生はch0のみ(多ch SFXの和声は簡略)。")
+    print("※音量エンベロープ(byte_517 vmode/attack)はプレイヤ側 env_vol で毎フレーム再現。")
 
 if __name__ == "__main__":
     main()

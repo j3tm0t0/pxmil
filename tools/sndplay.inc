@@ -1,20 +1,41 @@
-; sndplay.inc - X1 PSG サウンドプレイヤ(独立モジュール, VBLANKごとに snd_tick を1回)
+; sndplay.inc - X1 PSG サウンドプレイヤ(独立モジュール, emmscroll64.asm 非依存)
+;   VBLANK ごとに snd_tick を1回呼ぶ。BGM(最大3ch)+ 効果音(1ch, SFX優先でPSG Cを奪取)。
+;   音量エンベロープ(byte_517 vmode/attack, env_vol)を毎フレーム再現。
 ;
-;   xevi_sound.py が出力する PSG データ(.bin)を再生する。
-;   データ形式: ch_count(1B) + ch_count*2B オフセット(tune先頭からの相対) +
-;               各チャンネルストリーム。1 event=3B [period_lo, (vol<<4)|period_hi, dur_frames]。
-;               休符: vol=0。終端: dur=0。
-;   チャンネル i -> PSG A/B/C(period R(i*2)/R(i*2+1), vol R(8+i))。
+;   === API ===
+;     snd_init                : 最初に1回。PSG 無音化 + ミキサ初期化。
+;     snd_play_bgm (IX=BGMデータ): BGM開始(PSG A/B/C)。
+;     snd_play_se  (A=SE id)  : 効果音開始。caller が se_table(dw×N)を定義しておくこと。
+;                               PSG C を奪取(tone/noise)、終了後 BGM ch2 へ復帰。
+;     snd_tick                : 毎フレーム更新(BGM全ch + SFX)。
+;     snd_bgm_active          : A=BGMの残アクティブch数(0=BGM終了)。
+;   破壊: AF,BC,DE,HL,IY(必要なら呼び出し側で退避)。
 ;
-;   PSG(AY-3-8910相当, X1): レジスタ選択=OUT 0x1C00, データ=OUT 0x1B00。
-;   API: snd_init(最初に1回) / snd_start(IX=tune先頭) / snd_tick(毎フレーム) /
-;        snd_active(A=残アクティブch数, 0=曲終了)。
-;   破壊: AF,BC,DE,HL,IY(呼び出し側で必要なら退避)。
+;   === 最大サイクル(4MHz)===  snd_tick 最悪 ~4358T(BGM3ch+SFX同時にノート切替時)。
+;       予算5000T内(emm-scroll 最重フレーム79%の残り)。通常フレーム(hold)は ~1200T。
+;
+;   データ形式(xevi_sound.py 出力):
+;     BGM:  ch_count(1B) + ch毎[offset:2B(LE), vmode:1B, attack:1B] + ストリーム群。
+;     tone SFX: [0x00, vmode, attack] + 1ストリーム。
+;     noise SFX:[0x01, noise_period, dur, init_vol, dstep_lo, dstep_hi]。
+;     ストリーム event=3B [period_lo, (rest<<7)|period_hi, dur_frames]。終端=dur0。
 
 PSG_REG		EQU	0x1C00		; レジスタ選択(OUT)
 PSG_DAT		EQU	0x1B00		; データ(OUT)
+; voice 構造体(10B)
+V_PTRL	EQU 0
+V_PTRH	EQU 1
+V_CNT	EQU 2			; ノート開始からの経過フレーム
+V_NDUR	EQU 3			; 現ノートの総フレーム
+V_PERL	EQU 4
+V_PERH	EQU 5
+V_REST	EQU 6
+V_VMODE	EQU 7
+V_ATTACK EQU 8
+V_ACT	EQU 9
+VSIZE	EQU 10
 
-; ---- PSG レジスタ書き込み: D=reg番号, E=値 ----
+; ---- PSG レジスタ書き込み: D=reg, E=値 ----
 psg_set:
 	ld	bc, PSG_REG
 	out	(c), d
@@ -22,161 +43,388 @@ psg_set:
 	out	(c), e
 	ret
 
-; ---- 初期化: 全音量0 + ミキサ(トーンABC有効/ノイズ無効) ----
+; ---- 初期化 ----
 snd_init:
 	xor	a
-	ld	(snd_nch), a
+	ld	(bgm_nch), a
+	ld	(sfx_type), a
 	ld	e, 0
 	ld	d, 8
 	call	psg_set			; R8=0
 	ld	d, 9
-	call	psg_set			; R9=0
+	call	psg_set
 	ld	d, 10
-	call	psg_set			; R10=0
+	call	psg_set
 	ld	d, 7
-	ld	e, 0x38			; R7: tone ABC on(bit0-2=0), noise off(bit3-5=1)
+	ld	e, 0x38			; R7: tone ABC on, noise off
 	call	psg_set
 	ret
 
-; ---- 曲開始: IX=tune データ先頭 ----
-snd_start:
-	push	ix
-	pop	hl
-	ld	(tune_base), hl
-	ld	a, (hl)			; ch_count
-	ld	(snd_nch), a
+; ---- env_vol: IY=voice -> A=音量(0-15) ----
+env_vol:
+	ld	a, (iy+V_REST)
+	or	a
+	jr	nz, ev_zero		; 休符 -> 0
+	ld	b, (iy+V_CNT)		; B=cnt
+	ld	a, (iy+V_VMODE)
+	cp	2
+	jr	c, ev_nv2		; vmode<2
+	ld	a, b
+	cp	6
+	jr	nc, ev_nv2		; cnt>=6
+	ld	a, 15			; vmode>=2, cnt<6 -> 15-cnt
+	sub	b
+	ret
+ev_nv2:
+	ld	a, (iy+V_VMODE)
+	cp	1
+	jr	nz, ev_sus		; vmode!=1
+	ld	a, b
+	cp	8
+	jr	nc, ev_sus		; cnt>=8
+	ld	a, b			; vmode==1, cnt<8 -> cnt*2
+	add	a, a
+	ret
+ev_sus:
+	ld	a, (iy+V_ATTACK)
+	or	a
+	jr	z, ev_ten		; attack==0 -> 10
+	ld	c, a			; C=attack
+	ld	a, b
+	cp	c
+	jr	c, ev_ten		; cnt<attack -> 10
+	ld	a, b			; v = 10-(cnt-attack)
+	sub	c
+	ld	c, a			; C=cnt-attack
+	ld	a, 10
+	sub	c
+	ret	nc			; >=0
+	xor	a			; <0 -> 0
+	ret
+ev_ten:
+	ld	a, 10
+	ret
+ev_zero:
+	xor	a
+	ret
+
+; ---- voice の次ノートをロード(IY=voice)。PSG書込みはしない ----
+voice_load:
+	ld	l, (iy+V_PTRL)
+	ld	h, (iy+V_PTRH)
+	ld	e, (hl)			; perL
+	inc	hl
+	ld	d, (hl)			; (rest<<7)|perHi
+	inc	hl
+	ld	a, (hl)			; dur
+	inc	hl
+	ld	(iy+V_PTRL), l
+	ld	(iy+V_PTRH), h
+	or	a
+	jr	nz, vl_ok
+	ld	(iy+V_ACT), a		; dur==0 -> act=0
+	ret
+vl_ok:
+	ld	(iy+V_NDUR), a
+	ld	(iy+V_PERL), e
+	ld	a, d
+	and	0x0F
+	ld	(iy+V_PERH), a
+	ld	a, d
+	and	0x80
+	ld	(iy+V_REST), a
+	xor	a
+	ld	(iy+V_CNT), a		; cnt=0
+	ret
+
+; ---- period 書込み(IY=voice, cur_pch=PSG ch) ----
+voice_wperiod:
+	ld	a, (cur_pch)
+	add	a, a
+	ld	d, a			; reg = pch*2
+	ld	e, (iy+V_PERL)
+	call	psg_set
+	ld	a, (cur_pch)
+	add	a, a
+	inc	a
+	ld	d, a			; reg = pch*2+1
+	ld	e, (iy+V_PERH)
+	call	psg_set
+	ret
+
+; ---- vol 書込み(env_vol 算出, IY=voice, cur_pch)----
+voice_wvol:
+	call	env_vol
+	ld	e, a
+	ld	a, (cur_pch)
+	add	a, 8
+	ld	d, a
+	call	psg_set
+	ret
+
+; ---- voice 1フレーム更新(IY=voice, cur_pch 設定済)----
+voice_tick:
+	ld	a, (iy+V_ACT)
 	or	a
 	ret	z
-	ld	(ss_cnt), a
-	inc	hl
-	ld	(ss_src), hl		; オフセット表
-	ld	iy, snd_ch
-.ss:
-	ld	hl, (ss_src)
+	ld	a, (iy+V_CNT)
+	inc	a
+	ld	b, (iy+V_NDUR)
+	cp	b
+	jr	c, vt_hold		; cnt<ndur
+	call	voice_load		; 次ノート
+	ld	a, (iy+V_ACT)
+	or	a
+	jr	z, vt_ended
+	call	voice_wperiod
+	jr	vt_wvol
+vt_hold:
+	ld	(iy+V_CNT), a
+vt_wvol:
+	call	voice_wvol
+	ret
+vt_ended:
+	xor	a			; 終了: vol 0
+	ld	e, a
+	ld	a, (cur_pch)
+	add	a, 8
+	ld	d, a
+	call	psg_set
+	ret
+
+; ---- BGM 開始(IX=BGMデータ)----
+snd_play_bgm:
+	push	ix
+	pop	hl
+	ld	(bgm_base), hl
+	ld	a, (hl)
+	ld	(bgm_nch), a		; ch_count
+	or	a
+	ret	z
+	ld	(sp_cnt), a
+	inc	hl			; -> ch毎ヘッダ[off:2, vmode, attack]
+	ld	(sp_hdr), hl
+	ld	iy, bgm_v0
+	xor	a
+	ld	(sp_i), a
+spb_lp:
+	ld	hl, (sp_hdr)
 	ld	e, (hl)
 	inc	hl
-	ld	d, (hl)			; DE = offset
+	ld	d, (hl)			; DE=offset
 	inc	hl
-	ld	(ss_src), hl
-	ld	hl, (tune_base)
-	add	hl, de			; HL = stream ptr
-	ld	(iy+0), l
-	ld	(iy+1), h
-	ld	(iy+2), 1		; counter=1(次tickで即ロード)
-	ld	(iy+3), 1		; active
-	ld	de, 4
+	ld	a, (hl)
+	ld	(iy+V_VMODE), a
+	inc	hl
+	ld	a, (hl)
+	ld	(iy+V_ATTACK), a
+	inc	hl
+	ld	(sp_hdr), hl
+	ld	hl, (bgm_base)
+	add	hl, de			; ptr = base+offset
+	ld	(iy+V_PTRL), l
+	ld	(iy+V_PTRH), h
+	ld	a, 1
+	ld	(iy+V_ACT), a
+	; cur_pch = sp_i
+	ld	a, (sp_i)
+	ld	(cur_pch), a
+	call	voice_load
+	ld	a, (iy+V_ACT)
+	or	a
+	jr	z, spb_nx
+	call	voice_wperiod
+	call	voice_wvol
+spb_nx:
+	ld	de, VSIZE
 	add	iy, de
-	ld	a, (ss_cnt)
+	ld	a, (sp_i)
+	inc	a
+	ld	(sp_i), a
+	ld	b, a
+	ld	a, (sp_cnt)
 	dec	a
-	ld	(ss_cnt), a
-	jr	nz, .ss
+	ld	(sp_cnt), a
+	jr	nz, spb_lp
+	ret
+
+; ---- SE 開始(A=id, caller の se_table を参照)----
+snd_play_se:
+	add	a, a			; id*2
+	ld	l, a
+	ld	h, 0
+	ld	de, se_table
+	add	hl, de
+	ld	e, (hl)
+	inc	hl
+	ld	d, (hl)			; DE = se データ
+	ex	de, hl			; HL = se データ
+	ld	a, (hl)
+	inc	hl
+	or	a
+	jr	nz, sps_noise		; type!=0 -> noise
+	; tone SFX: [vmode, attack] + stream
+	ld	a, (hl)
+	ld	(sfx_v+V_VMODE), a
+	inc	hl
+	ld	a, (hl)
+	ld	(sfx_v+V_ATTACK), a
+	inc	hl
+	ld	(sfx_v+V_PTRL), hl	; L->PTRL, H->PTRH(連続)
+	ld	a, 1
+	ld	(sfx_v+V_ACT), a
+	ld	a, 2
+	ld	(cur_pch), a		; PSG C
+	ld	iy, sfx_v
+	call	voice_load
+	ld	a, (sfx_v+V_ACT)
+	or	a
+	jr	z, sps_t0
+	call	voice_wperiod
+	call	voice_wvol
+sps_t0:
+	ld	a, 1
+	ld	(sfx_type), a		; tone
+	ret
+sps_noise:
+	; [noise_period, dur, init_vol, dstep_lo, dstep_hi]
+	ld	a, (hl)
+	ld	(n_period), a
+	inc	hl
+	ld	a, (hl)
+	ld	(n_dur), a
+	inc	hl
+	ld	a, (hl)
+	ld	(n_vol+1), a		; vfx hi = init_vol
+	xor	a
+	ld	(n_vol), a		; vfx lo = 0
+	inc	hl
+	ld	a, (hl)
+	ld	(n_step), a
+	inc	hl
+	ld	a, (hl)
+	ld	(n_step+1), a
+	; R6 = noise period
+	ld	d, 6
+	ld	a, (n_period)
+	ld	e, a
+	call	psg_set
+	; R7 = tone A,B on / tone C off / noise C on = 0x1C
+	ld	d, 7
+	ld	e, 0x1C
+	call	psg_set
+	ld	a, 2
+	ld	(sfx_type), a		; noise
 	ret
 
 ; ---- 毎フレーム更新 ----
 snd_tick:
-	ld	a, (snd_nch)
+	ld	a, (bgm_nch)
+	or	a
+	jr	z, st_sfx
+	; BGM voice 0..nch-1 -> PSG 0..nch-1
+	ld	iy, bgm_v0
+	xor	a
+	ld	(cur_pch), a
+	call	voice_tick
+	ld	a, (bgm_nch)
+	cp	2
+	jr	c, st_sfx
+	ld	iy, bgm_v1
+	ld	a, 1
+	ld	(cur_pch), a
+	call	voice_tick
+	ld	a, (bgm_nch)
+	cp	3
+	jr	c, st_sfx
+	ld	iy, bgm_v2
+	ld	a, 2
+	ld	(cur_pch), a
+	call	voice_tick
+st_sfx:
+	ld	a, (sfx_type)
 	or	a
 	ret	z
-	ld	(st_nch), a
-	xor	a
-	ld	(st_ch), a
-	ld	iy, snd_ch
-.chl:
-	ld	a, (iy+3)		; active?
+	cp	2
+	jr	z, st_noise
+	; tone SFX -> PSG C(上書き)
+	ld	iy, sfx_v
+	ld	a, 2
+	ld	(cur_pch), a
+	call	voice_tick
+	ld	a, (sfx_v+V_ACT)
 	or	a
-	jp	z, .next
-	dec	(iy+2)			; counter--
-	jp	nz, .next
-	; 次 event ロード
-	ld	l, (iy+0)
-	ld	h, (iy+1)
-	ld	a, (hl)
-	ld	(ev_plo), a
-	inc	hl
-	ld	a, (hl)
-	ld	(ev_vph), a
-	inc	hl
-	ld	a, (hl)			; duration
-	inc	hl
-	ld	(iy+0), l
-	ld	(iy+1), h
-	or	a
-	jr	nz, .play
-	; チャンネル終了
-	ld	(iy+3), a		; act=0
-	ld	a, (st_ch)
-	add	a, 8
-	ld	d, a
-	ld	e, 0
-	call	psg_set			; vol off
-	jr	.next
-.play:
-	ld	(iy+2), a		; counter=duration
-	ld	a, (st_ch)		; period fine reg = ch*2
-	add	a, a
-	ld	d, a
-	ld	a, (ev_plo)
-	ld	e, a
-	call	psg_set
-	ld	a, (st_ch)		; period coarse reg = ch*2+1
-	add	a, a
-	inc	a
-	ld	d, a
-	ld	a, (ev_vph)
-	and	0x0F
-	ld	e, a
-	call	psg_set
-	ld	a, (st_ch)		; vol reg = 8+ch
-	add	a, 8
-	ld	d, a
-	ld	a, (ev_vph)
-	rrca
-	rrca
-	rrca
-	rrca
-	and	0x0F
-	ld	e, a
-	call	psg_set
-.next:
-	ld	a, (st_ch)
-	inc	a
-	ld	(st_ch), a
-	ld	de, 4
-	add	iy, de
-	ld	a, (st_nch)
-	dec	a
-	ld	(st_nch), a
-	jp	nz, .chl
+	ret	nz
+	xor	a			; SFX終了
+	ld	(sfx_type), a
+	ret
+st_noise:
+	call	noise_tick
 	ret
 
-; ---- アクティブ ch 数(A, 0=全終了) ----
-snd_active:
-	ld	a, (snd_nch)
+; ---- noise SFX 更新 ----
+noise_tick:
+	ld	a, (n_dur)
+	dec	a
+	ld	(n_dur), a
+	jr	nz, nt_cont
+	; 終了: R7 復帰, vol C off, sfx_type=0
+	ld	d, 7
+	ld	e, 0x38
+	call	psg_set
+	ld	d, 10
+	ld	e, 0
+	call	psg_set
+	xor	a
+	ld	(sfx_type), a
+	ret
+nt_cont:
+	ld	hl, (n_vol)		; vfx(8.8)
+	ld	de, (n_step)
+	or	a
+	sbc	hl, de
+	jr	nc, nt_ok
+	ld	hl, 0
+nt_ok:
+	ld	(n_vol), hl
+	ld	a, h			; vol = vfx>>8
+	and	0x0F
+	ld	e, a
+	ld	d, 10			; R10 = vol C
+	call	psg_set
+	ret
+
+; ---- BGM アクティブ ch 数(A)----
+snd_bgm_active:
+	ld	a, (bgm_nch)
 	or	a
 	ret	z
-	ld	(st_nch), a
-	ld	iy, snd_ch
 	ld	c, 0
-.al:
-	ld	a, (iy+3)
+	ld	iy, bgm_v0
+	ld	b, a
+sba_lp:
+	ld	a, (iy+V_ACT)
 	add	a, c
 	ld	c, a
-	ld	de, 4
+	ld	de, VSIZE
 	add	iy, de
-	ld	a, (st_nch)
-	dec	a
-	ld	(st_nch), a
-	jr	nz, .al
+	djnz	sba_lp
 	ld	a, c
 	ret
 
 ; ---- 状態 ----
-snd_nch:	db	0		; チャンネル数(0=停止)
-snd_ch:		ds	12		; 3ch × [ptrL, ptrH, cnt, act]
-tune_base:	dw	0
-ss_src:		dw	0
-ss_cnt:		db	0
-st_nch:		db	0
-st_ch:		db	0
-ev_plo:		db	0
-ev_vph:		db	0
+bgm_nch:	db 0
+bgm_base:	dw 0
+bgm_v0:		ds VSIZE
+bgm_v1:		ds VSIZE
+bgm_v2:		ds VSIZE
+sfx_type:	db 0			; 0=none 1=tone 2=noise
+sfx_v:		ds VSIZE
+n_period:	db 0
+n_dur:		db 0
+n_vol:		dw 0			; 8.8 固定小数
+n_step:		dw 0
+cur_pch:	db 0
+sp_hdr:		dw 0
+sp_cnt:		db 0
+sp_i:		db 0
