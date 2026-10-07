@@ -9,6 +9,10 @@
 #include	"makescrn.h"
 #include	"makesub.h"
 
+#if defined(XMIL_PROBE_SUPPORT)
+UINT32	pxmil_frame = 0;	/* 描画フレーム数 (joyscript/状態ダンプ用) */
+#endif
+
 
 	MAKESCRN	makescrn;
 	UINT		drawtime = 0;
@@ -296,6 +300,11 @@ void scrnupdate(void) {
 		return;
 	}
 	corestat.drawframe = 0;
+
+#if defined(XMIL_PROBE_SUPPORT)
+	/* pxmil: 描画フレーム数 (XMIL_JOYSCRIPT の台本再生や状態ダンプ用) */
+	pxmil_frame++;
+#endif
 
 	/* pxmil デバッグ: 状態差分用 (Mac 開発ビルド XMIL_PROBE_SUPPORT 限定,
 	   環境変数 XMIL_STATEDUMP 有効時のみ stderr へ)。描画状態の比較用。 */

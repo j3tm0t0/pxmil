@@ -73,6 +73,7 @@ PCG_DEFCELL	EQU	0x07FF		; PCG 定義に使うセル
 ; 自機 PCG コード (2x2) と属性 (PCG=0x20 | プレーン B1 R2 G4 = 白0x07)
 SHIP_TL		EQU	0x80
 SHIP_ATR	EQU	0x20 | 0x02	; PCG + R プレーンのみ (赤, 地形に少なく視認性高)
+MOVE_DELAY	EQU	3		; 自機移動の間隔 (フレーム)。小さいほど速い
 ; ジョイスティック (PSG reg 0x0e, 負論理)
 PORT_PSGREG	EQU	0x1C00		; レジスタ選択
 PORT_PSGDAT	EQU	0x1B00		; 読み (sndboard_psgsta)
@@ -340,12 +341,19 @@ mainloop:
 	call	redraw_chunk
 	ENDIF
 	IFDEF	SHIP
+	call	move_ship		; ジョイスティックで自機移動
 	call	overlay_ship
 	ENDIF
 	; --- 最小フレーム余裕(minspare)をプローブ出力 (XMIL_PROBE 時) ---
 	;   余裕は wait_vblank で計測済み。minspare>0 なら全フレーム1フレーム内に収まる。
 	ld	hl, (minspare)
 	ld	(idlecnt), hl
+	IFDEF	DBG_SHIPPOS
+	ld	a, (ship_col)
+	ld	l, a
+	ld	a, (ship_row)
+	ld	h, a			; (row<<8)|col
+	ENDIF
 	ld	bc, 0x00FE
 	out	(c), l
 	ld	bc, 0x00FF
@@ -1110,6 +1118,75 @@ def_plane:
 	ret
 
 ;=====================================================================
+; ジョイスティック読み取り → a (PSG port A, 負論理, bit=0 で押下)。
+;   OUT 0x1C00,14 でレジスタ選択 → IN 0x1B00。
+read_joy:
+	ld	bc, PORT_PSGREG
+	ld	a, 0x0E			; PSG reg 14 (port A = joystick)
+	out	(c), a
+	ld	bc, PORT_PSGDAT
+	in	a, (c)
+	ret
+
+;=====================================================================
+; 自機移動。ジョイスティック方向で ship_col/ship_row を更新 (境界付き)。
+;   移動粒度は 1 セル(8px)。MOVE_DELAY フレームごとに 1 セル移動。
+;   --- 方向マッピング (X1 モニタを 90度回した向き前提。要調整は下記 bit 割当で) ---
+;     bit0=上, bit1=下, bit2=左, bit3=右 (X1 標準 PSG port A, 負論理)。
+;     既定: 上→行-1, 下→行+1, 左→列-1, 右→列+1 (画面そのまま)。
+;     90度回転で実機の見た目に合わせる場合はここの対応を入れ替える。
+move_ship:
+	ld	a, (move_dly)
+	or	a
+	jr	z, .go
+	dec	a
+	ld	(move_dly), a
+	ret
+.go:
+	call	read_joy
+	ld	e, a			; e = joy (負論理)
+	ld	d, 0			; d = 移動したか
+	bit	0, e			; 上
+	jr	nz, .n0
+	ld	a, (ship_row)
+	or	a
+	jr	z, .n0
+	dec	a
+	ld	(ship_row), a
+	ld	d, 1
+.n0:	bit	1, e			; 下
+	jr	nz, .n1
+	ld	a, (ship_row)
+	cp	ROWS - 2		; 行は 0..23 (2x2)
+	jr	nc, .n1
+	inc	a
+	ld	(ship_row), a
+	ld	d, 1
+.n1:	bit	2, e			; 左
+	jr	nz, .n2
+	ld	a, (ship_col)
+	or	a
+	jr	z, .n2
+	dec	a
+	ld	(ship_col), a
+	ld	d, 1
+.n2:	bit	3, e			; 右
+	jr	nz, .n3
+	ld	a, (ship_col)
+	cp	COLS - 2		; 列は 0..38 (2x2)
+	jr	nc, .n3
+	inc	a
+	ld	(ship_col), a
+	ld	d, 1
+.n3:
+	ld	a, d
+	or	a
+	ret	z			; 移動無しなら遅延リセットしない
+	ld	a, MOVE_DELAY
+	ld	(move_dly), a
+	ret
+
+;=====================================================================
 ; 自機を現フレームの表示 POS に合わせてテキストVRAMに配置 (スクロール追従)。
 ;   前回位置を消去し、新位置(cur_pos + 画面オフセット)に 2x2 を書く。
 overlay_ship:
@@ -1304,6 +1381,7 @@ ship_prev2:	dw	0		; 窓2
 ship_soff:	dw	0		; 画面セルオフセット
 ws_tl:		dw	0
 ds_code:	db	0
+move_dly:	db	0		; 自機移動の遅延カウンタ
 
 ; オリジナル機体 16x16 = 4セル(TL,TR,BL,BR). R プレーンのみ(赤, 視認性)。右向き。
 ;   チームが自前抽出スプライトに差し替える場合はここを置換。
