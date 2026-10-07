@@ -13,6 +13,15 @@ UINT32 z80_cycmul = 256;
  * フロントエンドの入口は xmil_main なので中継する。 */
 extern int xmil_main(int argc, char *argv[]);
 int main(int argc, char *argv[]) {
+	/* XMIL_CYCMUL=128 で 8MHz, 256 で 4MHz (既定) を選べるようにする。
+	 * DMA/CPU の両方に倍率が掛かる (crtc/dmac 側で参照)。 */
+	const char *cm = getenv("XMIL_CYCMUL");
+	if (cm) {
+		long v = atol(cm);
+		if (v >= 1 && v <= 4096) {
+			z80_cycmul = (UINT32)v;
+		}
+	}
 	return xmil_main(argc, argv);
 }
 

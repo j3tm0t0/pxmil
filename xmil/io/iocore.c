@@ -249,6 +249,27 @@ void IOOUTCALL iocore_out(UINT port, REG8 dat) {
 
 	UINT	msb;
 
+	/* pxmil デバッグプローブ (XMIL_PROBE 有効時のみ):
+	 *   OUT 0x00FE,lo ; OUT 0x00FF,hi で (hi<<8)|lo を stderr に出す。
+	 *   X1 で未使用のポートなので通常動作に影響しない。 */
+	{
+		static int probe_init = 0;
+		static int probe_on = 0;
+		static unsigned probe_lo = 0;
+		if (!probe_init) {
+			probe_init = 1;
+			probe_on = (getenv("XMIL_PROBE") != NULL);
+		}
+		if (probe_on) {
+			if (port == 0x00fe) { probe_lo = dat; return; }
+			if (port == 0x00ff) {
+				fprintf(stderr, "PROBE %u\n",
+								(unsigned)((dat << 8) | probe_lo));
+				return;
+			}
+		}
+	}
+
 	msb = port >> 8;
 	if (iocore.s.mode) {
 		gram2_o(port, dat);

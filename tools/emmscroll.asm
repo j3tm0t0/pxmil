@@ -23,7 +23,17 @@
 ;   ~/.local/bin/sjasmplus --nologo --raw=emmscroll.bin tools/emmscroll.asm
 ;   python3 tools/mkx1disk.py emmscroll.bin -o roms/EMMSCRL.2d -n EMMSCRL
 ;
-; === 現状: M1/M2 CPU 再描画で無限スムーズ横スクロール ===
+; === 現状 ===
+;   M1/M2: 4ページ切替+CRTC POS で全画面2ドット無限スムーズ横スクロール (CPU再描画)
+;   M4: 毎フレームの空き時間 (アクティブ表示中の idle ループ回数) を計測。
+;       4MHz idle≈501, 8MHz idle≈2152 (約4.3倍の余裕)。
+;       probe ポート 0x00FE/0x00FF (エミュ XMIL_PROBE 時に stderr 出力) で取得。
+;       -DM4_DISPLAY で画面左上に16進4桁オンスクリーン表示 (任意)。
+;   8MHz 切替: エミュ環境変数 XMIL_CYCMUL=128 (256=4MHz)。
+;   M3 (列データの EMM→DMA 供給) は未実装: 縦1列は GRAM ポート空間で不連続
+;       (cell stride 40, raster stride 0x800) のため単一 DMA で GRAM に直接描けず、
+;       記事も「1列ループはCPUで転送」とする。EMM→DMA→GRAM 経路自体は
+;       tools/emmtest.asm で実証済み。2D STRIP 化が今後の課題。
 
 	DEVICE	NOSLOT64K
 	ORG	0x0100
@@ -227,11 +237,167 @@ mainloop:
 	IFNDEF	DBG_NOREDRAW
 	call	redraw_next
 	ENDIF
+	; --- M4: フレーム作業後の空き時間を計測して表示 ---
+	;   アクティブ表示期間 (DISP=1) に idle カウンタを回し、DISP=0 に
+	;   なるまでの回数 = 1フレームの CPU 空き容量。8MHz なら約2倍になる。
+	call	wait_active		; DISP=1 になるまで待つ
+	ld	de, 0
+	ld	bc, PORT_PPIB
+.spin:	in	a, (c)
+	add	a, a			; DISP -> carry
+	jr	nc, .spindone		; DISP=0 (アクティブ終了) で停止
+	inc	de
+	jr	.spin
+.spindone:
+	ld	(idlecnt), de
+	; デバッグプローブ出力 (XMIL_PROBE 有効時のみエミュが拾う)
+	ld	bc, 0x00FE
+	out	(c), e			; lo
+	ld	bc, 0x00FF
+	out	(c), d			; hi
+	IFDEF	M4_DISPLAY
+	call	show_idle		; オンスクリーン表示 (任意)
+	ENDIF
 	; framecnt++
 	ld	hl, (framecnt)
 	inc	hl
 	ld	(framecnt), hl
 	jp	mainloop
+
+;=====================================================================
+; DISP(bit7)=1 (アクティブ開始) になるまで待つ
+wait_active:
+	ld	bc, PORT_PPIB
+.w:	in	a, (c)
+	add	a, a
+	jr	nc, .w			; DISP=0 の間待つ
+	ret
+
+;=====================================================================
+; idlecnt(16bit) を 16進4桁で「現フレームの表示左上」に出す。
+; テキスト VRAM も CRTC POS を共有するので、表示開始セル base を基準に書く。
+;   base = (coarse + (phase&1?1024:0)) & 0x7FF   (= このフレームの表示 POS)
+show_idle:
+	; base 計算 -> si_base
+	ld	hl, (coarse)
+	ld	a, (phase)
+	and	1
+	jr	z, .nooff
+	ld	bc, OFF1024
+	add	hl, bc
+.nooff:
+	ld	a, h
+	and	0x07
+	ld	h, a
+	ld	(si_base), hl		; base cell
+	; --- 前フレームの数字セル (prev_base+0..3) のテキストを消す ---
+	ld	hl, (prev_base)
+	ld	d, 4
+.clrtxt:
+	ld	a, h
+	and	0x07
+	or	(TVRAM >> 8)
+	ld	b, a
+	ld	c, l
+	xor	a
+	out	(c), a			; ANK=0 (空白)
+	inc	hl
+	dec	d
+	jr	nz, .clrtxt
+	ld	hl, (si_base)
+	ld	(prev_base), hl
+	; --- 数字セル base+0..3 (row0) の GRAM を黒クリア (数字を読めるように) ---
+	ld	d, 4			; 4 セル
+	ld	hl, (si_base)
+.clr:
+	ld	a, h
+	and	0x07
+	push	hl			; cell 保存
+	; B plane
+	or	(GRAM_B >> 8)
+	ld	b, a
+	ld	c, l
+	xor	a
+	call	wcell8
+	pop	hl
+	push	hl
+	ld	a, h
+	and	0x07
+	or	(GRAM_R >> 8)
+	ld	b, a
+	ld	c, l
+	xor	a
+	call	wcell8
+	pop	hl
+	push	hl
+	ld	a, h
+	and	0x07
+	or	(GRAM_G >> 8)
+	ld	b, a
+	ld	c, l
+	xor	a
+	call	wcell8
+	pop	hl
+	inc	hl			; 次セル
+	dec	d
+	jr	nz, .clr
+	; 4 ニブル: H上,H下,L上,L下 を base+0..3 に
+	ld	a, 0			; digit index 0..3
+	ld	(si_idx), a
+	ld	hl, (idlecnt)
+	ld	a, h
+	rrca
+	rrca
+	rrca
+	rrca
+	call	si_nib			; H 上位
+	ld	hl, (idlecnt)
+	ld	a, h
+	call	si_nib			; H 下位
+	ld	hl, (idlecnt)
+	ld	a, l
+	rrca
+	rrca
+	rrca
+	rrca
+	call	si_nib			; L 上位
+	ld	hl, (idlecnt)
+	ld	a, l
+	call	si_nib			; L 下位
+	ret
+; a の下位4bit -> 16進文字 -> (base+si_idx) の ANK, ATTR=白。si_idx++。
+si_nib:
+	and	0x0F
+	add	a, 0x90
+	daa
+	adc	a, 0x40
+	daa				; 0..9->'0'..'9', A..F->'A'..'F'
+	ld	e, a			; e = 文字
+	; cell = (si_base + si_idx) & 0x7FF
+	ld	hl, (si_base)
+	ld	a, (si_idx)
+	ld	c, a
+	ld	b, 0
+	add	hl, bc
+	ld	a, h
+	and	0x07
+	ld	h, a			; cell &0x7FF
+	; ANK port = 0x3000 | cell
+	ld	a, h
+	or	(TVRAM >> 8)		; 0x30
+	ld	b, a
+	ld	c, l
+	out	(c), e			; ANK = 文字
+	ld	a, h
+	or	(TATTR >> 8)		; 0x20
+	ld	b, a
+	ld	a, 0x07
+	out	(c), a			; ATTR = 白
+	; si_idx++
+	ld	a, (si_idx)
+	inc	a
+	ld	(si_idx), a
+	ret
 
 ;=====================================================================
 ; CRTC POS 設定: HL = 11bit 表示開始セル
@@ -544,6 +710,7 @@ coarsen:	dw	0		; 次フレームの粗位置 ((f+1)>>2)
 framecnt:	dw	0		; フレームカウンタ (16bit)
 phase:		db	0
 npage:		db	0		; 次フレームに見せるページ
+idlecnt:	dw	0		; M4: フレーム空き時間カウンタ
 colB:		db	0
 colR:		db	0
 colG:		db	0
@@ -552,5 +719,8 @@ pf_base:	dw	0
 pf_wc:		db	0
 dc_base:	dw	0
 dc_row:		db	0
+si_base:	dw	0
+si_idx:		db	0
+prev_base:	dw	0
 
 	END
