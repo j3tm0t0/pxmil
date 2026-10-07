@@ -139,16 +139,31 @@ gen_bullet:
 sprite_update:
 	call	fire_check		; トリガで発射
 	call	enemy_spawn		; 一定間隔で右端から出現
-	; 全消去(前回位置)。衝突で後に非アクティブ化されても、消去は済んでいるので消える。
-	call	expls_erase
-	call	enemies_erase
-	call	bullets_erase
-	; 衝突判定(弾vs敵, 敵vs自機) → 当たった弾/敵を非アクティブ化 + 爆発発生
-	call	collision_check
-	; 移動/アニメ
+	; scroll_moved = (cur_pos != prev_cur_pos) : cur_pos は SPEED フレームごとにしか
+	;   変わらない。変わらないフレームは動いていない敵の描き直しを省略(idle-skip)。
+	ld	hl, (cur_pos)
+	ld	de, (prev_cur_pos)
+	ld	(prev_cur_pos), hl
+	ld	a, l
+	sub	e
+	ld	b, a
+	ld	a, h
+	sub	d
+	or	b			; 0 なら変化なし
+	ld	a, 0
+	jr	z, .nomv
+	inc	a
+.nomv:	ld	(scroll_moved), a
+	; 移動/アニメ(消去より先。敵は ene_dirty を立てる)
 	call	bullets_move
 	call	enemies_move
 	call	expls_anim
+	; 衝突判定(弾vs敵, 敵vs自機) → 当たった弾/敵を非アクティブ化 + 爆発発生
+	call	collision_check
+	; 全消去(前回位置)。敵は idle-skip, 非アクティブ化された敵も消去される。
+	call	expls_erase
+	call	enemies_erase
+	call	bullets_erase
 	; 全描画(アクティブのみ)
 	call	bullets_draw
 	call	enemies_draw
@@ -223,6 +238,9 @@ collision_check:
 	ld	hl, ene_active
 	add	hl, de
 	ld	(hl), 0
+	ld	hl, ene_dirty		; 消滅 → dirty(消去させる)
+	add	hl, de
+	ld	(hl), 1
 	ld	hl, ene_ex
 	add	hl, de
 	ld	a, (hl)
@@ -294,6 +312,9 @@ collision_check:
 	ld	hl, ene_active
 	add	hl, de
 	ld	(hl), 0
+	ld	hl, ene_dirty		; 消滅 → dirty
+	add	hl, de
+	ld	(hl), 1
 	call	expl_spawn		; (col_ex,col_ey)
 .vn:	ld	a, (spr_j)
 	inc	a
@@ -643,11 +664,12 @@ enemies_erase:
 	ret	z
 	ld	e, a
 	ld	d, 0
-	ld	hl, ene_active
+	; idle-skip: (scroll_moved OR dirty) でなければ消去しない(VRAMに残す)
+	ld	a, (scroll_moved)
+	ld	hl, ene_dirty
 	add	hl, de
-	ld	a, (hl)
-	or	a
-	jr	z, .en
+	or	(hl)
+	jp	z, .en
 	; prev 窓1
 	ld	a, (spr_i)
 	add	a, a
@@ -661,7 +683,7 @@ enemies_erase:
 	ld	l, a
 	ld	a, h
 	cp	0xFF
-	jr	z, .en
+	jr	z, .en			; prev 無効(未描画) → 消去不要
 	call	ene_clr2x2		; de 保持
 	ld	a, (spr_i)
 	add	a, a
@@ -674,12 +696,30 @@ enemies_erase:
 	ld	h, (hl)
 	ld	l, a
 	call	ene_clr2x2
+	; 非アクティブ(衝突で消滅)なら prev を無効化(次フレームの再消去防止)
+	ld	a, (spr_i)
+	ld	e, a
+	ld	d, 0
+	ld	hl, ene_active
+	add	hl, de
+	ld	a, (hl)
+	or	a
+	jr	nz, .en			; active なら draw が prev 更新
+	ld	a, (spr_i)
+	add	a, a
+	ld	e, a
+	ld	d, 0
+	ld	hl, ene_prev
+	add	hl, de
+	ld	(hl), 0xFF
+	inc	hl
+	ld	(hl), 0xFF
 .en:	ld	a, (spr_i)
 	inc	a
 	ld	(spr_i), a
-	jr	.el
+	jp	.el
 
-; 全敵のアニメ更新 + 左へ移動 + 画面外で消滅。
+; 全敵のアニメ更新 + 左へ移動 + 画面外で消滅。移動/アニメしたら ene_dirty=1。
 enemies_move:
 	xor	a
 	ld	(spr_i), a
@@ -693,6 +733,9 @@ enemies_move:
 	ld	a, (hl)
 	or	a
 	jr	z, .mn
+	ld	hl, ene_dirty		; dirty = 0 (初期)
+	add	hl, de
+	ld	(hl), 0
 	; アニメ
 	ld	hl, ene_atmr
 	add	hl, de
@@ -705,6 +748,9 @@ enemies_move:
 	inc	a
 	and	3
 	ld	(hl), a
+	ld	hl, ene_dirty		; アニメ変化 → dirty
+	add	hl, de
+	ld	(hl), 1
 .amv:
 	; 移動
 	ld	hl, ene_mtmr
@@ -712,6 +758,9 @@ enemies_move:
 	dec	(hl)
 	jr	nz, .mn
 	ld	(hl), ENEMY_MOVE
+	ld	hl, ene_dirty		; 移動 → dirty
+	add	hl, de
+	ld	(hl), 1
 	ld	hl, ene_ex
 	add	hl, de
 	ld	a, (hl)
@@ -741,6 +790,29 @@ enemies_draw:
 	ld	a, (hl)
 	or	a
 	jp	z, .dn
+	; idle-skip: prev 無効(新規/消去後)なら必ず描画。prev 有効なら
+	;   (scroll_moved OR dirty) のときだけ描き直す。
+	ld	a, (spr_i)
+	add	a, a
+	ld	e, a
+	ld	d, 0
+	ld	hl, ene_prev + 1	; 窓1 prev の高位
+	add	hl, de
+	ld	a, (hl)
+	cp	0xFF
+	jr	z, .draw		; prev 無効 → 描画
+	ld	a, (spr_i)
+	ld	e, a
+	ld	d, 0
+	ld	a, (scroll_moved)
+	ld	hl, ene_dirty
+	add	hl, de
+	or	(hl)
+	jp	z, .dn			; 変化なし → 描画スキップ
+.draw:
+	ld	a, (spr_i)		; de = spr_i に復帰
+	ld	e, a
+	ld	d, 0
 	; soff = ey*COLS + ex
 	ld	hl, ene_ey
 	add	hl, de
@@ -1149,6 +1221,9 @@ ene_atmr:	ds	MAX_ENEMIES
 ene_mtmr:	ds	MAX_ENEMIES
 ene_prev:	ds	MAX_ENEMIES * 2		; 前回 top-left セル 窓1
 ene_prev2:	ds	MAX_ENEMIES * 2		; 窓2
+ene_dirty:	ds	MAX_ENEMIES		; 今フレーム移動/アニメ/消滅したか(idle-skip用)
+prev_cur_pos:	dw	0xFFFF			; 前フレームの cur_pos
+scroll_moved:	db	1			; cur_pos が変わった(=全描き直し)か
 
 spr_j:		db	0		; collision 内側ループ index
 spr_k:		db	0		; expl_spawn の index
