@@ -55,7 +55,7 @@ void width80x25_200l(void) {								// 80x25 200line
 		} while(--x);
 
 		pos = LOW11(pos + makescrn.surfrx);
-		if (TRAMUPDATE(LOW11(pos - 1)) & 4) {			// ï¿½cï¿½{ï¿½pï¿½`ï¿½æ‚¾ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
+		if (TRAMUPDATE(LOW11(pos - 1)) & 4) {			// c”{Šp•`‰æ‚¾‚Á‚½‚ç
 			makescrn.fontycnt += makescrn.charcy;
 		}
 		else {
@@ -189,7 +189,7 @@ const UINT8	*src;
 		} while(--x);
 
 		pos = LOW11(pos + makescrn.surfrx);
-		if (TRAMUPDATE(LOW11(pos - 1)) & 4) {			// ï¿½cï¿½{ï¿½pï¿½`ï¿½æ‚¾ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
+		if (TRAMUPDATE(LOW11(pos - 1)) & 4) {			// c”{Šp•`‰æ‚¾‚Á‚½‚ç
 			makescrn.fontycnt += makescrn.charcy;
 		}
 		else {
@@ -248,7 +248,7 @@ void width80x20l(void) {
 		} while(--x);
 
 		pos = LOW11(pos + makescrn.surfrx);
-		if (TRAMUPDATE(LOW11(pos - 1)) & 4) {			// ï¿½cï¿½{ï¿½pï¿½`ï¿½æ‚¾ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
+		if (TRAMUPDATE(LOW11(pos - 1)) & 4) {			// c”{Šp•`‰æ‚¾‚Á‚½‚ç
 			makescrn.fontycnt += makescrn.charcy;
 		}
 		else {
@@ -309,7 +309,7 @@ void width80x10l(void) {
 		} while(--x);
 
 		pos = LOW11(pos + makescrn.surfrx);
-		if (TRAMUPDATE(LOW11(pos - 1)) & 4) {			// ï¿½cï¿½{ï¿½pï¿½`ï¿½æ‚¾ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
+		if (TRAMUPDATE(LOW11(pos - 1)) & 4) {			// c”{Šp•`‰æ‚¾‚Á‚½‚ç
 			makescrn.fontycnt += makescrn.charcy;
 		}
 		else {

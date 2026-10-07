@@ -55,7 +55,7 @@ static void flashupdatetmp(void) {
 			udt = udtbase;
 			if (!y2) {
 				if (atr & (TRAMATR_Yx2 << 8)) {
-					udt |= (UPDATE_TRAM | 1) << 8;		// ï¿½ï¿½ï¿½×‚ï¿½cï¿½{ï¿½p
+					udt |= (UPDATE_TRAM | 1) << 8;		// ¶’×‚êc”{Šp
 				}
 				else {
 					y2 = TRUE;
@@ -63,16 +63,16 @@ static void flashupdatetmp(void) {
 			}
 			if (!y2) {
 				if (atr & (TRAMATR_Yx2 << 0)) {
-					udt |= (UPDATE_TRAM | 1) << 0;		// ï¿½Eï¿½×‚ï¿½cï¿½{ï¿½p
+					udt |= (UPDATE_TRAM | 1) << 0;		// ‰E’×‚êc”{Šp
 				}
 				else {
 					y2 = TRUE;
 				}
 			}
-			if (atr & (TRAMATR_Xx2 << 8)) {				// ï¿½ï¿½ï¿½ï¿½ï¿½{ï¿½p?
+			if (atr & (TRAMATR_Xx2 << 8)) {				// ¶‘¤”{Šp?
 				udt |= 0x0812;
 			}
-			if (atr & (TRAMATR_Xx2 << 0)) {				// ï¿½Eï¿½ï¿½ï¿½{ï¿½p?
+			if (atr & (TRAMATR_Xx2 << 0)) {				// ‰E‘¤”{Šp?
 				udt |= 0x0008;
 			}
 			if ((TRAMUPDATE(posl) ^ (udt >> 8)) & 0x1f) {
@@ -262,9 +262,9 @@ static void changecrtc(void) {
 	}
 
 	surfsy = charcy * surfcy * 2;
-	// ï¿½nï¿½Cï¿½hï¿½ï¿½ï¿½Cï¿½hï¿½Rï¿½Å‰ï¿½Ê‚ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½È‚ï¿½ï¿½Ì‚Åƒï¿½ï¿½Wï¿½bï¿½Nï¿½ï¿½ï¿½Cï¿½ï¿½ï¿½ï¿½ï¿½×‚ï¿½
+	// ƒnƒCƒhƒ‰ƒCƒh‚R‚Å‰æ–Ê‚ªÁ‚¦‚È‚¢‚Ì‚ÅƒƒWƒbƒN‚ğC³‚·‚×‚µ
 	x = min(scrnxmax, makescrn.surfcx);
-	if (surfcx < x) {								// ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½È‚ï¿½ï¿½ï¿½
+	if (surfcx < x) {								// ¬‚³‚­‚È‚Á‚½
 		x = (x - surfcx) * 8;
 		p = screenmap + (surfcx * 8);
 		y = surfsy;

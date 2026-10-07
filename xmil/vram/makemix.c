@@ -4,7 +4,7 @@
 #include	"makesub.h"
 
 
-// ï¿½xï¿½ï¿½ï¿½Ì‚ï¿½ï¿½ï¿½ï¿½È‚ï¿½ï¿½ÅƒCï¿½ï¿½ï¿½ï¿½ï¿½Cï¿½ï¿½ï¿½É‚ï¿½ï¿½ï¿½Î‚ï¿½ï¿½ï¿½
+// ’x‚¢‚Ì‚ªŒ™‚È‚çŒã‚ÅƒCƒ“ƒ‰ƒCƒ“‚É‚·‚ê‚Î‚¢‚¢
 void makemix_mixtext(UINT8 *dst, UINT align, const UINT8 *txt, UINT count) {
 
 	UINT32	datl;
