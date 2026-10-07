@@ -65,6 +65,7 @@ void makemix_mixgrph(UINT8 *dst, UINT align, const UINT8 *grp, UINT count);
 #if defined(SUPPORT_TURBOZ)
 void makemix_mixgrph64(UINT8 *dst, UINT align,
 					const UINT8 *grp0, const UINT8 *grp1, UINT count);
+void makemix_mixtext64(UINT8 *dst, UINT align, const UINT8 *txt, UINT count);
 #endif
 
 void makemix_settext(UINT8 *dst, UINT align, const UINT8 *txt, UINT count);

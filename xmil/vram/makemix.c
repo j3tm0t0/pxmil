@@ -99,6 +99,39 @@ void makemix_mixgrph64(UINT8 *dst, UINT align,
 		dst += align;
 	} while(--count);
 }
+
+/* 64-color mode text/PCG overlay: where a glyph pixel has a non-zero
+   3bit color (tc 1..7), overwrite the screenmap with pen 0x40|tc
+   (text pens live at pal index 64..71 just above the 64 graphics
+   pens, so tc=0 stays transparent and the graphics pixel shows). */
+void makemix_mixtext64(UINT8 *dst, UINT align, const UINT8 *txt, UINT count) {
+
+	UINT	x;
+	REG8	p0;
+	REG8	p1;
+	REG8	p2;
+	REG8	m;
+	REG8	tc;
+
+	do {
+		p0 = txt[MAKETEXT_ROW * 0];
+		p1 = txt[MAKETEXT_ROW * 1];
+		p2 = txt[MAKETEXT_ROW * 2];
+		m = 0x80;
+		for (x = 0; x < 8; x++) {
+			tc = 0;
+			if (p0 & m) { tc |= 1; }
+			if (p1 & m) { tc |= 2; }
+			if (p2 & m) { tc |= 4; }
+			if (tc) {
+				dst[x] = (UINT8)(0x40 | tc);
+			}
+			m >>= 1;
+		}
+		txt++;
+		dst += align;
+	} while(--count);
+}
 #endif
 
 

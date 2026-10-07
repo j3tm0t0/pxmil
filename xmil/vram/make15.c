@@ -86,6 +86,7 @@ void width40x25_64s(void) {						// 40x25 200line 64色 (6plane,1画面)
 	UINT	x;
 	REG8	udtmp;
 	REG8	dirty;
+	UINT8	work[MAKETEXT_ROW * 3];
 	UINT	lines;
 	UINT	i;
 
@@ -111,6 +112,9 @@ void width40x25_64s(void) {						// 40x25 200line 64色 (6plane,1画面)
 				if (fontcy < makescrn.fontcy) {
 					makemix_cpy200(dst, fontcy, makescrn.fontcy);
 				}
+				ZeroMemory(work, sizeof(work));
+				makechr8(work, pos, fontcy, udtmp);
+				makemix_mixtext64(dst, SURFACE_WIDTH * 2, work, fontcy);
 			}
 			pos = LOW11(pos + 1);
 			dst += 8;
