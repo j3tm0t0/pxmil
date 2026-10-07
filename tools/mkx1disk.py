@@ -20,6 +20,7 @@
 """
 
 import argparse
+import os
 import struct
 import sys
 
@@ -44,7 +45,7 @@ def build_direntry(name, size, load, exec_addr, start_sector):
     return bytes(e)
 
 
-def make_disk(program, name, load, exec_addr, start_sector):
+def make_disk(program, name, load, exec_addr, start_sector, data_files=None):
     start_off = start_sector * SECTOR_SIZE
     # IPL は size バイトを連続リードするので、最低でも配置分の領域が必要。
     size = len(program)
@@ -54,7 +55,30 @@ def make_disk(program, name, load, exec_addr, start_sector):
     disk = bytearray(DISK_SIZE)
     disk[0x00:0x20] = build_direntry(name, size, load, exec_addr, start_sector)
     disk[start_off:start_off + size] = program
-    return bytes(disk)
+
+    # 追加データファイルをプログラム直後の連続セクタに配置し、
+    #   マニフェストを sector0 の 0x20 に書く(本体の FDC ルーチンが読む):
+    #   0x20: count(1B), 続いて 1件=[start_sector:2B LE, length_bytes:4B LE]=6B。
+    def nsec(n):
+        return (n + SECTOR_SIZE - 1) // SECTOR_SIZE
+    next_sec = start_sector + nsec(size)
+    entries = []
+    for df in (data_files or []):
+        with open(df, "rb") as fp:
+            data = fp.read()
+        off = next_sec * SECTOR_SIZE
+        if off + len(data) > DISK_SIZE:
+            raise ValueError("追加データがディスク容量を超過しています: " + df)
+        disk[off:off + len(data)] = data
+        entries.append((os.path.basename(df), next_sec, len(data)))
+        next_sec += nsec(len(data))
+    man = bytearray([len(entries)])
+    for _, sec, ln in entries:
+        man += struct.pack("<HI", sec, ln)
+    if 0x20 + len(man) > 0x100:
+        raise ValueError("マニフェストが sector0 に収まりません(ファイル数過多)")
+    disk[0x20:0x20 + len(man)] = man
+    return bytes(disk), entries
 
 
 def main(argv=None):
@@ -68,13 +92,17 @@ def main(argv=None):
                     default=None, help="実行アドレス (既定: load と同じ)")
     ap.add_argument("--start-sector", type=lambda s: int(s, 0), default=1,
                     help="開始セクタ番号 (既定 1 = オフセット0x100)")
+    ap.add_argument("--data", nargs="*", default=[],
+                    help="追加データファイル(本体直後の連続セクタに配置, "
+                         "マニフェストを sector0 0x20 に出力)")
     args = ap.parse_args(argv)
 
     with open(args.program, "rb") as f:
         program = f.read()
 
     exec_addr = args.exec_addr if args.exec_addr is not None else args.load
-    disk = make_disk(program, args.name, args.load, exec_addr, args.start_sector)
+    disk, entries = make_disk(program, args.name, args.load, exec_addr,
+                              args.start_sector, args.data)
 
     with open(args.output, "wb") as f:
         f.write(disk)
@@ -82,6 +110,9 @@ def main(argv=None):
     print("wrote %s: %d bytes (prog %d bytes @sector%d off 0x%X, load 0x%04X exec 0x%04X)"
           % (args.output, len(disk), len(program), args.start_sector,
              args.start_sector * SECTOR_SIZE, args.load, exec_addr))
+    for nm, sec, ln in entries:
+        print("  data: %-20s @sector%d (off 0x%X) %d bytes" %
+              (nm, sec, sec * SECTOR_SIZE, ln))
     return 0
 
 
