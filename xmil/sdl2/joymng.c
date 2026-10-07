@@ -4,6 +4,9 @@
 #if defined(XMIL_PROBE_SUPPORT)
 #include	<stdlib.h>
 #include	<string.h>
+#include	"keystat.h"
+#include	"vram.h"	/* tram[], gram[], GRAM_SIZE */
+#include	"iocore.h"	/* pcg.d */
 
 /* makescrn.c: drawn-frame counter */
 extern UINT32 pxmil_frame;
@@ -66,11 +69,147 @@ BYTE joymng_getstat(void) {
 	return(ret);
 }
 
+/* pxmil: scripted keyboard for native testing without a real keyboard.
+ *   Env XMIL_KEYSCRIPT="frame:code,frame:code,..." taps the X1 key (scancode
+ *   from sdlkbd.c s_table) at the given pxmil_frame: keydown at frame, keyup
+ *   KS_TAP frames later.  e.g. "600:0x34" taps SPACE at frame 600
+ *   (RETURN=0x1c, SPACE=0x34, Z=0x29, X=0x2a, 1=0x01).  Called once per frame
+ *   from makescrn.c. */
+#define	KS_MAX	32
+#define	KS_TAP	6
+static int	ks_init = 0;
+static int	ks_n = 0;
+static UINT32	ks_frame[KS_MAX];
+static UINT8	ks_code[KS_MAX];
+
+static void ks_parse(void) {
+	const char *s;
+	ks_init = 1;
+	s = getenv("XMIL_KEYSCRIPT");
+	if (s == NULL) {
+		return;
+	}
+	while (*s && ks_n < KS_MAX) {
+		long f, c;
+		char *end;
+		f = strtol(s, &end, 0);
+		if (end == s || *end != ':') { break; }
+		s = end + 1;
+		c = strtol(s, &end, 0);
+		if (end == s) { break; }
+		ks_frame[ks_n] = (UINT32)f;
+		ks_code[ks_n] = (UINT8)(c & 0xff);
+		ks_n++;
+		s = end;
+		if (*s == ',') { s++; }
+	}
+}
+
+void pxmil_keyscript(void) {
+	int i;
+	if (!ks_init) {
+		ks_parse();
+	}
+	for (i = 0; i < ks_n; i++) {
+		if (pxmil_frame == ks_frame[i]) {
+			keystat_senddata(ks_code[i]);
+			fprintf(stderr, "KEY frame=%u down=%02x\n",
+							(unsigned)pxmil_frame, ks_code[i]);
+		}
+		else if (pxmil_frame == ks_frame[i] + KS_TAP) {
+			keystat_senddata((UINT8)(ks_code[i] | 0x80));
+		}
+	}
+}
+
+/* pxmil: state dump for investigating how a guest draws (PCG/text/GRAM).
+ *   Env XMIL_STATEDUMP=<prefix> enables. Each frame prints a summary to stderr
+ *   (text cells, PCG-attr cells, non-zero GRAM bytes, PCG-RAM FNV hash and
+ *   whether it changed since last frame = per-frame PCG rewrite detection).
+ *   Every XMIL_STATEDUMP_EVERY frames (default 30) writes <prefix>_<frame>.bin
+ *   = tram[0x800] as (ank,atr) pairs (4096B) + pcg.d (0x1800B). */
+void pxmil_statedump(void) {
+	static int	sd_init = 0;
+	static const char *sd_pfx = NULL;
+	static unsigned long sd_every = 30;
+	static UINT32	sd_prev = 0;
+	UINT32	h;
+	int	i, tcells, pcgcells;
+	long	gramnz;
+
+	if (!sd_init) {
+		const char *e;
+		sd_init = 1;
+		sd_pfx = getenv("XMIL_STATEDUMP");
+		e = getenv("XMIL_STATEDUMP_EVERY");
+		if (e) { sd_every = strtoul(e, NULL, 0); if (!sd_every) sd_every = 1; }
+	}
+	if (sd_pfx == NULL) {
+		return;
+	}
+	h = 2166136261u;
+	for (i = 0; i < 0x1800; i++) {
+		h = (h ^ pcg.d[i]) * 16777619u;
+	}
+	tcells = 0; pcgcells = 0;
+	{
+		/* pxmil: per-category PCG cell counts by ank code range.
+		 *   ship 0x10-0x9F / bullet 0xA0-0xAF / enemy 0xB0-0xBF / expl 0xC0-0xCB.
+		 *   Counts BOTH windows (tram[0x800] holds POS and POS+1024). */
+		int shipc = 0, bulc = 0, enec = 0, expc = 0;
+		for (i = 0; i < 0x800; i++) {
+			if (tram[i].ank != 0x20 && tram[i].ank != 0x00) {
+				tcells++;
+				if (tram[i].atr & 0x20) {
+					UINT8 ak = tram[i].ank;
+					pcgcells++;
+					if (ak >= 0x10 && ak < 0xa0) { shipc++; }
+					else if (ak >= 0xa0 && ak < 0xb0) { bulc++; }
+					else if (ak >= 0xb0 && ak < 0xc0) { enec++; }
+					else if (ak >= 0xc0 && ak < 0xcc) { expc++; }
+				}
+			}
+		}
+		fprintf(stderr, "SDPCG frame=%u ship=%d bullet=%d enemy=%d expl=%d\n",
+				(unsigned)pxmil_frame, shipc, bulc, enec, expc);
+	}
+	gramnz = 0;
+	for (i = 0; i < GRAM_SIZE; i++) {
+		if (gram[i]) { gramnz++; }
+	}
+	fprintf(stderr, "SD frame=%u tcells=%d pcgcells=%d gramnz=%ld "
+					"pcghash=%08x pcgchg=%d\n",
+			(unsigned)pxmil_frame, tcells, pcgcells, gramnz,
+			h, (h != sd_prev));
+	sd_prev = h;
+	if ((pxmil_frame % sd_every) == 0) {
+		char path[256];
+		FILE *fp;
+		snprintf(path, sizeof(path), "%s_%06u.bin", sd_pfx,
+					(unsigned)pxmil_frame);
+		fp = fopen(path, "wb");
+		if (fp) {
+			for (i = 0; i < 0x800; i++) {
+				fputc(tram[i].ank, fp);
+				fputc(tram[i].atr, fp);
+			}
+			fwrite(pcg.d, 1, 0x1800, fp);
+			fclose(fp);
+		}
+	}
+}
+
 #else
 
 BYTE joymng_getstat(void) {
 
 	return(0xff);
+}
+
+void pxmil_keyscript(void) {
+}
+
+void pxmil_statedump(void) {
 }
 
 #endif
