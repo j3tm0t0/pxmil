@@ -175,6 +175,29 @@ realstart:
 	jr	nz, .cp_rd
 	ld	ix, pal_buf
 	call	load_palette64
+	; [⑦(4)] blackpal 生成: addr 2B を残し色 3B(B,R,G)を 0 に(切替暗転用)
+	ld	hl, pal_buf
+	ld	de, blackpal
+	ld	b, 64
+.bpgen:	ld	a, (hl)
+	ld	(de), a
+	inc	hl
+	inc	de			; addr lo
+	ld	a, (hl)
+	ld	(de), a
+	inc	hl
+	inc	de			; addr hi
+	xor	a
+	ld	(de), a
+	inc	de
+	inc	hl			; B=0
+	ld	(de), a
+	inc	de
+	inc	hl			; R=0
+	ld	(de), a
+	inc	de
+	inc	hl			; G=0
+	djnz	.bpgen
 	IFDEF	ALLAREAS_DBG
 	; 検証(2): RAM タイル表先頭(TILEBASE)の2バイトを PROBE(0xC8:byte)。
 	ld	a, (TILEBASE + 0)
@@ -299,6 +322,7 @@ mainloop:
 	call	snd_tick		; [SND] 毎フレーム更新(VBLANK 直後, 最悪~4048T)
 	ENDIF
 	; adv = framecnt >> SPEED
+.adv_recalc:				; [⑦(4)] エリア切替後の adv 再計算入口
 	ld	hl, (framecnt)
 	srl	h
 	rr	l
@@ -306,6 +330,14 @@ mainloop:
 	rr	l
 	srl	h
 	rr	l			; hl = f>>3  (SPEED=3)
+	IFDEF	ALLAREAS
+	ld	de, (adv_off)		; [⑦(4)] エリア先頭からの相対 adv
+	or	a
+	sbc	hl, de
+	ld	a, h
+	and	0x1F			; & 0x1FFF (framecnt wrap 許容を維持)
+	ld	h, a
+	ENDIF
 	; adv 変化?
 	ld	de, (last_adv)
 	ld	a, l
@@ -313,7 +345,7 @@ mainloop:
 	jr	nz, .changed
 	ld	a, h
 	cp	d
-	jr	z, .nowork
+	jp	z, .nowork
 .changed:
 	ld	(last_adv), hl
 	; phase=adv&1, coarse=adv>>1
@@ -332,6 +364,28 @@ mainloop:
 	srl	h
 	rr	l
 	ld	(coarsen), hl
+	IFDEF	ALLAREAS_DBG
+	ld	a, (coarse)		; PROBE 0xB0<coarse_lo>
+	ld	e, a
+	ld	bc, 0x00FE
+	out	(c), e
+	ld	a, 0xB0
+	ld	bc, 0x00FF
+	out	(c), a
+	ENDIF
+	IFDEF	ALLAREAS
+	; [⑦(4)] coarsen >= W_CELLS-COLS+1(=217) でエリア境界 → 切替
+	ld	a, h
+	or	a
+	jr	nz, .area_adv
+	ld	a, l
+	cp	W_CELLS - COLS + 1
+	jr	c, .no_area_adv
+.area_adv:
+	call	area_advance		; 暗転+タイル/マップ/gobj切替+adv_off reset+prefill+トランジェント取消
+	jp	.adv_recalc		; 新 adv_off(=0 相対)で coarse/coarsen 再計算
+.no_area_adv:
+	ENDIF
 	; 表示: SCRN=15kHz(DISPVRAM0,ACCESS0)
 	SCRNSET	SCRN_15K
 	; POS = (coarse + (phase?1024:0)) & 0x7FF
@@ -349,6 +403,27 @@ mainloop:
 	ld	(cur_pos), hl		; 自機オーバーレイ用に表示 POS を記録
 	ENDIF
 	call	setpos
+	IFDEF	ALLAREAS
+	; [⑦(4)] 切替暗転の復帰: blank_ctr を減算し 0 でパレット復帰(setpos 後なので新窓が見える)
+	ld	a, (blank_ctr)
+	or	a
+	jr	z, .nblank
+	dec	a
+	ld	(blank_ctr), a
+	jr	nz, .nblank
+	ld	ix, pal_buf
+	call	load_palette64
+	IFDEF	ALLAREAS_DBG
+	ld	a, 0xFF			; PROBE 0xA3FF: pal_buf 復帰
+	ld	e, a
+	ld	bc, 0x00FE
+	out	(c), e
+	ld	a, 0xA3
+	ld	bc, 0x00FF
+	out	(c), a
+	ENDIF
+.nblank:
+	ENDIF
 	IFDEF	SHIP
 	call	ship_update		; ジョイスティック移動 + 自機描画 (vblank 中)
 	call	sprite_update		; M7: 弾の発射/移動/描画
@@ -1287,17 +1362,175 @@ area_switch:
 	add	ix, de			; 次 index
 	jr	.tl
 
+;=====================================================================
+; [⑦(4)] area_advance: 次エリアへ切替(暗転→タイル/マップ/gobj→adv_off reset→prefill→取消)。
+area_advance:
+	; next = (area_cur==15) ? 6 : area_cur+1  (エリア16→7ループ)
+	ld	a, (area_cur)
+	cp	15
+	jr	nz, .aa_inc
+	ld	a, 5			; +1 で 6
+.aa_inc:
+	inc	a
+	ld	(area_cur), a
+	IFDEF	ALLAREAS_DBG
+	ld	e, a			; PROBE 0xA0<area>: エリア切替を通知
+	ld	bc, 0x00FE
+	out	(c), e
+	ld	a, 0xA0
+	ld	bc, 0x00FF
+	out	(c), a
+	ld	a, (area_cur)
+	ENDIF
+	; タイル表 + map base 切替
+	ld	a, (area_cur)
+	call	area_switch
+	; 地上物切替
+	ld	a, (area_cur)
+	call	gobj_load
+	; adv_off = framecnt>>3 (エリア先頭で coarse=0)
+	ld	hl, (framecnt)
+	srl	h
+	rr	l
+	srl	h
+	rr	l
+	srl	h
+	rr	l
+	ld	(adv_off), hl
+	; 再 prefill(新エリア cols 0..39 を GRAM へ)
+	call	prefill
+	; トランジェント取消(旧座標の GRAM 書込を止める)
+	xor	a
+	ld	(pc_active), a		; クレーター待ち行列
+	ld	(rd_active), a		; 進行中の列再描画
+	ld	(sr_pending), a
+	IFDEF	GROBDA_EXTDATA
+	call	grobda_init
+	ENDIF
+	; 暗転: 黒パレットを最後にロード(EMM/GRAM I/O の後で palandply を確定させる)
+	ld	ix, blackpal
+	call	load_palette64
+	ld	a, 2
+	ld	(blank_ctr), a
+	IFDEF	ALLAREAS_DBG
+	ld	a, 0xFF			; PROBE 0xA2FF: blackpal ロード完了
+	ld	e, a
+	ld	bc, 0x00FE
+	out	(c), e
+	ld	a, 0xA2
+	ld	bc, 0x00FF
+	out	(c), a
+	ENDIF
+	ret
+
+;=====================================================================
+; [⑦(4)] gobj_load: a=area。EMM_GOBJ+area*0x400 の新形式地上物を engine の 6B RAM
+;   リスト(gobj_list/gobj_n)へ変換。size=1 は addr0=crater_base。addr0==0xFFFF はスキップ。
+;   (sol セクションは今は未使用=読み飛ばさず無視: Sol は area0 の EQU 版のまま=要注意)
+gobj_load:
+	add	a, a
+	add	a, a			; area*4 (=(area*0x400)>>8)
+	ld	(emm_a1), a
+	xor	a
+	ld	(emm_a0), a
+	ld	a, EMM_GOBJ >> 16	; 0x06
+	ld	(emm_a2), a
+	call	set_emm_addr
+	ld	bc, EMM_DAT
+	in	a, (c)			; gobj_count
+	ld	(gl_cnt), a
+	xor	a
+	ld	(gl_wr), a
+	ld	de, gobj_list
+.gl:
+	ld	a, (gl_cnt)
+	or	a
+	jp	z, .gdone
+	dec	a
+	ld	(gl_cnt), a
+	; col(2),row,type,size,addr0(2) を gl_buf(7B)へ
+	ld	hl, gl_buf
+	ld	a, 7
+	ld	(gl_dc), a
+.rdhdr:	in	a, (c)
+	ld	(hl), a
+	inc	hl
+	ld	a, (gl_dc)
+	dec	a
+	ld	(gl_dc), a
+	jr	nz, .rdhdr
+	; 残り discard: (2*size)^2-1 word = size1→6B, size2→30B
+	ld	a, (gl_buf + 4)		; size
+	dec	a
+	jr	z, .dsz1
+	ld	a, 30
+	jr	.dset
+.dsz1:	ld	a, 6
+.dset:	or	a
+	jr	z, .wr
+	ld	(gl_dc), a
+.dloop:	in	a, (c)
+	ld	a, (gl_dc)
+	dec	a
+	ld	(gl_dc), a
+	jr	nz, .dloop
+.wr:
+	; addr0==0xFFFF ならスキップ(off-map。engine の +48/96/144 導出が暴走するため)
+	ld	a, (gl_buf + 5)
+	cp	0xFF
+	jr	nz, .dowrite
+	ld	a, (gl_buf + 6)
+	cp	0xFF
+	jp	z, .gl			; 両 FF → スキップ
+.dowrite:
+	; 6B 書込: col_lo, col_hi, row, type, crater_lo, crater_hi
+	ld	a, (gl_buf + 0)
+	ld	(de), a
+	inc	de
+	ld	a, (gl_buf + 1)
+	ld	(de), a
+	inc	de
+	ld	a, (gl_buf + 2)
+	ld	(de), a
+	inc	de
+	ld	a, (gl_buf + 3)
+	ld	(de), a
+	inc	de
+	ld	a, (gl_buf + 5)
+	ld	(de), a
+	inc	de
+	ld	a, (gl_buf + 6)
+	ld	(de), a
+	inc	de
+	ld	a, (gl_wr)
+	inc	a
+	ld	(gl_wr), a
+	jp	.gl
+.gdone:
+	ld	a, (gl_wr)
+	ld	(gobj_n), a
+	ret
+
 as_n:		dw	0
 as_cnt:		dw	0
 as_dst:		dw	0
 amb_lo16:	dw	0		; [⑦(3)] area_map_base(EMM_MAPS+area*0x3200) 低16
 amb_hi8:	db	0		; 高8
 pal_buf:	ds	320		; [⑦(3)] common_pal(64×5B)
-used_buf:	ds	802		; 共通index列(最大~401×2B)
+used_buf:	ds	1024		; 共通index列(最大 area10 n=401→802B, 余裕込み)
 man_buf:	ds	256		; sector0(マニフェスト)
 al_count:	db	0
 al_i:		db	0
 al_hi:		db	0
+; [⑦(4)] エリア進行
+area_cur:	db	0		; 現在エリア(0-based, 0=area1)
+adv_off:	dw	0		; adv のエリア先頭オフセット(= framecnt>>3 at switch)
+blank_ctr:	db	0		; 切替暗転の残フレーム
+blackpal:	ds	320		; 黒パレット(pal_buf の色を 0 に。boot で生成)
+gl_cnt:		db	0		; gobj_load: 残エントリ
+gl_wr:		db	0		; gobj_load: 書込済み件数
+gl_dc:		db	0		; gobj_load: discard/読みカウンタ
+gl_buf:		ds	7		; gobj_load: ヘッダ一時(col2,row,type,size,addr0_2)
 	ENDIF
 
 ;=====================================================================

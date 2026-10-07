@@ -3229,8 +3229,13 @@ gobj_list:				; データ先頭(roms が count を equ で定義)
 	INCLUDE	"roms/area1_gobj.inc"
 gobj_n:		db	gobj_area1_count
 	ELSE
+	IFDEF	ALLAREAS
+gobj_n:		db	0		; [⑦(4)] RAM 可変リスト(gobj_load が切替毎に再構築, 最大11件)
+gobj_list:	ds	6 * 32
+	ELSE
 gobj_n:		db	0		; 骨組み: 空リスト(当たり無し)
 gobj_list:
+	ENDIF
 	ENDIF
 
 ene_code:	db	0
