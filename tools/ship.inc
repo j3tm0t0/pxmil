@@ -75,6 +75,10 @@ ship_init:
 	ld	hl, 0xFFFF
 	ld	(ship_prev), hl
 	ld	(ship_prev2), hl
+	IFDEF	SPR_1WIN
+	ld	(ship_pp0), hl
+	ld	(ship_pp1), hl
+	ENDIF
 	ret
 
 ;=====================================================================
@@ -416,6 +420,83 @@ move_ship:
 ;=====================================================================
 ; 自機を現フレームの表示 POS に合わせてテキストVRAMに配置 (スクロール追従)。
 ;   前回位置を消去し、新位置(cur_pos + 画面オフセット)に 2x2 を書く。
+	IFDEF	SPR_1WIN
+; [2窓削減] 表示ページ(cur_pos bit10)のみ毎フレーム erase+draw。非表示ページは
+;   そのページが表示される時(スクロールステップで cur_pos の bit10 が反転した時)に
+;   初めて erase+draw される。sprite は TVRAM 層で terrain(GRAM/chunk)と別レイヤ
+;   なので、非表示ページに残した stale sprite は chunk に壊されない。描画コスト半減。
+overlay_ship:
+	; --- soff / code 計算 ---
+	ld	a, (ship_vy)
+	srl	a
+	srl	a			; cell行 = vy>>2
+	ld	h, 0
+	ld	l, a
+	add	hl, hl
+	add	hl, hl
+	add	hl, hl			; *8
+	ld	d, h
+	ld	e, l
+	add	hl, hl
+	add	hl, hl			; *32
+	add	hl, de			; *40
+	ld	a, (ship_hx)
+	srl	a
+	srl	a			; cell列 = hx>>2
+	ld	e, a
+	ld	d, 0
+	add	hl, de
+	ld	(ship_soff), hl
+	ld	a, (ship_vy)
+	and	3
+	add	a, a
+	add	a, a			; (vy&3)*4
+	ld	b, a
+	ld	a, (ship_hx)
+	and	3
+	add	a, b			; 版
+	ld	b, a
+	add	a, a
+	add	a, a
+	add	a, a			; 版*8
+	add	a, b			; 版*9
+	add	a, SHIP_BASE
+	ld	(ship_code), a
+	; --- 表示ページの prev を指す ---
+	ld	a, (cur_pos + 1)	; cur_pos 上位バイト
+	and	0x04			; bit10 (=0x400)
+	rrca				; idx*2 (0x04->0x02, 0->0)
+	ld	e, a
+	ld	d, 0
+	ld	hl, ship_pp0
+	add	hl, de
+	ld	(ship_ppp), hl		; = &ship_pp[idx]
+	ld	e, (hl)
+	inc	hl
+	ld	d, (hl)			; de = prev addr
+	ld	a, d
+	cp	0xFF
+	jr	z, .noerase1
+	ex	de, hl
+	call	erase_3x3		; hl = prev
+.noerase1:
+	; target = (cur_pos + soff) & 0x7FF、表示ページに描く
+	ld	hl, (ship_soff)
+	ld	de, (cur_pos)
+	add	hl, de
+	ld	a, h
+	and	0x07
+	ld	h, a			; hl = target
+	ld	e, l
+	ld	d, h
+	ld	hl, (ship_ppp)
+	ld	(hl), e
+	inc	hl
+	ld	(hl), d			; ship_pp[idx] = target
+	ex	de, hl			; hl = target
+	call	write_ship_3x3
+	ret
+	ELSE
 overlay_ship:
 	; 前回消去 (両窓)。自機は弾の銃口貫通で欠けるため idle-skip しない(毎フレーム描画)。
 	ld	hl, (ship_prev)
@@ -485,6 +566,7 @@ overlay_ship:
 	ld	(ship_prev2), hl
 	call	write_ship_3x3
 	ret
+	ENDIF
 
 ; hl=top-left。選択版の 3列x3行 (9セル) を配置。コードは ship_code から連番。
 ;   row r (0..2): code+r*3+0,+1,+2  cell = top + r*COLS + col
@@ -580,6 +662,11 @@ ship_prev:	dw	0		; 前回の自機 top-left セル 窓1 (0xFFFF=無効)
 ship_prev2:	dw	0		; 窓2
 ship_soff:	dw	0		; 画面セルオフセット
 ship_code:	db	0		; このフレームの先頭 PCG コード (版選択後)
+	IFDEF	SPR_1WIN
+ship_pp0:	dw	0xFFFF		; [2窓削減] page0(bit10=0) の前回 top-left
+ship_pp1:	dw	0xFFFF		; page1(bit10=1) の前回 top-left
+ship_ppp:	dw	0		; 今フレームの対象 prev へのポインタ(scratch)
+	ENDIF
 ws_tl:		dw	0
 ws_code:	db	0		; write_ship_3x3 の連番コード作業用
 ; --- gen_ship 作業変数 ---
