@@ -123,7 +123,13 @@ xmapdata:
 	incbin	"roms/xtilemap64.bin"
 	ENDIF
 xpaldata:
+	; GOBJ_TILEMAP(焼込地上物/Sol)時は地上物の赤/灰を含む 22色拡張パレット。
+	; 先頭17色は xpal64.bin と同一で地形互換(xevi-extract)。
+	IFDEF	GOBJ_TILEMAP
+	incbin	"roms/arcade/xevious-out/xpal64_obj.bin"
+	ELSE
 	incbin	"roms/xpal64.bin"
+	ENDIF
 
 realstart:
 	di
