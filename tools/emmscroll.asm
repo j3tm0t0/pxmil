@@ -75,10 +75,9 @@ PCG_DEFCELL	EQU	0x07FF		; PCG 定義に使うセル
 PORT_PSGREG	EQU	0x1C00		; ジョイスティック: レジスタ選択
 PORT_PSGDAT	EQU	0x1B00		; 読み (sndboard_psgsta)
 SHIP_ATR	EQU	0x20 | 0x02	; PCG + R プレーン (赤)。色付きは 0x20|0x07
-SHIPGEN		EQU	0xC8A0		; シフト版生成バッファ 72バイト (IDBUF後)
+SHIPGEN		EQU	0xC8A0		; 版生成バッファ 216バイト (IDBUF後 〜0xC978)
 SHIP_HX0	EQU	18 * 4		; 自機初期横位置 (2px単位, 列18 位相0)
-SHIP_ROW0	EQU	12		; 自機初期行
-MOVE_DELAY	EQU	3		; 縦移動の間隔(フレーム)。横は毎フレーム 2px
+SHIP_VY0	EQU	12 * 4		; 自機初期縦位置 (2ライン単位, 行12 位相0)
 SHIP_SCRN_BASE	EQU	0		; ship_init の PCGMODE 書込ベース (8色は0でよい)
 
 COLS		EQU	40
@@ -134,10 +133,13 @@ realstart:
 	ENDIF
 
 	IFDEF	DBG_SHIP
-	; スクロール無し・page0・POS=0 で自機を ship_hx=DBG_SHIPHX に置き halt。
-	;   DBG_SHIPHX 未指定なら 72(列18位相0)。xmin が hx+1 ごと +4(2px)を検証。
+	; スクロール無し・POS=0 で自機を (DBG_SHIPHX,DBG_SHIPVY) に置き halt。
+	;   xmin が hx+1 ごと +4(2px)、ymin が vy+1 ごと +4(2ライン) を検証。
 	IFNDEF	DBG_SHIPHX
 	DEFINE	DBG_SHIPHX 72
+	ENDIF
+	IFNDEF	DBG_SHIPVY
+	DEFINE	DBG_SHIPVY 48
 	ENDIF
 	ld	bc, PORT_SCRN
 	ld	a, SCRN_PCG		; bank0 + PCG
@@ -156,8 +158,8 @@ realstart:
 	out	(c), a			; POSH=0
 	ld	a, DBG_SHIPHX
 	ld	(ship_hx), a
-	ld	a, 12
-	ld	(ship_row), a
+	ld	a, DBG_SHIPVY
+	ld	(ship_vy), a
 	ld	hl, 0
 	ld	(cur_pos), hl
 	ld	hl, 0xFFFF
@@ -349,8 +351,8 @@ mainloop:
 	IFDEF	DBG_SHIPPOS
 	ld	a, (ship_hx)
 	ld	l, a
-	ld	a, (ship_row)
-	ld	h, a			; (row<<8)|ship_hx
+	ld	a, (ship_vy)
+	ld	h, a			; (vy<<8)|ship_hx
 	ENDIF
 	ld	bc, 0x00FE
 	out	(c), l

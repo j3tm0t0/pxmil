@@ -20,8 +20,7 @@
 ;     SHIPGEN              シフト版生成バッファ 72バイトの空き RAM
 ;                          (※ emmscroll64 は COLBUF(0xC600-) と衝突するので要変更)
 ;     SHIP_HX0             初期横位置 (2px単位。列18 位相0 = 18*4=72)
-;     SHIP_ROW0            初期行 (12)
-;     MOVE_DELAY           縦移動の間隔フレーム (3)。横は毎フレーム 2px
+;     SHIP_VY0             初期縦位置 (2ライン単位。行12 位相0 = 12*4=48)
 ;     SHIP_SCRN_BASE       ship_init で PCGMODE を立てる際の 0x1FD0 ベース
 ;                          (8色=0, 64色=SCRN_15K[0x02] など画面モードを保つ値)
 ;   変数: cur_pos (dw) — 現フレームの表示開始セル。呼び出し側が毎フレーム設定。
@@ -37,15 +36,20 @@
 ;   (2) POS 確定後に `ld (cur_pos), hl` を追加。
 ;   (3) SHIP_ATR を定義し、turboZ はテキストパレット(0x1FB9+slot)で色を設定。
 ;   (4) 上記「必須シンボル」のうち 64 色版に無いもの(PCG_B/R/G, SCRN_PCG,
-;       PORT_PSG*, SHIP_ATR, SHIPGEN, SHIP_HX0, SHIP_ROW0 等)を定義。
+;       PORT_PSG*, SHIP_ATR, SHIPGEN, SHIP_HX0, SHIP_VY0 等)を定義。
 ;       SHIPGEN は COLBUF と重ならない空き RAM に。
 ;   (5) PCGMODE 可能な状態で `call ship_init` を 1 回、毎フレーム vblank で
 ;       `call ship_update`。
 ; =====================================================================
 
-SHIP_BASE	EQU	0x80		; 自機 PCG コード先頭 (0x80..0x97, 24セル)
-SHIP_VSTRIDE	EQU	6		; 1 シフト版 = 3列x2行 = 6セル
+; 横・縦とも 2px 単位で滑らかに動かすため、横4シフト x 縦4シフト = 16 版を持つ。
+;   各版 = 3列x3行 = 9セル。計 16*9 = 144 セル (SHIP_BASE..+143)。
+;   版番号 = (ship_vy&3)*4 + (ship_hx&3)。code = SHIP_BASE + 版*9 + cr*3 + col。
+SHIP_BASE	EQU	0x10		; 自機 PCG コード先頭 (0x10..0x9F, 144セル)
+SHIP_VSTRIDE	EQU	9		; 1 版 = 3列x3行 = 9セル
 SHIP_HXMAX	EQU	(COLS - 3) * 4 + 3	; ship_hx 上限 (col2 が行内に収まる)
+SHIP_VYMAX	EQU	(ROWS - 3) * 4 + 3	; ship_vy 上限 (行2 が画面内に収まる)
+CSTAGE		EQU	SHIPGEN + 144		; 縦シフト作業 (3plane x 24 = 72B)
 
 ;=====================================================================
 ; a=0x1FD0 基本ビット。PCGMODE(SCRN_PCG) を必ず立てて書込み、値をシャドウ保存。
@@ -66,8 +70,8 @@ ship_init:
 	call	gen_ship
 	ld	a, SHIP_HX0
 	ld	(ship_hx), a
-	ld	a, SHIP_ROW0
-	ld	(ship_row), a
+	ld	a, SHIP_VY0
+	ld	(ship_vy), a
 	ld	hl, 0xFFFF
 	ld	(ship_prev), hl
 	ld	(ship_prev2), hl
@@ -81,126 +85,250 @@ ship_update:
 	ret
 
 ;=====================================================================
-; [M6] 自機(オリジナル機体)の PCG を定義。base 16x16(shipdata) から
-;   4 シフト版(0/2/4/6px) を 24bit 右シフトで生成し、各版 3列x2行を定義。
-;   計 24 セル (0x80..0x97)。PCG モード有効時に呼ぶ。
+; [M6] 自機の PCG を定義。base 16x16(shipdata) から 横4 x 縦4 = 16 版
+;   (各 3列x3行) を生成。横は 24bit 右シフト、縦はラスタ行をバイト単位で
+;   2*vv 下へずらすだけ (ビット演算なし)。計 144 セル。PCG モード有効時に呼ぶ。
+;   版生成は H ステージ(4回)+ 縦ずらし分割。SHIPGEN=H段(144B), CSTAGE=縦段(72B)。
 gen_ship:
 	xor	a
-	ld	(gs_v), a		; v = 0..3
-.vloop:
+	ld	(gs_vh), a		; vh = 0..3 (横シフト)
+.vhl:
+	call	gen_hstage		; SHIPGEN に H 版(3col x 3plane x 16raster)生成
 	xor	a
-	ld	(gs_row), a		; row = 0,1
-.rloop:
-	call	gen_one_vr		; SHIPGEN に 3列ぶん生成
-	call	def_vr_cells		; 3 セル定義
-	ld	a, (gs_row)
+	ld	(gs_vv), a		; vv = 0..3 (縦シフト)
+.vvl:
+	call	gen_vsplit		; 縦 2*vv ずらし → 9 セル定義
+	ld	a, (gs_vv)
 	inc	a
-	ld	(gs_row), a
-	cp	2
-	jr	nz, .rloop
-	ld	a, (gs_v)
-	inc	a
-	ld	(gs_v), a
+	ld	(gs_vv), a
 	cp	4
-	jr	nz, .vloop
+	jr	nz, .vvl
+	ld	a, (gs_vh)
+	inc	a
+	ld	(gs_vh), a
+	cp	4
+	jr	nz, .vhl
 	ret
 
-; (gs_v,gs_row) の 1行(16px)を位相 p=2v で右シフトし 3列(24px)を SHIPGEN へ。
-;   SHIPGEN レイアウト: col0=[+0..23], col1=[+24..47], col2=[+48..71]
-;   各 24 バイト = B8,R8,G8 (plane*8+raster)。
-gen_one_vr:
-	; src 左セル = shipdata + row*48, 右セル = +24
-	ld	hl, shipdata
-	ld	a, (gs_row)
-	or	a
-	jr	z, .r0
-	ld	de, 48
+; H ステージ: gs_vh で base を水平シフトし SHIPGEN[col*48 + pl*16 + r] を作る。
+;   col=0..2, pl=0..2(B,R,G), r=0..15 (16ラスタ = 上下 2 セル分)。
+gen_hstage:
+	ld	a, (gs_vh)
+	add	a, a
+	ld	(gs_p), a		; p = 2*vh
+	xor	a
+	ld	(gs_r), a		; r = 0..15
+.rl:
+	ld	a, (gs_r)
+	cp	8
+	ld	hl, shipdata		; r<8 → 上段 (TL,TR)
+	jr	c, .rtop
+	ld	de, 48			; r>=8 → 下段 (BL,BR)
 	add	hl, de
-.r0:	ld	(gs_lsrc), hl
+	sub	8
+.rtop:
+	ld	(gs_rr), a		; rr = r & 7
+	ld	(gs_lsrc), hl		; 左セル先頭
 	ld	de, 24
 	add	hl, de
-	ld	(gs_rsrc), hl
-	ld	a, (gs_v)		; p = 2*v
-	add	a, a
-	ld	(gs_p), a
+	ld	(gs_rsrc), hl		; 右セル先頭
 	xor	a
-	ld	(gs_r), a		; idx 0..23 (= plane*8+raster)
-.loop:
-	ld	a, (gs_r)
+	ld	(gs_pl), a		; pl = 0..2
+.pl:
+	ld	a, (gs_pl)		; byte offset = pl*8 + rr
+	add	a, a
+	add	a, a
+	add	a, a
+	ld	hl, gs_rr
+	add	a, (hl)
 	ld	e, a
 	ld	d, 0
 	ld	hl, (gs_lsrc)
 	add	hl, de
-	ld	b, (hl)			; b0 = 左バイト
+	ld	b, (hl)			; 左バイト
 	ld	hl, (gs_rsrc)
 	add	hl, de
-	ld	c, (hl)			; b1 = 右バイト
+	ld	c, (hl)			; 右バイト
 	ld	d, 0			; b2 = 0
 	ld	a, (gs_p)
 	or	a
-	jr	z, .noshift
-.sh:	srl	b			; [b0 b1 b2] 24bit 論理右シフト = 画面右へ
+	jr	z, .nos
+.shh:	srl	b			; [b0 b1 b2] 右シフト = 画面右へ
 	rr	c
 	rr	d
 	dec	a
-	jr	nz, .sh
-.noshift:
+	jr	nz, .shh
+.nos:
 	ld	a, c
 	ld	(gs_c1), a
 	ld	a, d
 	ld	(gs_c2), a
-	ld	hl, SHIPGEN
-	ld	a, (gs_r)
+	; dest = SHIPGEN + pl*16 + r (col0), +48(col1), +96(col2)
+	ld	a, (gs_pl)
+	add	a, a
+	add	a, a
+	add	a, a
+	add	a, a			; pl*16
+	ld	hl, gs_r
+	add	a, (hl)
 	ld	e, a
 	ld	d, 0
+	ld	hl, SHIPGEN
 	add	hl, de
 	ld	(hl), b			; col0
-	ld	de, 24
+	ld	de, 48
 	add	hl, de
 	ld	a, (gs_c1)
 	ld	(hl), a			; col1
 	add	hl, de
 	ld	a, (gs_c2)
 	ld	(hl), a			; col2
+	ld	a, (gs_pl)
+	inc	a
+	ld	(gs_pl), a
+	cp	3
+	jr	nz, .pl
 	ld	a, (gs_r)
 	inc	a
 	ld	(gs_r), a
-	cp	24
-	jr	nz, .loop
+	cp	16
+	jp	nz, .rl			; ループ本体が大きく jr 範囲外なので jp
 	ret
 
-; SHIPGEN の 3列を PCG セルに定義。code = SHIP_BASE + v*6 + row*3 + col。
-def_vr_cells:
-	ld	a, (gs_v)
-	add	a, a			; 2v
-	ld	e, a
-	add	a, a			; 4v
-	add	a, e			; 6v
-	ld	e, a
-	ld	a, (gs_row)
-	ld	d, a
-	add	a, a			; 2row
-	add	a, d			; 3row
-	add	a, e			; 6v + 3row
+; 縦ずらし分割: SHIPGEN の各列を 2*vv ラスタ下へずらし、3x3 セルを定義。
+;   版 = vv*4 + vh。code 先頭 = SHIP_BASE + 版*9。
+gen_vsplit:
+	ld	a, (gs_vv)		; 版 = vv*4 + vh
+	add	a, a
+	add	a, a
+	ld	hl, gs_vh
+	add	a, (hl)
+	ld	b, a			; 版
+	add	a, a
+	add	a, a
+	add	a, a			; 版*8
+	add	a, b			; 版*9
 	add	a, SHIP_BASE
-	ld	(gs_code), a
-	ld	hl, SHIPGEN
-	ld	b, 3			; 3 列
+	ld	(gs_code), a		; 版の先頭コード
+	xor	a
+	ld	(gs_col), a
 .cl:
-	push	bc
-	ld	a, (gs_code)
-	call	pcg_select
-	ld	d, PCG_B >> 8
-	call	def_plane		; B (hl += 8)
-	ld	d, PCG_R >> 8
-	call	def_plane		; R
-	ld	d, PCG_G >> 8
-	call	def_plane		; G (hl は次列 +24 へ)
-	ld	a, (gs_code)
+	call	build_cstage		; CSTAGE に col の 3plane x 24raster (縦ずらし済)
+	xor	a
+	ld	(gs_cr), a
+.crl:
+	call	def_cell
+	ld	a, (gs_cr)
 	inc	a
-	ld	(gs_code), a
-	pop	bc
-	djnz	.cl
+	ld	(gs_cr), a
+	cp	3
+	jr	nz, .crl
+	ld	a, (gs_col)
+	inc	a
+	ld	(gs_col), a
+	cp	3
+	jr	nz, .cl
+	ret
+
+; CSTAGE[pl*24 + raster] を作る: 24 を 0 埋め後、SHIPGEN の col 列(16ラスタ)を
+;   2*vv オフセットへコピー。pl=0..2。
+build_cstage:
+	xor	a
+	ld	(gs_pl), a
+.bpl:
+	ld	a, (gs_pl)		; CSTAGE + pl*24
+	ld	l, a
+	ld	h, 0
+	add	hl, hl
+	add	hl, hl
+	add	hl, hl			; pl*8
+	ld	d, h
+	ld	e, l
+	add	hl, hl			; pl*16
+	add	hl, de			; pl*24
+	ld	de, CSTAGE
+	add	hl, de
+	push	hl			; 0 埋め 24
+	ld	(hl), 0
+	ld	d, h
+	ld	e, l
+	inc	de
+	ld	bc, 23
+	ldir
+	pop	hl
+	ld	a, (gs_vv)		; dst = +2*vv
+	add	a, a
+	ld	e, a
+	ld	d, 0
+	add	hl, de
+	ex	de, hl			; de = dst
+	ld	a, (gs_col)		; src = SHIPGEN + col*48 + pl*16
+	ld	l, a
+	ld	h, 0
+	add	hl, hl
+	add	hl, hl
+	add	hl, hl
+	add	hl, hl			; col*16
+	ld	b, h
+	ld	c, l
+	add	hl, hl			; col*32
+	add	hl, bc			; col*48
+	ld	bc, SHIPGEN
+	add	hl, bc
+	ld	a, (gs_pl)
+	add	a, a
+	add	a, a
+	add	a, a
+	add	a, a			; pl*16
+	ld	c, a
+	ld	b, 0
+	add	hl, bc			; hl = src
+	ld	bc, 16
+	ldir				; 16 ラスタコピー
+	ld	a, (gs_pl)
+	inc	a
+	ld	(gs_pl), a
+	cp	3
+	jr	nz, .bpl
+	ret
+
+; CSTAGE のセル (gs_cr, gs_col) を PCG 定義。code = gs_code + cr*3 + col。
+def_cell:
+	ld	a, (gs_cr)		; cr*8 (CSTAGE 内ラスタ offset)
+	add	a, a
+	add	a, a
+	add	a, a
+	ld	(gs_croff), a
+	ld	a, (gs_cr)		; code = gs_code + cr*3 + col
+	ld	b, a
+	add	a, a
+	add	a, b			; cr*3
+	ld	hl, gs_col
+	add	a, (hl)
+	ld	hl, gs_code
+	add	a, (hl)
+	call	pcg_select
+	ld	a, (gs_croff)		; B: CSTAGE + 0 + cr*8
+	ld	e, a
+	ld	d, 0
+	ld	hl, CSTAGE
+	add	hl, de
+	ld	d, PCG_B >> 8
+	call	def_plane
+	ld	a, (gs_croff)		; R: CSTAGE + 24 + cr*8
+	ld	e, a
+	ld	d, 0
+	ld	hl, CSTAGE + 24
+	add	hl, de
+	ld	d, PCG_R >> 8
+	call	def_plane
+	ld	a, (gs_croff)		; G: CSTAGE + 48 + cr*8
+	ld	e, a
+	ld	d, 0
+	ld	hl, CSTAGE + 48
+	add	hl, de
+	ld	d, PCG_G >> 8
+	call	def_plane
 	ret
 
 ; a=code を PCG 定義セル(0x7FF)に選択 (ANK=code, ATR=PCG)
@@ -242,8 +370,8 @@ read_joy:
 	ret
 
 ;=====================================================================
-; 自機移動。横は ship_hx(2px単位) を毎フレーム ±1、縦は ship_row(8px) を
-;   MOVE_DELAY フレームごと ±1。いずれも境界付き。
+; 自機移動。横 ship_hx(2px単位)・縦 ship_vy(2ライン単位) とも毎フレーム ±1
+;   (= 2px/フレーム, アーケード風の滑らかさ)。いずれも境界付き。
 ;   --- 方向マッピング (X1 モニタを 90度回した向き前提。bit 割当で調整可) ---
 ;     bit0=上, bit1=下, bit2=左, bit3=右 (X1 標準 PSG port A, 負論理)。
 ;     既定: 上→行-1, 下→行+1, 左→hx-1(左2px), 右→hx+1(右2px)。
@@ -267,37 +395,22 @@ move_ship:
 	inc	a
 	ld	(ship_hx), a
 .nr:
-	; --- 縦: MOVE_DELAY フレームごと 1 行(8px) ---
-	ld	a, (move_dly)
-	or	a
-	jr	z, .vgo
-	dec	a
-	ld	(move_dly), a
-	ret
-.vgo:
-	ld	d, 0			; d = 縦移動したか
+	; --- 縦: 毎フレーム 2ライン ---
 	bit	0, e			; 上
 	jr	nz, .nu
-	ld	a, (ship_row)
+	ld	a, (ship_vy)
 	or	a
 	jr	z, .nu
 	dec	a
-	ld	(ship_row), a
-	ld	d, 1
+	ld	(ship_vy), a
 .nu:	bit	1, e			; 下
 	jr	nz, .nd
-	ld	a, (ship_row)
-	cp	ROWS - 2		; 行は 0..23 (2行ぶん)
+	ld	a, (ship_vy)
+	cp	SHIP_VYMAX
 	jr	nc, .nd
 	inc	a
-	ld	(ship_row), a
-	ld	d, 1
+	ld	(ship_vy), a
 .nd:
-	ld	a, d
-	or	a
-	ret	z
-	ld	a, MOVE_DELAY
-	ld	(move_dly), a
 	ret
 
 ;=====================================================================
@@ -309,13 +422,15 @@ overlay_ship:
 	ld	a, h
 	cp	0xFF
 	jr	z, .noerase
-	call	erase_3x2
+	call	erase_3x3
 	ld	hl, (ship_prev2)
-	call	erase_3x2
+	call	erase_3x3
 .noerase:
-	; soff = ship_row*40 + (ship_hx>>2) (画面セルオフセット)
+	; soff = (ship_vy>>2)*40 + (ship_hx>>2) (画面セルオフセット)
+	ld	a, (ship_vy)
+	srl	a
+	srl	a			; cell行 = vy>>2
 	ld	h, 0
-	ld	a, (ship_row)
 	ld	l, a
 	add	hl, hl
 	add	hl, hl
@@ -332,13 +447,20 @@ overlay_ship:
 	ld	d, 0
 	add	hl, de
 	ld	(ship_soff), hl
-	; 版 v = ship_hx & 3 → 先頭コード = SHIP_BASE + v*6
+	; 版 = (vy&3)*4 + (hx&3) → 先頭コード = SHIP_BASE + 版*9
+	ld	a, (ship_vy)
+	and	3
+	add	a, a
+	add	a, a			; (vy&3)*4
+	ld	b, a
 	ld	a, (ship_hx)
 	and	3
-	add	a, a			; 2v
-	ld	e, a
-	add	a, a			; 4v
-	add	a, e			; 4v + 2v = 6v
+	add	a, b			; 版
+	ld	b, a
+	add	a, a
+	add	a, a
+	add	a, a			; 版*8
+	add	a, b			; 版*9
 	add	a, SHIP_BASE
 	ld	(ship_code), a
 	; 窓1: top-left = (cur_pos + soff) & 0x7FF
@@ -349,7 +471,7 @@ overlay_ship:
 	and	0x07
 	ld	h, a
 	ld	(ship_prev), hl
-	call	write_ship_3x2
+	call	write_ship_3x3
 	; 窓2: top-left = ((cur_pos ^ 0x400) + soff) & 0x7FF  (+1024 側の窓)
 	ld	hl, (cur_pos)
 	ld	a, h
@@ -361,18 +483,21 @@ overlay_ship:
 	and	0x07
 	ld	h, a
 	ld	(ship_prev2), hl
-	call	write_ship_3x2
+	call	write_ship_3x3
 	ret
 
-; hl=top-left。選択版の 3列x2行 (6セル) を配置。コードは ship_code から連番。
-;   row0: code+0,+1,+2  row1: code+3,+4,+5
-write_ship_3x2:
+; hl=top-left。選択版の 3列x3行 (9セル) を配置。コードは ship_code から連番。
+;   row r (0..2): code+r*3+0,+1,+2  cell = top + r*COLS + col
+write_ship_3x3:
 	ld	(ws_tl), hl
 	ld	a, (ship_code)
 	ld	(ws_code), a
-	ld	hl, (ws_tl)		; row0
+	ld	c, 3			; c = 残り行数
+	ld	hl, (ws_tl)
+.rowl:
+	ld	(ws_tl), hl		; この行の先頭
 	ld	b, 3
-.r0:	push	bc
+.coll:	push	bc
 	push	hl
 	ld	a, (ws_code)
 	call	put_cell
@@ -382,22 +507,13 @@ write_ship_3x2:
 	inc	a
 	ld	(ws_code), a
 	pop	bc
-	djnz	.r0
-	ld	hl, (ws_tl)		; row1 = top + COLS
+	djnz	.coll
+	; 次の行 = 行先頭 + COLS
+	ld	hl, (ws_tl)
 	ld	de, COLS
 	add	hl, de
-	ld	b, 3
-.r1:	push	bc
-	push	hl
-	ld	a, (ws_code)
-	call	put_cell
-	pop	hl
-	inc	hl
-	ld	a, (ws_code)
-	inc	a
-	ld	(ws_code), a
-	pop	bc
-	djnz	.r1
+	dec	c
+	jr	nz, .rowl
 	ret
 
 ; hl=cell(要マスク), a=code。ANK=code, ATR=SHIP_ATR。
@@ -418,27 +534,23 @@ put_cell:
 	ret
 
 ; hl=top-left。3列x2行 を消去(ANK=0,ATR=0)。
-erase_3x2:
-	ld	(ws_tl), hl
-	ld	b, 3			; row0
-.r0:	push	bc
+erase_3x3:
+	ld	c, 3			; c = 残り行数
+.rowl:
+	ld	(ws_tl), hl		; 行先頭
+	ld	b, 3
+.coll:	push	bc
 	push	hl
 	call	clr_cell
 	pop	hl
 	inc	hl
 	pop	bc
-	djnz	.r0
-	ld	hl, (ws_tl)		; row1 = top + COLS
+	djnz	.coll
+	ld	hl, (ws_tl)
 	ld	de, COLS
 	add	hl, de
-	ld	b, 3
-.r1:	push	bc
-	push	hl
-	call	clr_cell
-	pop	hl
-	inc	hl
-	pop	bc
-	djnz	.r1
+	dec	c
+	jr	nz, .rowl
 	ret
 
 clr_cell:
@@ -463,24 +575,28 @@ scrn_shadow:	db	0		; 0x1FD0 の最後に書いた値 (PCGMODE 付き)
 ; --- 自機 (M6, 開発中) ---
 cur_pos:	dw	0		; このフレームの表示開始セル
 ship_hx:	db	0		; 自機 横位置 (2px単位, 0..SHIP_HXMAX)
-ship_row:	db	0		; 自機 画面セル行 (0..23)
+ship_vy:	db	0		; 自機 縦位置 (2ライン単位, 0..SHIP_VYMAX)
 ship_prev:	dw	0		; 前回の自機 top-left セル 窓1 (0xFFFF=無効)
 ship_prev2:	dw	0		; 窓2
 ship_soff:	dw	0		; 画面セルオフセット
 ship_code:	db	0		; このフレームの先頭 PCG コード (版選択後)
 ws_tl:		dw	0
-ws_code:	db	0		; write_ship_3x2 の連番コード作業用
-move_dly:	db	0		; 縦移動の遅延カウンタ
+ws_code:	db	0		; write_ship_3x3 の連番コード作業用
 ; --- gen_ship 作業変数 ---
-gs_v:		db	0
-gs_row:		db	0
-gs_p:		db	0		; 位相 p=2v
-gs_r:		db	0		; idx 0..23 (plane*8+raster)
+gs_vh:		db	0		; 横シフト版 0..3
+gs_vv:		db	0		; 縦シフト版 0..3
+gs_col:		db	0		; 0..2
+gs_cr:		db	0		; セル行 0..2
+gs_pl:		db	0		; プレーン 0..2
+gs_r:		db	0		; ラスタ 0..15
+gs_rr:		db	0		; r & 7
+gs_croff:	db	0		; cr*8
+gs_p:		db	0		; 位相 p=2*vh
 gs_lsrc:	dw	0		; src 左セル先頭
 gs_rsrc:	dw	0		; src 右セル先頭
 gs_c1:		db	0		; シフト結果 col1
 gs_c2:		db	0		; シフト結果 col2
-gs_code:	db	0		; def_vr_cells 連番コード
+gs_code:	db	0		; 版の先頭コード
 
 ; === 自機ベースデータ (shipdata) フォーマット ===
 ;   16x16 を 8x8 の 2x2 セルに分割。セル順 = TL, TR, BL, BR
