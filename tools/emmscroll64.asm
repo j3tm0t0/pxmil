@@ -153,6 +153,29 @@ realstart:
 	xor	a
 	ld	(prev_disp), a
 
+	IFDEF	MEAS
+; [MEAS] ルーチンの Z80 サイクル数を計測。IN 0x00FC/0x00FD = サイクルカウンタ
+;   (エミュの CPU_CLOCKCOUNT)。前後で読み差分を var に格納。差分には呼び出し
+;   オーバヘッド(in/push/call/ret)も含むので meas_base を別途測り減算する。
+	MACRO	MEASCALL rout, var
+	ld	bc, 0x00FC
+	in	l, (c)			; before lo (hi をラッチ)
+	ld	bc, 0x00FD
+	in	h, (c)			; before hi
+	push	hl
+	call	rout
+	ld	bc, 0x00FC
+	in	e, (c)			; after lo
+	ld	bc, 0x00FD
+	in	d, (c)			; after hi
+	pop	hl
+	ex	de, hl			; hl=after, de=before
+	or	a
+	sbc	hl, de			; hl = after - before (16bit mod)
+	ld	(var), hl
+	ENDM
+	ENDIF
+
 mainloop:
 	call	wait_vblank
 	; adv = framecnt >> SPEED
@@ -217,7 +240,11 @@ mainloop:
 	; 重ならないようにして最悪フレームの余裕を確保する。
 	ld	a, 1
 	ld	(sr_pending), a
+	IFDEF	MEAS
+	jp	.framesync		; MEAS 時は .nowork 肥大で jr 範囲外のため jp
+	ELSE
 	jr	.framesync
+	ENDIF
 .nowork:
 	IFDEF	SHIP
 	IFDEF	SPR_SMOOTH
@@ -226,18 +253,36 @@ mainloop:
 	; 動き滑らかになる。ただし非ステップは chunk(列展開)が走るため、毎フレーム
 	; 描画を足すと 4MHz では予算超過する(8MHz 専用)。既定(ガード無し)は 8フレーム
 	; 刻み=4MHz クリーン。start_redraw/chunk より前=VBLANK 直後に表示窓へ書く。
+	IFDEF	MEAS
+	MEASCALL meas_empty, meas_base
+	MEASCALL ship_update, meas_ship
+	MEASCALL sprite_update, meas_spr
+	ELSE
 	call	ship_update
 	call	sprite_update
 	ENDIF
 	ENDIF
+	ENDIF
 	ld	a, (sr_pending)		; 非ステップ: 保留の start_redraw を1回だけ
 	or	a
+	IFDEF	MEAS
+	jp	z, .dochunk		; MEAS 時は MEASCALL 展開で jr が範囲外になるため jp
+	ELSE
 	jr	z, .dochunk
+	ENDIF
 	xor	a
 	ld	(sr_pending), a
+	IFDEF	MEAS
+	MEASCALL start_redraw, meas_sr
+	ELSE
 	call	start_redraw		; np col39 の再描画を開始 (DMA+合成準備)
+	ENDIF
 .dochunk:
+	IFDEF	MEAS
+	MEASCALL do_redraw_chunk, meas_chunk
+	ELSE
 	call	do_redraw_chunk		; K 行ずつ展開 (非ステップ7フレームに配分)
+	ENDIF
 .framesync:
 	; --- フレーム同期 + 取りこぼし(スリップ)検出 ---
 	; VBLANK は極小で再描画がアクティブ表示に食い込むのは正常(非表示窓へ書く)。
@@ -264,6 +309,35 @@ mainloop:
 	ld	hl, (framecnt)
 	inc	hl
 	ld	(framecnt), hl
+	IFDEF	MEAS
+	; [MEAS] 各ルーチンのサイクル数を OUT (base, ship, spr, chunk, sr の順)。
+	;   実コストは (値 - meas_base)。走らなかったフレームは 0 付近。
+	ld	hl, (meas_base)
+	ld	bc, 0x00FE
+	out	(c), l
+	ld	bc, 0x00FF
+	out	(c), h
+	ld	hl, (meas_ship)
+	ld	bc, 0x00FE
+	out	(c), l
+	ld	bc, 0x00FF
+	out	(c), h
+	ld	hl, (meas_spr)
+	ld	bc, 0x00FE
+	out	(c), l
+	ld	bc, 0x00FF
+	out	(c), h
+	ld	hl, (meas_chunk)
+	ld	bc, 0x00FE
+	out	(c), l
+	ld	bc, 0x00FF
+	out	(c), h
+	ld	hl, (meas_sr)
+	ld	bc, 0x00FE
+	out	(c), l
+	ld	bc, 0x00FF
+	out	(c), h
+	ELSE
 	; dropped = vbl_seen - framecnt (= 跨いだ余分な VBLANK 数)
 	ld	de, (vbl_seen)
 	ex	de, hl
@@ -273,7 +347,18 @@ mainloop:
 	out	(c), l
 	ld	bc, 0x00FF
 	out	(c), h
+	ENDIF
 	jp	mainloop
+
+	IFDEF	MEAS
+meas_empty:
+	ret				; 呼び出しオーバヘッド基準用
+meas_base:	dw	0
+meas_ship:	dw	0
+meas_spr:	dw	0
+meas_chunk:	dw	0
+meas_sr:	dw	0
+	ENDIF
 
 ;=====================================================================
 setpos:

@@ -5,6 +5,7 @@
 #include	"pccore.h"
 #include	"iocore.h"
 #include	"emm.h"
+#include	"z80core.h"	/* CPU_CLOCKCOUNT (pxmil cycle probe) */
 
 	IOCORE		iocore;
 	CGROM		cgrom;
@@ -296,6 +297,32 @@ void IOOUTCALL iocore_out(UINT port, REG8 dat) {
 }
 
 REG8 IOINPCALL iocore_inp(UINT port) {
+
+#if defined(XMIL_PROBE_SUPPORT)
+	/* pxmil cycle probe (only when XMIL_PROBE is set):
+	 *   IN 0x00FC -> low byte of the Z80 cycle counter (and latch high),
+	 *   IN 0x00FD -> the latched high byte.  The guest measures a routine
+	 *   by reading before/after and subtracting (16-bit modular). */
+	{
+		static int cyc_init = 0;
+		static int cyc_on = 0;
+		static unsigned cyc_hi = 0;
+		if (!cyc_init) {
+			cyc_init = 1;
+			cyc_on = (getenv("XMIL_PROBE") != NULL);
+		}
+		if (cyc_on) {
+			if (port == 0x00fc) {
+				UINT32 cc = (UINT32)CPU_CLOCKCOUNT;
+				cyc_hi = (cc >> 8) & 0xff;
+				return (REG8)(cc & 0xff);
+			}
+			if (port == 0x00fd) {
+				return (REG8)cyc_hi;
+			}
+		}
+	}
+#endif
 
 	UINT	msb;
 
