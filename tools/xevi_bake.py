@@ -109,6 +109,21 @@ def main():
     bs1_list = [(area_off - 1 + T.ACROSS_SKIP + k) & 0x7f for k in range(T.ACROSS_USE)]
 
     cmap, order = build_cmap(ex, g2, g4, rgb, bg_pen, bs1_list)
+    n_terrain = len(order)
+    # 色refine: 地上物(color7)の実色をパレットに追加(地形17色 + 空き47枠)。
+    #   これで赤(Zolbak検知器)や正しい灰が最近傍丸めでなく厳密に出る。
+    for gtile in sorted(set(GROUND_SPRITE.values())):
+        gpx = ex.decode_sprite(gfx3_cache, gtile)
+        for yy in range(16):
+            for xx in range(16):
+                gpen = sp_pen[7*8 + gpx[yy][xx]]
+                if gpen != 0x80:
+                    r, g, b = rgb[gpen]
+                    key = (T.q4(b), T.q4(r), T.q4(g))
+                    if key not in cmap:
+                        cmap[key] = len(order); order.append(key)
+    print("パレット: 地形 %d 色 + 地上物 %d 色 = %d / 64" %
+          (n_terrain, len(order)-n_terrain, len(order)))
 
     # ベース: tiles(48B) + tilemap(col x row = tid)
     pat_to_id = {}; tiles = []; tilemap = []
@@ -206,7 +221,13 @@ def main():
                     f.write(bytes([addr&0xff,(addr>>8)&0xff]))
         with open(os.path.join(OUT,"xtiles64_obj.bin"),"wb") as f:
             for t in tiles: f.write(t)
-        print("出力: roms/arcade/xevious-out/xtilemap64_obj.bin, xtiles64_obj.bin")
+        import struct
+        with open(os.path.join(OUT,"xpal64_obj.bin"),"wb") as f:   # 拡張パレット
+            for i in range(64):
+                addr = T.BANKTBL0[i]
+                b4,r4,g4v = order[i] if i < len(order) else (0,0,0)
+                f.write(struct.pack("<H",addr) + bytes((b4,r4,g4v)))
+        print("出力: xtilemap64_obj.bin, xtiles64_obj.bin, xpal64_obj.bin(%d色)" % len(order))
 
     # プレビュー(地上物焼込後の area をアーケード類似色で)
     if "--preview" in sys.argv:
