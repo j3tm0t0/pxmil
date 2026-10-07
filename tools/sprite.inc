@@ -534,6 +534,9 @@ blaster_move:
 	IFDEF	GOBJ_TILEMAP
 	call	sol_hit_check		; [M8-3 #3] Sol(隠し塔)命中でせり上がり発動
 	ENDIF
+	IFDEF	GROBDA_EXTDATA
+	call	grobda_hit_check	; [M8⑥] Grobda 命中で破壊
+	ENDIF
 .nobj:
 	call	expl_spawn
 .mn:	ld	a, (spr_i)
@@ -2339,6 +2342,7 @@ GROBDA_BASE	EQU	0xF8
 MAX_GROBDA	EQU	3
 GROB_MOVE	EQU	12		; vy 1歩の間隔(フレーム)
 GROB_AMOVE	EQU	16		; アニメ間隔
+GROB_FLEE	EQU	5		; 照準がこのセル差以内で前進(逃げる)
 grob_wtab:	db	94, 91, 88	; 初期 world列(xevi type5, row9)
 
 gen_grobda:
@@ -2400,8 +2404,19 @@ grobda_init:
 	ld	(spr_i), a
 	jr	.il
 
-; 毎フレーム: アニメ(2コマ) + 道(vy)移動 + screen_ex 計算。
+; 毎フレーム: アニメ(2コマ) + 道(vy)移動/flee + screen_ex 計算。
 grobda_move:
+	; 照準の画面セル(flee判定用)
+	ld	a, (ship_hx)
+	add	a, RETICLE_DIST
+	srl	a
+	srl	a
+	ld	(grob_retx), a
+	ld	a, (ship_vy)
+	add	a, 2
+	srl	a
+	srl	a
+	ld	(grob_rety), a
 	xor	a
 	ld	(spr_i), a
 .ml:	ld	a, (spr_i)
@@ -2450,6 +2465,14 @@ grobda_move:
 	ld	hl, grob_dirty		; 移動 → dirty
 	add	hl, de
 	ld	(hl), 1
+	; flee: 照準が近い(dx,dy<=GROB_FLEE)なら前進(wcol++ = 右へ逃げる)
+	call	grob_near_reticle	; de=slot → C(near)
+	jr	nc, .road
+	ld	hl, grob_wcol
+	add	hl, de
+	inc	(hl)
+	jp	.mn
+.road:
 	ld	hl, grob_dir
 	add	hl, de
 	ld	a, (hl)
@@ -2664,6 +2687,84 @@ grobda_draw:
 	inc	a
 	ld	(spr_i), a
 	jp	.dl
+
+; grob_near_reticle: de=slot。照準セルと Grobda(grob_ex,grob_vy)の差が共に
+;   GROB_FLEE 以内なら scf、否 nc。de 保存。
+grob_near_reticle:
+	ld	hl, grob_ex
+	add	hl, de
+	ld	a, (hl)
+	ld	hl, grob_retx
+	sub	(hl)
+	call	grob_abs
+	cp	GROB_FLEE + 1
+	jr	nc, .far
+	ld	hl, grob_vy
+	add	hl, de
+	ld	a, (hl)
+	ld	hl, grob_rety
+	sub	(hl)
+	call	grob_abs
+	cp	GROB_FLEE + 1
+	jr	nc, .far
+	scf
+	ret
+.far:	or	a
+	ret
+; grob_abs: a = |a| (符号付き)
+grob_abs:
+	bit	7, a
+	ret	z
+	neg
+	ret
+
+; grobda_hit_check: ブラスター着弾(col_ex,col_ey 画面セル)が Grobda に当たれば
+;   破壊(active=0)。爆発は呼出側 .nobj の expl_spawn が出す。
+;   ※blaster_move のループ変数 spr_i を壊さないよう専用 grob_hi を使う。
+grobda_hit_check:
+	xor	a
+	ld	(grob_hi), a
+.hl:	ld	a, (grob_hi)
+	cp	MAX_GROBDA
+	ret	z
+	ld	e, a
+	ld	d, 0
+	ld	hl, grob_active
+	add	hl, de
+	ld	a, (hl)
+	or	a
+	jr	z, .hn
+	ld	hl, grob_ex
+	add	hl, de
+	ld	a, (hl)
+	cp	COLS
+	jr	nc, .hn			; off-screen
+	ld	c, a			; grob_ex
+	ld	a, (col_ex)
+	sub	c
+	call	grob_abs
+	cp	2			; |dx|<=1
+	jr	nc, .hn
+	ld	hl, grob_vy
+	add	hl, de
+	ld	a, (hl)
+	ld	c, a
+	ld	a, (col_ey)
+	sub	c
+	call	grob_abs
+	cp	2			; |dy|<=1
+	jr	nc, .hn
+	ld	hl, grob_active		; ヒット → 破壊
+	add	hl, de
+	ld	(hl), 0
+	ld	hl, grob_dirty		; 今フレーム消去させる(ゴースト防止)
+	add	hl, de
+	ld	(hl), 1
+	ret
+.hn:	ld	a, (grob_hi)
+	inc	a
+	ld	(grob_hi), a
+	jr	.hl
 	ENDIF
 
 ; hl=top-left セル。2x2 を消去。
@@ -3088,6 +3189,9 @@ grob_ex:	ds	MAX_GROBDA	; 今フレームの screen列(>=COLS=off)
 grob_dirty:	ds	MAX_GROBDA	; [M8⑥] 今フレーム移動/アニメしたか(idle-skip用)
 grob_prev:	ds	MAX_GROBDA * 2	; 前回 top-left 窓1
 grob_prev2:	ds	MAX_GROBDA * 2	; 窓2
+grob_retx:	db	0		; [M8⑥] 照準の画面セル列(flee判定)
+grob_rety:	db	0		; 照準の画面セル行
+grob_hi:	db	0		; grobda_hit_check 専用ループ(spr_i を壊さない)
 	ENDIF
 ; [M8④] 出現タイプ列(エリア1≒Toroid主体, たまに Jara(1)/Torkan(2))。12個循環。
 SPAWN_SEQ_LEN	EQU	12
