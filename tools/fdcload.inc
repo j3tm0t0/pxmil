@@ -125,16 +125,15 @@ fdc_read0_ram:
 	ld	bc, FDC_CMD
 	ld	a, 0x88			; Read Sector
 	out	(c), a
-.l:	in	a, (c)			; status
+.l:	in	a, (c)			; status (C=0xF8)
 	bit	1, a
 	jr	nz, .rd			; DRQ → 読む
 	bit	0, a
 	jr	nz, .l			; BUSY(DRQ無し) → 待つ
 	ret				; not busy & no DRQ → 終了
-.rd:	push	bc
-	ld	bc, FDC_DAT
+.rd:	ld	c, FDC_DAT & 0xFF	; C=0xFB (タイト)
 	in	a, (c)
-	pop	bc
+	ld	c, FDC_CMD & 0xFF	; C=0xF8 復帰
 	ld	(hl), a
 	inc	hl
 	jr	.l
@@ -152,31 +151,45 @@ fdc_seek:
 	pop	bc
 	ret
 
-; ---- 1セクタ(256B)を FDC から EMM(0x0D03)へ。Read Sector 発行 + DRQ ポーリング ----
+; ---- 1セクタ(256B)を FDC から EMM(0x0D03)へ。 ----
+;   実機 MB8877(2D=32us/byte)でロストデータを避けるため、まず 256B を sec_buf へ
+;   タイトループで読み(DRQ待ち中に他I/Oを挟まない)、その後 EMM へコピー(無制約)。
+;   ※エミュは status を連続8回読むと LOSTDATA を踏むが、本ループは 1byte あたり
+;     status 1回なので安全。
 fdc_read_to_emm:
 	push	bc
 	push	de
+	push	hl
+	ld	hl, sec_buf
 	ld	bc, FDC_CMD
 	ld	a, 0x88			; Read Sector (single, type II)
-	out	(c), a			; bc=FDC_CMD のまま下で status 読み
+	out	(c), a			; bc=FDC_CMD のまま status 読み
 .rloop:
-	in	a, (c)			; status (FDC_CMD)
+	in	a, (c)			; status (C=0xF8)
 	bit	1, a
 	jr	nz, .rdata		; DRQ → データ読む
 	bit	0, a
 	jr	nz, .rloop		; BUSY(DRQ無し) → 待つ
 	jr	.rdone			; not busy & no DRQ → 終了
 .rdata:
-	; DRQ: FDC data → EMM data
-	ld	c, FDC_DAT & 0xFF	; C=0xFB (B=0x0F のまま)
-	in	a, (c)			; FDC data
+	ld	c, FDC_DAT & 0xFF	; C=0xFB (B=0x0F)
+	in	a, (c)			; FDC data(タイト: in→ld c→ld(hl)→inc)
 	ld	c, FDC_CMD & 0xFF	; C=0xF8 復帰
-	push	bc
-	ld	bc, EMM_DT
-	out	(c), a			; EMM へ書込(addr 自動 +1)
-	pop	bc
+	ld	(hl), a
+	inc	hl
 	jr	.rloop
 .rdone:
+	; sec_buf(256B) → EMM(タイミング制約なし)
+	ld	hl, sec_buf
+	ld	bc, EMM_DT
+	ld	d, 0			; 256 (0=256)
+.cpy:
+	ld	a, (hl)
+	out	(c), a			; EMM data(addr 自動 +1)
+	inc	hl
+	dec	d
+	jr	nz, .cpy
+	pop	hl
 	pop	de
 	pop	bc
 	ret
@@ -206,3 +219,5 @@ cur_cyl:	db	0
 fl_sec:		db	0
 fl_side:	db	0
 fl_cyl:		db	0
+		ALIGN	2
+sec_buf:	ds	256		; 1セクタ読みバッファ(FDC→ここ→EMM)
