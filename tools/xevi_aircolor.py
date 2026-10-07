@@ -454,8 +454,9 @@ def cmd_ship(ex, rgb, sp_pen, gfx3, tile=162, code=1, pal="D"):
     # 向きメモ: Xevious はハード ROT90。decode_sprite は raw(=画面と90°ずれ)。
     #   arcade 画面で機首=上 は raw を +90(CCW)。
     #   X1 は前進方向=右(emmscroll64 が右端 col39 を新規列に展開)なので機首=右。
-    #   機首=右 は raw を 180 回転(raw は機首=左)。→ X1 データは rotate(180)。
-    X1_ROT = 180
+    #   実機検証(2026-10-07): X1_ROT=180 だと engine で機首が左(逆)。
+    #   emmscroll64 の gen_ship/overlay 側で 180 相当の向きになるため、X1_ROT=0 が機首=右。
+    X1_ROT = int(os.environ.get("XEVI_SHIPROT", "0"))
     enc_r = enc.rotate(X1_ROT, expand=True)
     enc_p = os.path.join(out_root, "solvalou_ship.png")
     enc_r.save(enc_p)
