@@ -360,6 +360,9 @@ mainloop:
 	xor	a
 	ld	(prev_disp), a		; DISP=0
 	IFDEF	SHIP
+	IFDEF	GOBJ_TILEMAP
+	call	sol_update		; [#3] Sol せり上がりアニメ(発動中のみ)
+	ENDIF
 	call	crater_pump		; [#2] 保留クレーターを1ユニット/フレームで分散描画
 	ENDIF
 	; framecnt++
@@ -392,6 +395,24 @@ CST_FRAME	EQU	3040		; coarse=190 → col211 は画面 col21 に表示
 	ENDIF
 .cst_skip:
 	ld	hl, (framecnt)		; dropped 計算が依存する HL=framecnt を復元
+	ENDIF
+	IFDEF	SOL_SELFTEST
+	; 決定論テスト: framecnt==SOL_FRAME で Sol(col102,row2)命中を強制発動。
+	IFNDEF	SOL_FRAME
+SOL_FRAME	EQU	1280		; coarse≈79 → Sol は画面 col≈23 に表示
+	ENDIF
+	ld	hl, (framecnt)
+	ld	de, SOL_FRAME
+	or	a
+	sbc	hl, de
+	jr	nz, .sol_skip
+	ld	a, SOL_COL
+	ld	(hit_tcol), a
+	ld	a, SOL_ROW
+	ld	(col_ey), a
+	call	sol_hit_check		; Sol 発動(以後 sol_update が f0→f3)
+.sol_skip:
+	ld	hl, (framecnt)		; HL 復元
 	ENDIF
 	IFDEF	MEAS
 	; [MEAS] 各ルーチンのサイクル数を OUT (base, ship, spr, chunk, sr の順)。

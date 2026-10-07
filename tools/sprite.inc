@@ -514,11 +514,17 @@ blaster_move:
 	add	a, (hl)
 	add	a, GOBJ_OFFSET
 	ld	c, a
+	ld	(hit_tcol), a		; Sol 判定用に tilemap 列を保存
 	ld	a, (col_ey)
 	call	gobj_check
-	jr	nc, .nobj		; 当たり無し
+	jr	nc, .trysol		; 地上物ミス → Sol 判定へ
 	call	crater_write_obj	; 当たり: 2x2の4セルを crater タイルで EMM 上書き
 	call	crater_enqueue		; [#2] GRAM クレーターを保留登録(pump が数フレームで描く)
+	jr	.nobj
+.trysol:
+	IFDEF	GOBJ_TILEMAP
+	call	sol_hit_check		; [M8-3 #3] Sol(隠し塔)命中でせり上がり発動
+	ENDIF
 .nobj:
 	call	expl_spawn
 .mn:	ld	a, (spr_i)
@@ -1028,6 +1034,83 @@ cg_colbase:
 .add:	add	hl, de
 	djnz	.add
 	ret
+
+	IFDEF	GOBJ_TILEMAP
+;=====================================================================
+; [M8-3 #3] Sol(隠し塔): 通常は base tilemap に出ない(地形のまま)。ブラスター命中で
+;   その 2x2 を f0→f3 とせり上がり上書き(xevi データ: col102,row2)。各フレームの
+;   4タイルは base+0/+48/+96/+144 連続なので crater_write_obj/crater_enqueue を再利用。
+SOL_COL		EQU	102
+SOL_ROW		EQU	2
+SOL_STEP	EQU	8		; アニメ 1コマあたりフレーム数(せり上がり速度)
+sol_bases:	dw	0x4033, 0x40F3, 0x41B3, 0x4273	; f0,f1,f2,f3 の crater_base
+sol_entry:	dw	SOL_COL		; crater_write_obj が読む 6B エントリ
+		db	SOL_ROW
+		db	0		; type(未使用)
+		dw	0		; crater_base(コマ毎に設定)
+
+; sol_hit_check: 命中(hit_tcol,col_ey)が Sol 位置かつ未発動なら発動。
+sol_hit_check:
+	ld	a, (sol_state)
+	or	a
+	ret	nz			; 既に発動/露出済み
+	ld	a, (hit_tcol)
+	cp	SOL_COL
+	ret	nz
+	ld	a, (col_ey)
+	cp	SOL_ROW
+	ret	nz
+	ld	a, 1
+	ld	(sol_state), a		; f0 から開始
+	xor	a
+	ld	(sol_timer), a
+	ret
+
+; sol_update: 毎フレーム1回(mainloop)。発動中なら SOL_STEP 毎に次コマを上書き。
+sol_update:
+	ld	a, (sol_state)
+	or	a
+	ret	z			; 非発動
+	cp	5
+	ret	z			; f3 完了(露出維持)
+	ld	a, (sol_timer)
+	or	a
+	jr	z, .step
+	dec	a
+	ld	(sol_timer), a
+	ret
+.step:
+	; sol_entry.base = sol_bases[sol_state-1]
+	ld	a, (sol_state)
+	dec	a
+	add	a, a
+	ld	e, a
+	ld	d, 0
+	ld	hl, sol_bases
+	add	hl, de
+	ld	a, (hl)
+	ld	(sol_entry + 4), a
+	inc	hl
+	ld	a, (hl)
+	ld	(sol_entry + 5), a
+	; col_ex = SOL_COL - coarse_lo (画面列)
+	ld	a, SOL_COL
+	ld	hl, coarse
+	sub	(hl)
+	ld	(col_ex), a
+	ld	hl, sol_entry
+	ld	(gc_ptr), hl
+	call	crater_write_obj	; 2x2 を現コマで EMM 上書き
+	call	crater_enqueue		; GRAM へ(pump が分散描画)
+	ld	a, (sol_state)
+	inc	a
+	ld	(sol_state), a
+	cp	5
+	ret	z			; f3 まで出し切った
+	ld	a, SOL_STEP
+	ld	(sol_timer), a
+	ret
+	ENDIF
 
 ; gobj_at: (c=col8, a=row) に未破壊地上物があれば carry、無ければ nc。非破壊
 ;   (gc_ptr/破壊フラグを変更しない)。照準ロック表示判定用。
@@ -2442,6 +2525,9 @@ pc_row:		db	0		; 保留クレーターの row(R)
 pc_ex:		db	0		; 保留クレーターの画面列(col_ex)
 pc_dpage:	db	0		; ヒット時の表示中ページ(先に描く)
 pc_coarse:	dw	0		; ヒット時の coarse(16bit, 分散描画中 GRAM 位置を固定)
+hit_tcol:	db	0		; 直近ブラスター着弾の tilemap 列(Sol 判定用)
+sol_state:	db	0		; [#3] Sol: 0=隠, 1..4=f0..f3 描画待ち, 5=露出完了
+sol_timer:	db	0		; Sol アニメのコマ内カウンタ
 ; 地上物リスト: 1件 = dw tilemap_col, db row, db type, dw crater_id (6B)。
 ;   実データは -DGOBJ_EXTDATA で roms/ から(gobj_n/gobj_list を定義)。既定は空。
 	IFDEF	GOBJ_EXTDATA
