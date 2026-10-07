@@ -75,6 +75,11 @@ sprite_init:
 .cb:	ld	(hl), 0
 	inc	hl
 	djnz	.cb
+	ld	hl, gobj_dead		; [M8-3] 地上物破壊フラグをクリア
+	ld	b, MAX_GOBJ
+.cg:	ld	(hl), 0
+	inc	hl
+	djnz	.cg
 	xor	a
 	ld	(bfire_tmr), a
 	; 弾テーブルを全て非アクティブに
@@ -388,6 +393,21 @@ blaster_move:
 	srl	a
 	srl	a			; cell row
 	ld	(col_ey), a
+	; [M8-3] 地上物ヒット判定: tilemap_col = coarse_low + col_ex + GOBJ_OFFSET
+	ld	a, (coarse)		; 下位8bit(骨組み)
+	ld	hl, col_ex
+	add	a, (hl)
+	add	a, GOBJ_OFFSET
+	ld	c, a
+	ld	a, (col_ey)
+	call	gobj_check
+	jr	nc, .nobj		; 当たり無し
+	ld	a, (gc_col)		; 当たり: EMM タイルを crater に上書き(de=crater)
+	ld	c, a
+	ld	a, (gc_row)
+	call	crater_write_emm
+	; TODO(次段): 表示中 GRAM の両ページ・両シフト版も即時上書き
+.nobj:
 	call	expl_spawn
 .mn:	ld	a, (spr_i)
 	inc	a
@@ -552,6 +572,123 @@ blaster_draw:
 	inc	a
 	ld	(spr_i), a
 	jp	.dl
+
+;=====================================================================
+; [M8-3 骨組み] 地上物の当たり判定 + クレーター上書き。
+;   地上物は xevi が地形タイルに焼き込み、破壊時にクレータータイルで上書きする。
+;   当たり判定は「ワールド(tilemap)座標リスト」を参照する。実データ(リスト+クレータ
+;   タイル)は -DGOBJ_EXTDATA で roms/ から読む。未指定時は空リスト(当たり無し)。
+;   画面セル列 X ↔ tilemap列: tilemap_col = coarse + X + GOBJ_OFFSET (xevi と共同確認中)。
+GOBJ_OFFSET	EQU	40		; prefill の -COLS 由来(実測確認予定)
+MAX_GOBJ	EQU	16		; エリアあたり地上物の最大(破壊フラグ用)
+
+; crater_write_emm: EMM のタイルマップ(col,row)を crater_id で上書き(再展開で反映)。
+;   入力: c=tilemap列(8bit, 骨組み), a=row(0-24), de=crater tile ID。
+;   EMM addr = col*50 + row*2 (read_ids と同じ列*50 + 行*2)。
+crater_write_emm:
+	push	de			; crater id 退避
+	; hl = col*50
+	ld	h, 0
+	ld	l, c
+	ld	b, h
+	push	bc			; (col)
+	add	hl, hl
+	add	hl, hl
+	add	hl, hl			; *8
+	ld	d, h
+	ld	e, l
+	add	hl, hl			; *16
+	add	hl, de			; *24
+	pop	bc
+	add	hl, bc			; *25
+	add	hl, hl			; *50
+	; + row*2
+	ld	d, 0
+	add	a, a			; row*2
+	ld	e, a
+	add	hl, de
+	ld	a, l
+	ld	(emm_a0), a
+	ld	a, h
+	ld	(emm_a1), a
+	xor	a
+	ld	(emm_a2), a
+	call	set_emm_addr
+	pop	de			; crater id
+	ld	bc, EMM_DAT
+	out	(c), e			; lo
+	out	(c), d			; hi
+	ret
+
+; gobj_check: 着弾の tilemap(col8=c, row=a) が未破壊の地上物と一致するか。
+;   一致→ carry セット + 戻り: ix or 変数に index、de=crater id。不一致→ carry クリア。
+;   骨組み: gobj_n エントリを線形走査(1件 = dw col, db row, db type, dw crater = 6B)。
+gobj_check:
+	ld	(gc_row), a
+	ld	a, c
+	ld	(gc_col), a
+	ld	a, (gobj_n)
+	or	a
+	ret	z			; 空リスト → 当たり無し(carry クリア)
+	ld	b, a
+	ld	hl, gobj_list
+	xor	a
+	ld	(gc_i), a
+.l:	push	bc
+	; col 一致? (下位8bitのみ, 骨組み)
+	ld	a, (hl)			; col lo
+	ld	c, a
+	inc	hl
+	inc	hl			; col hi をスキップ(骨組みは8bit)
+	ld	a, (hl)			; row
+	inc	hl
+	ld	e, a			; row
+	ld	a, (hl)			; type (未使用)
+	inc	hl
+	ld	a, (hl)			; crater lo
+	ld	(gc_crlo), a
+	inc	hl
+	ld	a, (hl)			; crater hi
+	ld	(gc_crhi), a
+	inc	hl			; hl = 次エントリ
+	; 破壊済み?
+	push	hl
+	ld	a, (gc_i)
+	ld	l, a
+	ld	h, 0
+	ld	de, gobj_dead
+	add	hl, de
+	ld	a, (hl)
+	pop	hl
+	or	a
+	jr	nz, .nx			; 破壊済みスキップ
+	ld	a, (gc_col)
+	cp	c
+	jr	nz, .nx
+	ld	a, (gc_row)
+	cp	e
+	jr	nz, .nx
+	; 一致!
+	pop	bc
+	ld	a, (gc_i)		; 破壊フラグを立てる
+	ld	l, a
+	ld	h, 0
+	ld	de, gobj_dead
+	add	hl, de
+	ld	(hl), 1
+	ld	a, (gc_crlo)
+	ld	e, a
+	ld	a, (gc_crhi)
+	ld	d, a			; de = crater id
+	scf
+	ret
+.nx:	ld	a, (gc_i)
+	inc	a
+	ld	(gc_i), a
+	pop	bc
+	djnz	.l
+	or	a			; carry クリア
+	ret
 
 ;=====================================================================
 ; 毎フレーム(vblank 中, ship_update の後)。発射/移動/消去/描画。
@@ -1786,6 +1923,21 @@ bla_vy:		ds	MAX_BLASTER		; 縦 2ライン単位
 bla_tx:		ds	MAX_BLASTER		; 着弾 x (hx 2px単位)
 bla_prev:	ds	MAX_BLASTER * 2		; 前回 top-left 窓1
 bla_prev2:	ds	MAX_BLASTER * 2		; 窓2
+; [M8-3] 地上物: 破壊フラグ(RAM) + 当たり判定スクラッチ。
+gobj_dead:	ds	MAX_GOBJ		; 破壊済みフラグ(1=破壊)
+gc_row:		db	0
+gc_col:		db	0
+gc_i:		db	0
+gc_crlo:	db	0
+gc_crhi:	db	0
+; 地上物リスト: 1件 = dw tilemap_col, db row, db type, dw crater_id (6B)。
+;   実データは -DGOBJ_EXTDATA で roms/ から(gobj_n/gobj_list を定義)。既定は空。
+	IFDEF	GOBJ_EXTDATA
+	INCLUDE	"roms/area1_gobj.inc"
+	ELSE
+gobj_n:		db	0		; 骨組み: 空リスト(当たり無し)
+gobj_list:
+	ENDIF
 
 ene_code:	db	0
 ene_tl:		dw	0
