@@ -45,7 +45,8 @@
 ;       (継ぎ目が 512px ごとにスクロール; 全長無限化は FDC ストリーミングで次段)。
 ;
 ; ビルド前に world.bin を生成すること (roms/ は非コミット):
-;   python3 tools/xevi_x1strip.py --width 64 --y0 292
+;   python3 tools/xevi_x1strip.py --width 64 --y0 292 --mode hp2
+;   (mode hp2 = 横周期2網点。実機で 2px スクロール時の網点チラつきを回避)
 
 	DEVICE	NOSLOT64K
 	ORG	0x0100

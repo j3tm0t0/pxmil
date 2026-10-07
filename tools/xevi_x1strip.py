@@ -31,8 +31,10 @@ ROWS = 25            # セル行数 (200px / 8)
 RASTERS = 8
 PLANES = 3           # B, R, G
 
-# 4x4 Bayer (色別固定網点用, xevi_x1reduce.py と同じ)
+# 4x4 Bayer (横周期4) - 絵は綺麗だが 2px スクロールで位相が半周期ずれ実機でチラつく
 BAYER4 = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]]
+# 横2 x 縦4 (横周期2, 8レベル) - 2px スクロールで横位相が保たれチラつかない
+BAYER2x4 = [[0, 4], [6, 2], [3, 7], [5, 1]]
 
 
 def color_bits(rgb):
@@ -43,22 +45,32 @@ def color_bits(rgb):
             1 if g > 127 else 0)
 
 
-def dither_bits(rgb, x, y):
-    """色別固定網点 (絶対座標 x,y で位相固定) -> (B,R,G) ビット。"""
+def dither_bits4(rgb, x, y):
+    """4x4 Bayer 網点 (横周期4)。"""
     r, g, b = rgb[0], rgb[1], rgb[2]
     lr, lg, lb = r * 16 // 256, g * 16 // 256, b * 16 // 256
     t = BAYER4[y & 3][x & 3]
     return (1 if lb > t else 0, 1 if lr > t else 0, 1 if lg > t else 0)
 
 
-def build_strip(src_path, width_cells, y0, dither=True, reverse=True):
+def dither_bits_hp2(rgb, x, y):
+    """横2x縦4 網点 (横周期2)。2px スクロールで位相が保たれる。"""
+    r, g, b = rgb[0], rgb[1], rgb[2]
+    lr, lg, lb = r * 8 // 256, g * 8 // 256, b * 8 // 256
+    t = BAYER2x4[y & 3][x & 1]
+    return (1 if lb > t else 0, 1 if lr > t else 0, 1 if lg > t else 0)
+
+
+def build_strip(src_path, width_cells, y0, mode="hp2", reverse=True):
     im = Image.open(src_path).convert("RGB")
     W, H = im.size
     px = im.load()
     wpx = width_cells * 8
     if y0 + 200 > H:
         y0 = max(0, H - 200)
-    bitfn = dither_bits if dither else (lambda rgb, x, y: color_bits(rgb))
+    bitfn = {"hp2": dither_bits_hp2,
+             "bayer4": dither_bits4,
+             "nearest": lambda rgb, x, y: color_bits(rgb)}[mode]
     out = bytearray()
     # world col 増加 = bs0 減少(=map x 減少)方向にする (reverse=True)
     for col in range(width_cells):
@@ -113,8 +125,10 @@ def main(argv=None):
     ap.add_argument("--src", default=os.path.join(
         root, "roms/arcade/xevious-out/map_native.png"),
         help="元マップ (bs0=水平=進行の向き)")
-    ap.add_argument("--no-dither", action="store_true",
-                    help="網点でなく最近傍で減色")
+    ap.add_argument("--mode", choices=["hp2", "bayer4", "nearest"],
+                    default="hp2",
+                    help="減色: hp2=横周期2網点(実機チラつき無,既定) / "
+                         "bayer4=4x4網点(綺麗だが2pxスクロールでチラつく) / nearest")
     ap.add_argument("--no-reverse", action="store_true",
                     help="bs0 増加方向 (既定は減少=反転)")
     ap.add_argument("--out", default=os.path.join(root, "roms/world.bin"))
@@ -122,7 +136,7 @@ def main(argv=None):
     args = ap.parse_args(argv)
 
     data, (wpx, y0) = build_strip(args.src, args.width, args.y0,
-                                  dither=not args.no_dither,
+                                  mode=args.mode,
                                   reverse=not args.no_reverse)
     with open(args.out, "wb") as f:
         f.write(data)
