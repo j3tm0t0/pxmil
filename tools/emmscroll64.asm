@@ -109,9 +109,19 @@ SPRGEN		EQU	0xCBE0		; スプライト生成バッファ 8バイト (SHIPGEN後)
 start:				; exec=0x0100
 	jp	realstart
 tiletbl:			; 0x0103
+	; -DGOBJ_TILEMAP で地上物を焼き込んだタイル表/マップ(xevi の roms/ データ)を
+	;   使う。データは gitignore の roms/ 配下(当方は ID を読んで展開するのみ)。
+	IFDEF	GOBJ_TILEMAP
+	incbin	"roms/arcade/xevious-out/xtiles64_obj.bin"
+	ELSE
 	incbin	"roms/xtiles64.bin"
+	ENDIF
 xmapdata:
+	IFDEF	GOBJ_TILEMAP
+	incbin	"roms/arcade/xevious-out/xtilemap64_obj.bin"
+	ELSE
 	incbin	"roms/xtilemap64.bin"
+	ENDIF
 xpaldata:
 	incbin	"roms/xpal64.bin"
 
