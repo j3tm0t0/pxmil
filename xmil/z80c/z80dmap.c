@@ -4,6 +4,8 @@
 #include	"iocore.h"
 #include	"ievent.h"
 
+extern UINT32 z80_cycmul;	/* 256 = 4MHz, 128 = 8MHz */
+
 
 void z80dmap(void) {
 
@@ -35,7 +37,7 @@ void z80dmap(void) {
 	flag1 = cnt1->b.flag;
 	flag2 = cnt2->b.flag;
 	do {		/* dma_lp */
-		CPU_REMCLOCK -= 6;
+		CPU_REMCLOCK -= (6 * z80_cycmul) >> 8;
 #if !defined(DMAS_STOIC)
 		if (dma.increment)
 #else
