@@ -2557,7 +2557,13 @@ MAX_GROBDA	EQU	3
 GROB_MOVE	EQU	12		; vy 1歩の間隔(フレーム)
 GROB_AMOVE	EQU	16		; アニメ間隔
 GROB_FLEE	EQU	5		; 照準がこのセル差以内で前進(逃げる)
+	IFDEF	ALLAREAS
+grob_wtab:	ds	MAX_GROBDA	; [⑦] 初期 world列(gobj_load がエリアごとに設定)
+grob_rtab:	ds	MAX_GROBDA	; エリアごとの row(vy)
+grob_n:		db	0		; エリアの Grobda 数
+	ELSE
 grob_wtab:	db	94, 91, 88	; 初期 world列(xevi type5, row9)
+	ENDIF
 
 gen_grobda:
 	ld	hl, grobda_data
@@ -2573,6 +2579,19 @@ grobda_init:
 	ret	z
 	ld	e, a
 	ld	d, 0
+	IFDEF	ALLAREAS
+	; [⑦] active = (spr_i < grob_n)。超過 slot は非アクティブ
+	ld	a, (grob_n)
+	ld	c, a
+	ld	a, (spr_i)
+	cp	c
+	jr	c, .gi_on
+	ld	hl, grob_active
+	add	hl, de
+	ld	(hl), 0
+	jp	.gi_next
+.gi_on:
+	ENDIF
 	ld	hl, grob_active
 	add	hl, de
 	ld	(hl), 1
@@ -2584,7 +2603,16 @@ grobda_init:
 	ld	(hl), a
 	ld	hl, grob_vy
 	add	hl, de
+	IFDEF	ALLAREAS
+	push	hl
+	ld	hl, grob_rtab
+	add	hl, de
+	ld	a, (hl)			; エリアごとの row
+	pop	hl
+	ld	(hl), a
+	ELSE
 	ld	(hl), 9
+	ENDIF
 	ld	hl, grob_frm
 	add	hl, de
 	ld	(hl), 0
@@ -2613,10 +2641,11 @@ grobda_init:
 	ld	(hl), 0xFF
 	inc	hl
 	ld	(hl), 0xFF
+.gi_next:
 	ld	a, (spr_i)
 	inc	a
 	ld	(spr_i), a
-	jr	.il
+	jp	.il
 
 ; 毎フレーム: アニメ(2コマ) + 道(vy)移動/flee + screen_ex 計算。
 grobda_move:

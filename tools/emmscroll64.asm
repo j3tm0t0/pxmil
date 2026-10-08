@@ -157,6 +157,8 @@ realstart:
 	call	allarea_load		; [⑦] FDC で全エリアデータを EMM へ展開
 	xor	a			; [⑦(2)] area1(index0)の タイルを RAM タイル表へ集約
 	call	area_switch
+	xor	a			; area1 の gobj/sol/grobda を RAM へ(以降 sprite_init の grobda_init が使う)
+	call	gobj_load
 	; [⑦(3)] common_pal(EMM_PAL)を pal_buf へ読み HW パレット適用
 	xor	a
 	ld	(emm_a0), a
@@ -1533,7 +1535,7 @@ gobj_load:
 	in	a, (c)			; sol_count
 	ld	(sol_n), a
 	or	a
-	ret	z
+	jr	z, .read_grob		; sol 無しでも grob は読む
 	ld	(gl_cnt), a
 	ld	de, sol_list
 .sol_rd:
@@ -1565,6 +1567,34 @@ gobj_load:
 	dec	a
 	ld	(gl_cnt), a
 	jp	nz, .sol_rd
+.read_grob:
+	IFDEF	GROBDA_EXTDATA
+	; --- grobda セクション: grob_count + 各[col2,row] を grob_wtab/grob_rtab へ(最大 MAX_GROBDA) ---
+	ld	bc, EMM_DAT
+	in	a, (c)			; grob_count
+	cp	MAX_GROBDA + 1
+	jr	c, .grc_ok
+	ld	a, MAX_GROBDA		; クランプ
+.grc_ok:
+	ld	(grob_n), a
+	or	a
+	ret	z
+	ld	(gl_cnt), a
+	ld	hl, grob_wtab
+	ld	ix, grob_rtab
+.grob_rd:
+	in	a, (c)			; col lo
+	ld	(hl), a			; world列(下位8bit)
+	inc	hl
+	in	a, (c)			; col hi(無視)
+	in	a, (c)			; row
+	ld	(ix + 0), a
+	inc	ix
+	ld	a, (gl_cnt)
+	dec	a
+	ld	(gl_cnt), a
+	jr	nz, .grob_rd
+	ENDIF
 	ret
 
 AS_TICK_EVERY	EQU	44		; 切替タイル集約中 snd_tick 間隔(~353/8)

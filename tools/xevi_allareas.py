@@ -42,6 +42,7 @@ TB = 0x0103                               # ローカル RAM タイルベース
 GS = {0x1E: 0x17, 0x1F: 0x1F, 0x26: 0x2C, 0x20: 0x17, 0x2D: 0x2C}   # 焼込 16x16 -> tile
 GS32 = {0x21: 0x24}                                    # 焼込 32x32(2x2 sprite base tile)
 TID = {0x1E: 1, 0x1F: 2, 0x26: 3, 0x20: 1, 0x2D: 3, 0x21: 6}
+GROB = {0x2C, 0x38, 0x3A}   # 動く地上物 Grobda(stationary/stops/darts)。焼込まず位置のみ出力
 SOL_FRAMES = (168, 169, 170, 171)
 
 def sprite_rgb32(ex, g3, sp, rgb, base, cs):
@@ -156,9 +157,12 @@ def main():
             return ids
 
         crater32 = crater_rgb(32)
-        gobj = []; sol = []
+        gobj = []; sol = []; grobda = []
         for trig, typ, o, y in objs:
             c0, r0 = col_of(trig), row_of(y)
+            if typ in GROB:
+                grobda.append((c0, r0))
+                continue
             if typ in GS:
                 bake_cells(c0, r0, XB.sprite_rgb16(ex, rgb, sp_pen, GS[typ], 7), True)
                 cids = bake_cells(c0, r0, crater, False)
@@ -195,7 +199,11 @@ def main():
                 for fr in frames:
                     for li in fr:
                         f.write(struct.pack("<H", addr_of(li)))
-        summary.append((a, off, len(local), len(local)*48, len(gobj), len(sol)))
+            # Grobda(動く地上物): sol の後ろに追記。grob_count(1B) + 1件[col:2B LE, row:1B]
+            f.write(bytes([len(grobda)]))
+            for col, row in grobda:
+                f.write(struct.pack("<H", col) + bytes([row & 0xff]))
+        summary.append((a, off, len(local), len(local)*48, len(gobj), len(sol), len(grobda)))
 
     with open(os.path.join(OUT, "common_tiles.bin"), "wb") as f:
         for p in common:
@@ -209,9 +217,9 @@ def main():
     print("共通パレット: %d 色 / 64" % len(uorder))
     print("共通タイル表: %d タイル = %d B (%.1f KB)" %
           (len(common), len(common)*48, len(common)*48/1024))
-    print("area off  used(RAM展開)  gobj sol  map(EMM)")
-    for a, off, n, sz, ng, ns in summary:
-        print("  %2d 0x%02X  %3d (%5dB)  %2d  %d   12800B" % (a, off, n, sz, ng, ns))
+    print("area off  used(RAM展開)  gobj sol grob  map(EMM)")
+    for a, off, n, sz, ng, ns, ngr in summary:
+        print("  %2d 0x%02X  %3d (%5dB)  %2d  %d  %2d   12800B" % (a, off, n, sz, ng, ns, ngr))
     tot_map = 16*12800
     print("タイルマップ合計(16エリア): %d B (%.0f KB)" % (tot_map, tot_map/1024))
     print("出力: roms/arcade/xevious-out/allareas/")
