@@ -28,7 +28,7 @@ PSG_DAT		EQU	0x1B00		; データ(OUT)
 ; voice 構造体(10B)
 V_PTRL	EQU 0
 V_PTRH	EQU 1
-V_CNT	EQU 2			; ノート開始からの経過フレーム
+V_CNT	EQU 2			; ノート開始からの経過 tick (120Hz、1 フレーム 2 tick)
 V_NDUR	EQU 3			; 現ノートの総フレーム
 V_PERL	EQU 4
 V_PERH	EQU 5
@@ -176,15 +176,28 @@ voice_tick:
 	ld	a, (iy+V_ACT)
 	or	a
 	ret	z
+	; アーケードのサウンド CPU NMI は 1 フレーム 2 回 (scanline 64/192 = 120Hz)。
+	; cnt/ndur はその tick 単位なので 1 フレームで 2 tick 進める
 	ld	a, (iy+V_CNT)
-	inc	a
 	ld	b, (iy+V_NDUR)
+	inc	a
+	cp	b
+	jr	nc, vt_next1		; 1 tick 目で終了 -> 次ノートは 1 tick 経過
+	inc	a
 	cp	b
 	jr	c, vt_hold		; cnt<ndur
+	xor	a			; 2 tick 目で終了 -> 次ノートは 0 tick 経過
+	jr	vt_next
+vt_next1:
+	ld	a, 1
+vt_next:
+	push	af
 	call	voice_load		; 次ノート
+	pop	bc			; B=経過 tick
 	ld	a, (iy+V_ACT)
 	or	a
 	jr	z, vt_ended
+	ld	(iy+V_CNT), b
 	call	voice_wperiod
 	jr	vt_wvol
 vt_hold:

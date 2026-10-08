@@ -11,7 +11,8 @@ RE(sub2.lst 一次情報で裏取り済):
     0xC0=休符。freq_reg = byte_568[note] >> octave。
   - WSG出力Hz = freq_reg * 3.072MHz / 2^20 ≈ freq_reg * 2.9297(20bitアキュム,index bit[19:15])。
   - tune(sound番号)→ byte_4C0@0x4C0 triplet[ch_base,ch_count,wave_sel]→ byte_48A[ch_base..]。
-  - テンポ: byte_4ED@0x4ED[snd]。note長(frame)= duration * tempo(60fps NMI)。
+  - テンポ: byte_4ED@0x4ED[snd]。note長(tick)= duration * tempo。サウンド CPU の NMI は 1 フレーム 2 回
+    (MAME galaga.cpp cpu3_interrupt_callback: scanline 64/192) なので tick = 120Hz。
   - HWは毎フレーム無条件更新 → プレイヤは毎フレームのテーブル歩行でよい。
 X1 PSG(AY-3-8910相当, clock=1.9968MHz=4MHz/2): period = round(clk/(16*f)) = round(124800/f), 12bit。
 54xx 爆発ノイズは別MCUのため抽出不可 → PSGノイズのエンベロープで近似(明記)。
@@ -37,7 +38,7 @@ TEMPO = [snd[0x4ED + i] for i in range(15)]
 #   のでこれが妥当)。相対音程は byte_568(平均律)で確実。もし実機で1オクターブ高ければ
 #   1オクターブ下げ(/2 = 96000/2^16 = 1.465)に変更可。
 WSG_HZ = 3072000.0 / (2**20)   # 2.9297 Hz / freq_reg(標準 Namco WSG)
-FPS = 60.0
+FPS = 120.0                    # サウンド CPU NMI レート(1 フレーム 2 回)
 PSG_CLK = 1996800.0            # X1 AY-3-8910 clock(4MHz/2。beep実測 period256→~464Hz で裏付け)
 
 def chan_env(slot):
