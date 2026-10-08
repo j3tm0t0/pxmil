@@ -1919,7 +1919,13 @@ se_exp_aerial:
 se_exp_ground:
 	incbin	"roms/arcade/xevious-out/sound/se_08_exp_ground.bin"
 se_bacura:
-	incbin	"roms/arcade/xevious-out/sound/se_06_bacura.bin"	; [敵] ザッパーがBacura被弾=カンカン(tune A)
+	; [敵] ザッパーがBacura被弾=カンカン(tune A)。
+	;   ※ROM の tune A は 2ch(ch21: C5→C#5 / ch22: C#5 重ねで厚み)だが、本実装は 1ch。
+	;     理由: snd_play_se は PSG C 1本を奪取する単チャンネル SFX 機構で、2ch SFX は
+	;     BGM からもう1本奪う必要があり、特に opening(3ch) との競合・復帰処理が増える。
+	;     se_06_bacura.bin は xevi-re が ch21列(C5→C#5)のみに簡略化済み。重ねが無くても
+	;     鋭アタック(vmode=2)の短い金属音で「カンッ」は十分表現できるため 1ch で可とした。
+	incbin	"roms/arcade/xevious-out/sound/se_06_bacura.bin"
 ; BGM 状態機械(mainloop から毎フレーム)。
 ;   無音条件 = game_over または ship_inv!=0(死亡の爆発/復活無敵中)。
 ;   無音→再生へ移る瞬間(開始・復活・次エリア)は opening(tune1) を1回。
