@@ -29,7 +29,8 @@ BACURA_RES_BASE	EQU	0x67		; [敵] Bacura 回転8コマ常駐先頭(自機dedup�
 BACURA_RES_N	EQU	43		; 8コマ重複除去後のユニークセル数(0x67..0x91)
 MAX_ENEMIES	EQU	5		; [M8④] 最大同時数(num_flying が 3→4→5 と上昇)
 DIFF_INTERVAL	EQU	1800		; [M8④] 難易度1段の経過フレーム(≒30s@60Hz)
-RANK_STEP	EQU	2		; [出現①暫定] rank の時間上昇量(ROM difficulty_tbl[DIP=0]=2 相当)
+RANK_STEP	EQU	2		; [出現] fn3 での rank 上昇量(ROM difficulty_tbl[DIP=0]=2 相当)
+ENEMY_AI_DEC	EQU	16		; [出現④] 自機死亡での rank 減少量(ROM enemy_AI_dec[DIP=0]=16)
 ENEMY_SPEED	EQU	1		; 横移動(セル/移動tick) ※敵は8pxグリッド
 EN_NTYPES	EQU	5		; [敵] 敵タイプ数 (Toroid/Jara/Torkan/Zoshi/Giddo)
 TOROID_STOP	EQU	16		; [M8④] Toroid が停止する画面セル列(寄って停止)(旧phase機械/未使用)
@@ -3922,6 +3923,12 @@ ship_hit:
 	ld	hl, se_exp_aerial	; [SND] 自機爆発音
 	call	snd_play_se
 	ENDIF
+	; [出現④] 死亡 → rank -= ENEMY_AI_DEC(下限0)。ROM: 自機死亡で敵AIレベルが下がる。
+	ld	a, (rank)
+	sub	ENEMY_AI_DEC
+	jr	nc, .shrk
+	xor	a
+.shrk:	ld	(rank), a
 	; 残機
 	ld	a, (lives)
 	dec	a
