@@ -331,19 +331,28 @@ build_cstage:
 
 ; CSTAGE のセル (gs_cr, gs_col) を PCG 定義。code = gs_code + cr*3 + col。
 def_cell:
+	IFDEF	SHIP_CELL_DUMP
+	call	dump_cell		; [一時] 実生成セルを PROBE ダンプ(dedup表作成用)
+	ENDIF
 	ld	a, (gs_cr)		; cr*8 (CSTAGE 内ラスタ offset)
 	add	a, a
 	add	a, a
 	add	a, a
 	ld	(gs_croff), a
-	ld	a, (gs_cr)		; code = gs_code + cr*3 + col
+	ld	a, (gs_cr)		; 元コード = gs_code + cr*3 + col
 	ld	b, a
 	add	a, a
 	add	a, b			; cr*3
 	ld	hl, gs_col
 	add	a, (hl)
 	ld	hl, gs_code
-	add	a, (hl)
+	add	a, (hl)			; 元コード(SHIP_BASE+版*9+off)
+	sub	SHIP_BASE		; → ship_codetab index(版*9+off)
+	ld	e, a
+	ld	d, 0
+	ld	hl, ship_codetab
+	add	hl, de
+	ld	a, (hl)			; dedup後の実PCGコード(重複セルは共有)
 	call	pcg_select
 	ld	a, (gs_croff)		; B: CSTAGE + 0 + cr*8
 	ld	e, a
@@ -367,6 +376,66 @@ def_cell:
 	ld	d, PCG_G >> 8
 	call	def_plane
 	ret
+
+	IFDEF	SHIP_CELL_DUMP
+; [一時] 現セルを PROBE 出力。code marker(PROBE=0xC000|code) + 24B(hi=0)。
+;   gs_croff を scratch に使う(def_cell が後で再設定)。
+dump_cell:
+	ld	a, (gs_cr)		; code = gs_code + cr*3 + col
+	ld	b, a
+	add	a, a
+	add	a, b			; cr*3
+	ld	hl, gs_col
+	add	a, (hl)
+	ld	hl, gs_code
+	add	a, (hl)
+	ld	e, a			; marker: PROBE 0xC000|code
+	ld	bc, 0x00FE
+	out	(c), e
+	ld	a, 0xC0
+	ld	bc, 0x00FF
+	out	(c), a
+	ld	a, (gs_cr)		; croff = cr*8
+	add	a, a
+	add	a, a
+	add	a, a
+	ld	(gs_croff), a
+	ld	a, (gs_croff)		; B: CSTAGE + croff
+	ld	e, a
+	ld	d, 0
+	ld	hl, CSTAGE
+	add	hl, de
+	ld	b, 8
+	call	.out8
+	ld	a, (gs_croff)		; R: CSTAGE + 24 + croff
+	ld	e, a
+	ld	d, 0
+	ld	hl, CSTAGE + 24
+	add	hl, de
+	ld	b, 8
+	call	.out8
+	ld	a, (gs_croff)		; G: CSTAGE + 48 + croff
+	ld	e, a
+	ld	d, 0
+	ld	hl, CSTAGE + 48
+	add	hl, de
+	ld	b, 8
+	call	.out8
+	ret
+.out8:					; PROBE b bytes from (hl), hi=0
+	ld	a, (hl)
+	ld	e, a
+	push	bc
+	ld	bc, 0x00FE
+	out	(c), e
+	ld	e, 0
+	ld	bc, 0x00FF
+	out	(c), e
+	pop	bc
+	inc	hl
+	djnz	.out8
+	ret
+	ENDIF
 
 ; a=code を PCG 定義セル(0x7FF)に選択 (ANK=code, ATR=PCG)
 pcg_select:
@@ -493,8 +562,11 @@ overlay_ship:
 	add	a, a
 	add	a, a			; 版*8
 	add	a, b			; 版*9
-	add	a, SHIP_BASE
-	ld	(ship_code), a
+	ld	e, a			; ws_codeptr = ship_codetab + 版*9 (dedup表)
+	ld	d, 0
+	ld	hl, ship_codetab
+	add	hl, de
+	ld	(ws_codeptr), hl
 	; --- 表示ページの prev を指す ---
 	ld	a, (cur_pos + 1)	; cur_pos 上位バイト
 	and	0x04			; bit10 (=0x400)
@@ -575,8 +647,11 @@ overlay_ship:
 	add	a, a
 	add	a, a			; 版*8
 	add	a, b			; 版*9
-	add	a, SHIP_BASE
-	ld	(ship_code), a
+	ld	e, a			; ws_codeptr = ship_codetab + 版*9 (dedup表)
+	ld	d, 0
+	ld	hl, ship_codetab
+	add	hl, de
+	ld	(ws_codeptr), hl
 	; 窓1: top-left = (cur_pos + soff) & 0x7FF
 	ld	hl, (ship_soff)
 	ld	de, (cur_pos)
@@ -605,22 +680,21 @@ overlay_ship:
 ;   row r (0..2): code+r*3+0,+1,+2  cell = top + r*COLS + col
 write_ship_3x3:
 	ld	(ws_tl), hl
-	ld	a, (ship_code)
-	ld	(ws_code), a
+	; ws_codeptr は overlay_ship が ship_codetab+版*9 に設定済。9セルを順次参照。
 	ld	c, 3			; c = 残り行数
 	ld	hl, (ws_tl)
 .rowl:
 	ld	(ws_tl), hl		; この行の先頭
 	ld	b, 3
 .coll:	push	bc
+	ld	de, (ws_codeptr)	; dedup後コードを表から順次取得
+	ld	a, (de)
+	inc	de
+	ld	(ws_codeptr), de
 	push	hl
-	ld	a, (ws_code)
 	PUTCELL
 	pop	hl
 	inc	hl
-	ld	a, (ws_code)
-	inc	a
-	ld	(ws_code), a
 	pop	bc
 	djnz	.coll
 	; 次の行 = 行先頭 + COLS
@@ -701,7 +775,28 @@ ship_pp1:	dw	0xFFFF		; page1(bit10=1) の前回 top-left
 ship_ppp:	dw	0		; 今フレームの対象 prev へのポインタ(scratch)
 	ENDIF
 ws_tl:		dw	0
-ws_code:	db	0		; write_ship_3x3 の連番コード作業用
+ws_code:	db	0		; (未使用) 旧連番コード
+ws_codeptr:	dw	0		; write_ship_3x3 が参照する ship_codetab 内ポインタ
+; 自機144セル(16版×9)の重複除去表: index=版*9+off(=元code-SHIP_BASE) → dedup後の実PCGコード。
+;   byte完全一致セルを共有し 144→87 ユニーク(0x10..0x66)。0x67..0x9F(57セル)が空く(Bacura等へ)。
+;   ※SHIP_CELL_DUMP ビルドで実生成セルをダンプ→tools の dedup で生成。自機パターン変更時は要再生成。
+ship_codetab:
+	db	0x10,0x11,0x12,0x13,0x14,0x12,0x12,0x12,0x12	; 版0
+	db	0x15,0x16,0x12,0x17,0x18,0x12,0x12,0x12,0x12	; 版1
+	db	0x19,0x1A,0x1B,0x1C,0x1D,0x1E,0x12,0x12,0x12	; 版2
+	db	0x12,0x1F,0x20,0x12,0x21,0x22,0x12,0x12,0x12	; 版3
+	db	0x23,0x24,0x12,0x25,0x26,0x12,0x12,0x27,0x12	; 版4
+	db	0x28,0x29,0x12,0x2A,0x2B,0x12,0x12,0x2C,0x12	; 版5
+	db	0x2D,0x2E,0x2F,0x30,0x31,0x32,0x12,0x12,0x33	; 版6
+	db	0x12,0x34,0x35,0x12,0x36,0x37,0x12,0x12,0x38	; 版7
+	db	0x39,0x3A,0x12,0x3B,0x3C,0x12,0x3D,0x3E,0x12	; 版8
+	db	0x3F,0x40,0x12,0x41,0x42,0x12,0x43,0x44,0x12	; 版9
+	db	0x45,0x46,0x47,0x48,0x49,0x4A,0x4B,0x4C,0x4D	; 版10
+	db	0x12,0x4E,0x4F,0x12,0x50,0x51,0x12,0x52,0x53	; 版11
+	db	0x12,0x54,0x12,0x3B,0x55,0x12,0x56,0x57,0x12	; 版12
+	db	0x12,0x58,0x12,0x41,0x59,0x12,0x5A,0x5B,0x12	; 版13
+	db	0x12,0x12,0x5C,0x48,0x5D,0x5E,0x5F,0x60,0x61	; 版14
+	db	0x12,0x12,0x62,0x12,0x63,0x64,0x12,0x65,0x66	; 版15
 ; --- gen_ship 作業変数 ---
 gs_vh:		db	0		; 横シフト版 0..3
 gs_vv:		db	0		; 縦シフト版 0..3
