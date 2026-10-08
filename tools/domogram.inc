@@ -18,11 +18,13 @@ DM_DIR	EQU	7 * MAX_DOMOGRAM
 DM_DUR	EQU	8 * MAX_DOMOGRAM
 DM_NSEG	EQU	9 * MAX_DOMOGRAM
 DM_FTMR	EQU	10 * MAX_DOMOGRAM
-DM_PREVL	EQU	11 * MAX_DOMOGRAM	; 直近描画 GRAM cell lo(窓1)。hi=0xFF で未描画
+DM_PREVL	EQU	11 * MAX_DOMOGRAM	; page0(cur_pos bit10=0)に描いた cell lo。hi=0xFF で未描画
 DM_PREVH	EQU	12 * MAX_DOMOGRAM
 DM_LAST	EQU	13 * MAX_DOMOGRAM	; 最後に move した framecnt 下位(追いつき量の算出用)
-DM_PENDL	EQU	14 * MAX_DOMOGRAM	; ステップ(ページ切替)時に遅延した旧セル消去 lo。hi=0xFF で無し
-DM_PENDH	EQU	15 * MAX_DOMOGRAM
+DM_PRV1L	EQU	14 * MAX_DOMOGRAM	; page1 に描いた cell lo(自機/敵の SPR_1WIN と同じくページ別 prev)
+DM_PRV1H	EQU	15 * MAX_DOMOGRAM
+DM_PG1	EQU	DM_PRV1L - DM_PREVL	; page1 の prev を読むとき IX に足す量(L/H とも同じ差)
+	ASSERT	DM_PRV1H - DM_PREVH == DM_PG1
 DMFIELDS	EQU	16			; dm_slots = DMFIELDS * MAX_DOMOGRAM バイト
 
 
@@ -40,31 +42,25 @@ name:
 	ENDM
 	ENDIF
 
-; dm_prev_inval: ix slot の prev(窓1)を 0xFFFF(無効)に。a 破壊なし。
+; dm_prev_inval: ix slot の両ページの prev を無効(hi=0xFF)に。a 破壊なし。
 dm_prev_inval:
-	ld	(ix + DM_PREVL), 0xFF
+	ld	(ix + DM_PREVH), 0xFF
+	ld	(ix + DM_PRV1H), 0xFF
+	ret
+
+; dm_erase_prev: 両ページに残る絵を消して prev を無効化(deactivate/破壊/画面外)。
+;   TVRAM は自動で消えないので slot 解放時は必ず呼ぶ。
+dm_erase_prev:
+	call	.one				; page0
+	ld	de, DM_PG1 : add ix, de
+	call	.one				; page1
+	ld	de, -DM_PG1 : add ix, de
+	ret
+.one:	ld	a, (ix + DM_PREVH) : cp 0xFF : ret z
+	ld	l, (ix + DM_PREVL) : ld h, a
+	call	ene_clr2x2
 	ld	(ix + DM_PREVH), 0xFF
 	ret
-
-; dm_erase_pend: 遅延消去が残っていれば消す(slot 解放時は必ず呼ぶ)。
-dm_erase_pend:
-	ld	a, (ix + DM_PENDH) : cp 0xFF : ret z
-	ld	l, (ix + DM_PENDL) : ld h, a
-	call	ene_clr2x2
-	ld	(ix + DM_PENDH), 0xFF
-	ret
-
-; dm_erase_prev: prev が有効(≠0xFFFF)なら 2x2 を消去し、prev を無効化。
-;   deactivate/破壊/セル変化のいずれでも必ず旧絵を消す(TVRAM は自動で消えない)。
-dm_erase_prev:
-	call	dm_erase_pend
-	ld	a, (ix + DM_PREVH)
-	cp	0xFF
-	jr	z, .inv
-	ld	l, (ix + DM_PREVL)
-	ld	h, (ix + DM_PREVH)
-	call	ene_clr2x2
-.inv:	jp	dm_prev_inval
 
 ; domo_reset_active: 8 slot 無効化。旧絵が残っていれば消去(area 切替で TVRAM に残り得る)。
 domo_reset_active:
@@ -272,8 +268,6 @@ domo_draw:
 	IFDEF	NODOMODRAW
 	ret
 	ENDIF
-	; ステップ直後のフレーム(framecnt&7==1)で、遅延した旧セル(非表示ページ側)を消す。
-	ld	a, (framecnt) : and 7 : cp 1 : call z, dm_flush_pend
 	ld	a, (dm_nact) : or a : ret z
 	; [perf] 非ステップでセルが変わり得るのは今フレーム move した半分だけ → その半分のみ見る。
 	;   ステップ(ページ切替)は全 slot を新ページへ描く必要がある(半分を翌フレームに回すと、
@@ -300,23 +294,24 @@ domo_draw:
 	add	hl, hl : add hl, hl : add hl, de	; ×40
 	ld	e, c : ld d, 0 : add hl, de		; +ex = soff
 	ld	de, (cur_pos) : add hl, de
-	ld	a, h : and 0x07 : ld h, a		; hl = 新 GRAM cell(窓1)
-	; idle-skip: 新 == DM_PREV ?
-	ld	a, (ix + DM_PREVL) : cp l : jr nz, .chg
-	ld	a, (ix + DM_PREVH) : cp h : jp z, .dn	; 同じ→スキップ
+	ld	a, h : and 0x07 : ld h, a		; hl = 新 cell(表示ページ内)
+	; prev は表示ページ別(自機/敵の SPR_1WIN と同じ)。非表示ページの旧絵は消さずに残すので、
+	;   ページ切替直後もそのページの旧絵が見え、描き直しがラスタに遅れても消えない。
+	ld	de, 0 : bit 2, h : jr z, .pg		; h bit2 = cur_pos bit10 = 表示ページ
+	ld	e, DM_PG1
+.pg:	add	ix, de : push de			; page1 なら IX+DM_PG1 で page1 の prev を指す
+	ld	a, (ix + DM_PREVL) : cp l : jr nz, .chg	; idle-skip: このページの prev と同じなら何もしない
+	ld	a, (ix + DM_PREVH) : cp h : jr z, .same
 .chg:	push	hl					; 新 cell 退避
 	ld	a, (ix + DM_PREVH) : cp 0xFF : jr z, .nope
-	ld	a, (scroll_moved) : or a : jr z, .now
-	; [perf] ステップ(ページ切替)フレーム: 旧セルは非表示ページ側なので消去を次フレームへ遅延
-	call	dm_erase_pend				; (前回分が残っていれば先に)
-	ld	a, (ix + DM_PREVL) : ld (ix + DM_PENDL), a
-	ld	a, (ix + DM_PREVH) : ld (ix + DM_PENDH), a
-	jr	.nope
-.now:	ld	l, (ix + DM_PREVL) : ld h, (ix + DM_PREVH)
-	call	ene_clr2x2				; 旧消去(hl=旧 cell)
-.nope:	pop	hl					; 新 cell
+	ld	l, (ix + DM_PREVL) : ld h, a
+	call	ene_clr2x2				; このページの旧絵を消す
+.nope:	pop	hl
 	ld	(ix + DM_PREVL), l : ld (ix + DM_PREVH), h
 	ld	a, DOMO_BASE : call ene_put2x2		; 新描画(hl=cell, a=code)
+.same:	pop	de
+	ld	a, e : or a : jp z, .dn
+	ld	de, -DM_PG1 : add ix, de
 	jp	.dn
 .vhide:	call	dm_erase_prev				; 縦はみ出し: 消すだけ(active は維持)
 	jp	.dn
@@ -327,17 +322,6 @@ domo_draw:
 .dn:	inc	ix
 	pop	bc
 	dec	b : jp nz, .dl
-	ret
-
-; dm_flush_pend: 全 slot の遅延消去を実行(active でなくても残っていれば消す)。
-dm_flush_pend:
-	ld	ix, dm_slots
-	ld	b, MAX_DOMOGRAM
-.fp:	push	bc
-	call	dm_erase_pend
-	inc	ix
-	pop	bc
-	djnz	.fp
 	ret
 
 ; domo_fire: turret_fire と同一のゲート(countup&7, 前方帯 gnd_stop, ffreq mask)で自機狙い弾(type6)。

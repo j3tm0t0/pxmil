@@ -2436,10 +2436,10 @@ lz_len:		db	0		; マッチ長
 	ASSERT	MAX_DOMO_PEND >= 19	; bake 最大 ndomo(=area8, 19)未満だと経路切り詰め=不可
 dm_slots:	ds	(DM_PREVH / MAX_DOMOGRAM) * MAX_DOMOGRAM, 0	; parallel array(SoA)。ACT..PREVL=0
 	ds	MAX_DOMOGRAM, 0xFF			; PREVH=0xFF(未描画)
-	ds	(DM_PENDH - DM_LAST) , 0		; LAST, PENDL
-	ds	MAX_DOMOGRAM, 0xFF			; PENDH=0xFF(遅延消去なし)
+	ds	(DM_PRV1H - DM_LAST) , 0		; LAST, PRV1L
+	ds	MAX_DOMOGRAM, 0xFF			; PRV1H=0xFF(page1 未描画)
 	ASSERT	$ - dm_slots == DMFIELDS * MAX_DOMOGRAM
-	ASSERT	DM_PREVH + MAX_DOMOGRAM == DM_LAST && DM_PENDH == (DMFIELDS - 1) * MAX_DOMOGRAM
+	ASSERT	DM_PREVH + MAX_DOMOGRAM == DM_LAST && DM_PRV1H == (DMFIELDS - 1) * MAX_DOMOGRAM
 dm_nact:	db	0			; active 数(0 なら move/draw/fire/hit を即 return)
 dm_pidx:	db	0			; 次に見る pending(col 昇順)
 dm_pend:	ds	MAX_DOMO_PEND * 6	; pending(col,row,ppath2,nseg,spawn)
