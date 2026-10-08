@@ -1362,6 +1362,10 @@ area_advance:
 	; [BGM修正] シームレスなエリア境界では opening を鳴らさず arpeggio を継続
 	;   (ROM: opening は各ライフ開始時のみ。死亡なしのエリア進行では鳴らない)。
 	;   → 旧 bgm_silent=1 + snd_bgm_stop は削除。
+	; [blaster lock] 飛行中のブラスターは古い標的列(bla_tcol)を持つため、新エリアの
+	;   gobj リストで誤爆しないよう切替時に全消去する。
+	xor	a
+	ld	(bla_active), a
 	IFDEF	ALLAREAS_DBG
 	ld	e, a			; PROBE 0xA0<area>: エリア切替を通知
 	ld	bc, 0x00FE

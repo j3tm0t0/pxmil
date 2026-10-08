@@ -452,6 +452,20 @@ fire_blaster:
 	ld	hl, bla_tx
 	add	hl, de
 	ld	(hl), a
+	; [lock] 標的 tilemap 列を発射時に確定(reticle_lock_update と同基準でクランプ)。
+	;   飛行中のスクロールでドリフトする coarse を着弾時に使わず、ここで固定する。
+	srl	a
+	srl	a			; screen_cell = (ship_hx+RETICLE_DIST)>>2
+	cp	COLS - 2
+	jr	c, .tcok
+	ld	a, COLS - 2
+.tcok:	ld	b, a
+	ld	a, (coarse)		; coarse 下位8bit
+	add	a, b
+	add	a, GOBJ_OFFSET
+	ld	hl, bla_tcol
+	add	hl, de
+	ld	(hl), a
 	ld	a, (ship_vy)
 	add	a, 2			; 照準2x2の縦中心を自機3x3の縦中心に合わせる(+2セル版)
 	ld	hl, bla_vy
@@ -475,6 +489,10 @@ fire_blaster:
 	ENDIF
 	ld	a, BLASTER_DELAY
 	ld	(bfire_tmr), a
+	IFDEF	BLADRIFT
+	ld	a, (coarse)		; [計測] 発射時 coarse
+	ld	bc, 0x00FE : out (c),a : ld a,0xD0 : ld bc,0x00FF : out (c),a
+	ENDIF
 	ret
 
 blaster_move:
@@ -520,13 +538,19 @@ blaster_move:
 	srl	a
 	srl	a			; cell row
 	ld	(col_ey), a
-	; [M8-3] 地上物ヒット判定: tilemap_col = coarse_low + col_ex + GOBJ_OFFSET
-	ld	a, (coarse)		; 下位8bit(骨組み)
-	ld	hl, col_ex
-	add	a, (hl)
-	add	a, GOBJ_OFFSET
+	; [M8-3 lock] 発射時にロックした標的列(bla_tcol)で地上物判定。飛行中の
+	;   スクロールドリフト(実測 0..1 セル)を排除し「赤照準=命中」を保証する。
+	ld	hl, bla_tcol
+	add	hl, de
+	ld	a, (hl)
 	ld	c, a
 	ld	(hit_tcol), a		; Sol 判定用に tilemap 列を保存
+	IFDEF	BLADRIFT
+	ld	a, (coarse)		; [計測] 着弾時 coarse(ドリフト回帰確認)
+	ld	bc, 0x00FE : out (c),a : ld a,0xD1 : ld bc,0x00FF : out (c),a
+	ld	a, (hit_tcol)
+	ld	c, a
+	ENDIF
 	ld	a, (col_ey)
 	call	gobj_check
 	jr	nc, .trysol		; 地上物ミス → Sol 判定へ
@@ -549,7 +573,7 @@ blaster_move:
 .mn:	ld	a, (spr_i)
 	inc	a
 	ld	(spr_i), a
-	jr	.ml
+	jp	.ml
 
 blaster_erase:
 	xor	a
@@ -1254,99 +1278,92 @@ sol_update:
 
 ; gobj_at: (c=col8, a=row) に未破壊地上物があれば carry、無ければ nc。非破壊
 ;   (gc_ptr/破壊フラグを変更しない)。照準ロック表示判定用。
-gobj_at:
-	ld	(ga_row), a
+; gobj_find: 照準/着弾の tilemap(col8=c, row=a)が未破壊地上物の ±10px 窓に入るか。
+;   ROM check_object_on_target(±10px)準拠。照準 2x2・地上物(size1=2x2)とも中心が
+;   セル境界に乗るので |t - eff| <= 1 の 3 セル窓に帰着(サブセル演算不要)。
+;   eff = stored + (size>>1): size1(2x2)→+0, size2(4x4)→+1(中心が +1 セル)。
+;   一致→ carry + gc_ptr=エントリ先頭 + gc_i=index。破壊フラグは触らない(非破壊)。
+;   1件 = dw col, db row, db size, dw crater_base = 6B。
+gobj_find:
+	ld	(gc_row), a
 	ld	a, c
-	ld	(ga_col), a
+	ld	(gc_col), a
 	ld	a, (gobj_n)
 	or	a
 	ret	z
 	ld	b, a			; 残り件数
 	ld	hl, gobj_list
 	xor	a
-	ld	(ga_i), a
-.l:	push	bc
-	; 破壊済み?
-	ld	a, (ga_i)
-	ld	e, a
-	ld	d, 0
-	push	hl
-	ld	hl, gobj_dead
-	add	hl, de
-	ld	a, (hl)
-	pop	hl
-	or	a
-	jr	nz, .nx
-	; col lo (offset0)
-	ld	a, (hl)
-	ld	e, a
-	ld	a, (ga_col)
-	cp	e
-	jr	nz, .nx
-	; row (offset2)
-	push	hl
-	inc	hl
-	inc	hl
-	ld	a, (hl)
-	pop	hl
-	ld	e, a
-	ld	a, (ga_row)
-	cp	e
-	jr	nz, .nx
-	pop	bc			; 一致
-	scf
-	ret
-.nx:	ld	de, 6
-	add	hl, de
-	ld	a, (ga_i)
-	inc	a
-	ld	(ga_i), a
-	pop	bc
-	djnz	.l
-	or	a			; 不一致
-	ret
-
-; gobj_check: 着弾の tilemap(col8=c, row=a) が未破壊の地上物と一致するか。
-;   一致→ carry セット + gc_ptr=一致エントリ + 破壊フラグセット。不一致→ carry クリア。
-;   1件 = dw col, db row, db type, dw crater_base = 6B。
-gobj_check:
-	ld	(gc_row), a
-	ld	a, c
-	ld	(gc_col), a
-	ld	a, (gobj_n)
-	or	a
-	ret	z			; 空リスト
-	ld	b, a			; b = 残り件数
-	ld	hl, gobj_list
-	xor	a
 	ld	(gc_i), a
 .l:	push	bc
-	push	hl			; エントリ先頭
-	ld	a, (hl)			; col lo
-	ld	c, a
-	inc	hl
-	inc	hl			; -> row
-	ld	a, (hl)
-	ld	b, a			; b = row (件数はスタック)
 	; 破壊済み?
 	ld	a, (gc_i)
 	ld	e, a
 	ld	d, 0
+	push	hl
 	ld	hl, gobj_dead
 	add	hl, de
 	ld	a, (hl)
+	pop	hl
 	or	a
 	jr	nz, .nx
+	; sz1 = size>>1 (offset3): size1->0, size2->1
+	push	hl
+	inc	hl
+	inc	hl
+	inc	hl
+	ld	a, (hl)
+	pop	hl
+	srl	a
+	ld	c, a			; c = sz1
+	; |gc_col - (col_lo + sz1)| <= 1
+	ld	a, (hl)			; col lo (offset0)
+	add	a, c			; eff_col = col + sz1
+	ld	e, a
 	ld	a, (gc_col)
-	cp	c
-	jr	nz, .nx
+	sub	e			; dcol
+	add	a, 1
+	cp	3
+	jr	nc, .nx			; |dcol| > 1 → ミス
+	; |gc_row - (row + sz1)| <= 1
+	push	hl
+	inc	hl
+	inc	hl
+	ld	a, (hl)			; row (offset2)
+	pop	hl
+	add	a, c			; eff_row = row + sz1
+	ld	e, a
 	ld	a, (gc_row)
-	cp	b
-	jr	nz, .nx
-	; 一致!
-	pop	hl			; エントリ先頭
-	ld	(gc_ptr), hl
-	pop	bc			; 件数破棄
+	sub	e			; drow
+	add	a, 1
+	cp	3
+	jr	nc, .nx
+	ld	(gc_ptr), hl		; 一致(エントリ先頭)
+	pop	bc
+	scf
+	ret
+.nx:	ld	de, 6
+	add	hl, de
+	pop	bc
+	ld	a, (gc_i)
+	inc	a
+	ld	(gc_i), a
+	djnz	.l
+	or	a			; 不一致
+	ret
+
+; gobj_at: 照準ロック用(非破壊)。carry = ±10px 窓に未破壊地上物あり。
+gobj_at:
+	jp	gobj_find
+
+; gobj_check: 着弾用。±10px 窓で一致→ carry + gc_ptr + 破壊フラグセット。
+gobj_check:
+	call	gobj_find
+	ret	nc
+	IFDEF	BLADRIFT
+	ld	a, 0x01			; [計測] gobj 命中
+	ld	bc, 0x00FE : out (c),a : ld a,0xD2 : ld bc,0x00FF : out (c),a
+	ENDIF
 	ld	a, (gc_i)		; 破壊フラグ
 	ld	e, a
 	ld	d, 0
@@ -1354,16 +1371,6 @@ gobj_check:
 	add	hl, de
 	ld	(hl), 1
 	scf
-	ret
-.nx:	pop	hl			; エントリ先頭
-	ld	de, 6			; 1件=6B (dw col, db row, db type, dw crater_base)
-	add	hl, de			; 次エントリ
-	pop	bc			; 件数
-	ld	a, (gc_i)
-	inc	a
-	ld	(gc_i), a
-	djnz	.l
-	or	a			; carry クリア
 	ret
 
 ;=====================================================================
@@ -5104,6 +5111,7 @@ bla_active:	ds	MAX_BLASTER
 bla_hx:		ds	MAX_BLASTER		; 横 2px単位
 bla_vy:		ds	MAX_BLASTER		; 縦 2ライン単位
 bla_tx:		ds	MAX_BLASTER		; 着弾 x (hx 2px単位)
+bla_tcol:	ds	MAX_BLASTER		; [lock] 発射時にロックした標的 tilemap 列(ドリフト排除)
 bla_prev:	ds	MAX_BLASTER * 2		; 前回 top-left 窓1
 bla_prev2:	ds	MAX_BLASTER * 2		; 窓2
 ; [M8-3] 地上物: 破壊フラグ(RAM) + 当たり判定スクラッチ。
@@ -5313,9 +5321,6 @@ ret_lvy:	db	0xFF		; 前回描画時の ship_vy
 ret_skip:	db	0		; このフレーム照準描画をスキップしたか
 ret_code:	db	RETICLE_BASE	; [M8-3] 今フレーム描画する照準 PCG(シアン/赤)
 ret_lcode:	db	RETICLE_BASE	; 前回描画した PCG コード(idle-skip 判定用)
-ga_col:		db	0		; gobj_at 作業
-ga_row:		db	0
-ga_i:		db	0
 rr_src:		dw	0		; gen_reticle 作業(現セルのソース)
 rr_mode:	db	0		; 0=シアン(B+G) 1=赤(R)
 rr_zero:	db	0,0,0,0,0,0,0,0	; 使わないプレーンに書く 0 データ
