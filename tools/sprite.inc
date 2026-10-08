@@ -3564,71 +3564,31 @@ ene_fire:
 	ld	hl, ef_ey
 	sub	(hl)
 	ld	(ef_dy), a
-	; adx = |dx|
+	; [32方向] dx,dy → get_index_for_angle → ang_aimed(1.0px/f)[idx]=(dY,dX) を速度に(符号拡張16bit)。
+	;   ebul 速度は frac/frame=1/32px/frame で ang_aimed と同単位。発射時のみ算出(安価)。
 	ld	a, (ef_dx)
-	bit	7, a
-	jr	z, .padx
-	neg
-.padx:	ld	(ef_adx), a
-	; ady = |dy|
+	ld	(gia_dx), a
 	ld	a, (ef_dy)
-	bit	7, a
-	jr	z, .pady
-	neg
-.pady:	ld	(ef_ady), a
-	; 方向: adx >= 2*ady → 横 / ady >= 2*adx → 縦 / else 斜め
-	ld	a, (ef_ady)
-	add	a, a
-	ld	b, a			; 2*ady
-	ld	a, (ef_adx)
-	cp	b
-	jr	nc, .horiz
-	ld	a, (ef_adx)
-	add	a, a
-	ld	b, a			; 2*adx
-	ld	a, (ef_ady)
-	cp	b
-	jr	nc, .vert
-	; 斜め
-	ld	a, ENE_FIRE_DIAG
-	ld	(ef_vmx), a
-	ld	(ef_vmy), a
-	jr	.applysign
-.horiz:	ld	a, ENE_FIRE_SPEED
-	ld	(ef_vmx), a
-	xor	a
-	ld	(ef_vmy), a
-	jr	.applysign
-.vert:	xor	a
-	ld	(ef_vmx), a
-	ld	a, ENE_FIRE_SPEED
-	ld	(ef_vmy), a
-.applysign:
-	; vx = sign(dx) 適用
-	ld	a, (ef_vmx)
+	ld	(gia_dy), a
+	call	get_index_for_angle	; a=idx(0..31)
+	add	a, a			; idx*2
+	ld	l, a
+	ld	h, 0
+	ld	bc, ang_aimed_1_0px
+	add	hl, bc			; &ang_aimed[idx*2]
+	ld	a, (hl)			; dY → ebul_svy(符号拡張)
 	ld	e, a
-	ld	d, 0
-	ld	a, (ef_dx)
-	bit	7, a
-	jr	z, .vxp
-	ld	hl, 0
-	or	a
-	sbc	hl, de
-	ld	(ebul_svx), hl
-	jr	.vydo
-.vxp:	ld	(ebul_svx), de
-.vydo:	ld	a, (ef_vmy)
+	add	a, a
+	sbc	a, a
+	ld	d, a
+	ld	(ebul_svy), de
+	inc	hl
+	ld	a, (hl)			; dX → ebul_svx
 	ld	e, a
-	ld	d, 0
-	ld	a, (ef_dy)
-	bit	7, a
-	jr	z, .vyp
-	ld	hl, 0
-	or	a
-	sbc	hl, de
-	ld	(ebul_svy), hl
-	jr	.spawn
-.vyp:	ld	(ebul_svy), de
+	add	a, a
+	sbc	a, a
+	ld	d, a
+	ld	(ebul_svx), de
 .spawn:
 	; x = ef_ex<<8, y = ef_ey<<8
 	ld	a, (ef_ex)
