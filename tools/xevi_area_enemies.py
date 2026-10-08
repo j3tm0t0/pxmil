@@ -102,6 +102,12 @@ def main_dump():
     open(os.path.join(OUT, "fly_offset_tbl.bin"), "wb").write(sub[OFT:OFT+0x40])
 
     rep = []
+    rep.append("=== flying_enemy_type_offset_tbl (SUB0x04D8) idx -> (num, off) [types] ===")
+    rep.append("  fn3 は rank(enemy_AI_level) を index に、fn2 は payload の idx をこの表に。")
+    for idx in range(0x20):
+        num = sub[OFT+idx*2]; off = sub[OFT+idx*2+1]
+        rep.append("  idx%2d: num=%d off=0x%02X  %s" % (idx, num, off,
+                   ", ".join(etypes(off, num)) if num else "-"))
     for a in range(16):
         start = ptrs[a]; end = ptrs[a+1] if a+1 < 16 else 0x1E52
         ents = walk(start, end)
@@ -112,7 +118,9 @@ def main_dump():
                 idx = sub[p+2]; num = sub[OFT+idx*2]; off = sub[OFT+idx*2+1]
                 flys.append((col, 2, num, off, [main[FET+off+k] for k in range(num)]))
             elif fn == 3:
-                flys.append((col, 3, 0, 0, []))
+                flys.append((col, 3, 0, 0, []))   # rank += d, then offset_tbl[rank]
+            elif fn == 5:
+                flys.append((col, 5, 0, 0, []))   # reset: num_flying=0 (stop spawning)
             elif fn in FFREQ_FNS:
                 ffqs.append((col, fn, sub[p+2]))
         # write areaNN_fly.bin
@@ -127,11 +135,14 @@ def main_dump():
         rep.append("=== AREA %d (0x%04X, %d entries) ===" % (a+1, start, len(ents)))
         for (col, kind, num, off, tys) in flys:
             if kind == 2:
-                rep.append("  col=%3d(trig0x%02X) FLY x%d off0x%02X: %s" %
+                rep.append("  col=%3d(trig0x%02X) POP=set x%d off0x%02X: %s" %
                            (col, (col-0xFD) & 0xFF, num, off,
                             ", ".join(etypes(off, num))))
+            elif kind == 3:
+                rep.append("  col=%3d(trig0x%02X) POP=rank+=d then offset_tbl[rank] (実行時)" %
+                           (col, (col-0xFD) & 0xFF))
             else:
-                rep.append("  col=%3d(trig0x%02X) FLY (AI-scaled, rank実行時)" %
+                rep.append("  col=%3d(trig0x%02X) POP=stop (num_flying=0)" %
                            (col, (col-0xFD) & 0xFF))
         for (col, fn, mask) in ffqs:
             rep.append("  col=%3d ffreq %-14s = 0x%02X" % (col, FN_NAME[fn], mask))
