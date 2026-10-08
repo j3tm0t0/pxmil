@@ -1412,6 +1412,7 @@ sprite_update:
 	call	expls_anim
 	; 衝突判定(弾vs敵, 敵vs自機) → 当たった弾/敵を非アクティブ化 + 爆発発生
 	call	collision_check
+	call	bacura_shot_check	; [敵] ザッパー vs Bacura(弾消滅+カンカン, Bacura不滅)
 	; [M8-3] 照準ロック判定(地上物上なら赤点滅) → ret_code 決定
 	call	reticle_lock_update
 	; 全消去(前回位置)。敵は idle-skip, 非アクティブ化された敵も消去される。
@@ -1612,6 +1613,86 @@ collision_check:
 	inc	a
 	ld	(spr_j), a
 	jr	.vl
+
+; [敵] ザッパー vs Bacura: 弾セルが Bacura 2x4(16x32)矩形内なら弾消滅 + カンカン(se_bacura)。
+;   Bacura は不滅(ROM どおり撃っても消えない=ショット吸収)。col_bcx/bcy/spr_i/spr_j を流用。
+;   bac_sx は bacura_update 前なので 1フレーム前の画面列(自走1px/8f で誤差ゼロ相当)。
+;   SFX は多数同時命中でも 1フレーム1回(bac_sfx_done)。
+bacura_shot_check:
+	xor	a
+	ld	(bac_sfx_done), a
+	ld	(spr_i), a
+.bl:	ld	a, (spr_i)
+	cp	MAX_BULLETS
+	ret	nc
+	ld	e, a
+	ld	d, 0
+	ld	hl, bul_active
+	add	hl, de
+	ld	a, (hl)
+	or	a
+	jp	z, .bnext
+	ld	hl, bul_hx		; 弾セル bcx=(hx>>2), bcy=(vy>>2)
+	add	hl, de
+	ld	a, (hl)
+	srl	a
+	srl	a
+	ld	(col_bcx), a
+	ld	hl, bul_vy
+	add	hl, de
+	ld	a, (hl)
+	srl	a
+	srl	a
+	ld	(col_bcy), a
+	xor	a
+	ld	(spr_j), a
+.bj:	ld	a, (spr_j)
+	cp	MAX_BACURA
+	jp	nc, .bnext
+	ld	e, a
+	ld	d, 0
+	ld	hl, bac_active
+	add	hl, de
+	ld	a, (hl)
+	or	a
+	jr	z, .bjn
+	ld	hl, bac_sx		; bcx - bac_sx in [0,2) ?
+	add	hl, de
+	ld	a, (col_bcx)
+	sub	(hl)
+	cp	2
+	jr	nc, .bjn
+	ld	hl, bac_row		; bcy - bac_row in [0,4) ?
+	add	hl, de
+	ld	a, (col_bcy)
+	sub	(hl)
+	cp	4
+	jr	nc, .bjn
+	; ヒット: 弾消滅(Bacura 不滅)
+	ld	a, (spr_i)
+	ld	e, a
+	ld	d, 0
+	ld	hl, bul_active
+	add	hl, de
+	ld	(hl), 0
+	IFDEF	SOUND
+	ld	a, (bac_sfx_done)	; カンカンは 1フレーム1回
+	or	a
+	jp	nz, .bnext
+	ld	a, 1
+	ld	(bac_sfx_done), a
+	ld	hl, se_bacura
+	call	snd_play_se
+	ENDIF
+	jp	.bnext
+.bjn:	ld	a, (spr_j)
+	inc	a
+	ld	(spr_j), a
+	jp	.bj
+.bnext:	ld	a, (spr_i)
+	inc	a
+	ld	(spr_i), a
+	jp	.bl
 
 ; トリガ(bit5,負論理)で、連射間隔ごとに空きスロットへ弾を発射。
 fire_check:
@@ -4198,7 +4279,7 @@ ebul_update:
 
 ;=====================================================================
 ; [敵] Bacura: 破壊不可の板(回転は MVP 省略)。world列固定でスクロール(scroll_moved で sx--)。
-;   ショット貫通(弾衝突なし)・接触死(自機3x3 と重なりで ship_hit)。BAC_SPAWN_INTERVAL 毎に
+;   ザッパー命中で弾は吸収(消滅)するが Bacura は不滅(bacura_shot_check, カンカン SFX)。接触死(自機3x3 と重なりで ship_hit)。BAC_SPAWN_INTERVAL 毎に
 ;   1体増殖(最大 MAX_BACURA)。area 切替で bacura_init でクリア。
 MAX_BACURA	EQU	2		; 全スプライトアンロール後、MAX=2 でも zapper 0.89%(≤1.2%)に収まるため2体に復帰。
 					;   both 5.48% はクレーター掘削(GRAM)律速で Bacura 数に非依存(最終調整で別途)。
@@ -4938,6 +5019,7 @@ bp_tl:		dw	0		; bac_put2x4/ene_clr2x4 作業: TL
 bp_ptr:		dw	0		; 〃 frametab コードポインタ
 bp_offp:	dw	0		; 〃 bac_offs ポインタ
 bac_ankonly:	db	0		; [perf] 1=位置不変(回転のみ)で ANK だけ書く。0=full(ANK+ATR)。
+bac_sfx_done:	db	0		; [敵] 今フレーム既にカンカンを鳴らしたか(多数命中で1回に制限)
 ; [敵32方向] get_index_for_angle 作業
 gia_dx:		db	0		; 符号付セル差(ship-self)
 gia_dy:		db	0

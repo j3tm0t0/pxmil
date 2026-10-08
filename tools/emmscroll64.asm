@@ -1918,6 +1918,8 @@ se_exp_aerial:
 	incbin	"roms/arcade/xevious-out/sound/se_07_exp_aerial.bin"
 se_exp_ground:
 	incbin	"roms/arcade/xevious-out/sound/se_08_exp_ground.bin"
+se_bacura:
+	incbin	"roms/arcade/xevious-out/sound/se_06_bacura.bin"	; [敵] ザッパーがBacura被弾=カンカン(tune A)
 ; BGM 状態機械(mainloop から毎フレーム)。
 ;   無音条件 = game_over または ship_inv!=0(死亡の爆発/復活無敵中)。
 ;   無音→再生へ移る瞬間(開始・復活・次エリア)は opening(tune1) を1回。
