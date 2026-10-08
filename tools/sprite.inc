@@ -1394,8 +1394,7 @@ sprite_update:
 	; 移動/アニメ(消去より先。敵は ene_dirty を立てる)
 	call	bullets_move
 	call	blaster_move		; 前進+着弾(expl_spawn)
-	call	enemies_move
-	call	ene_fire_check		; [敵弾] 射撃AI(type≠0 が自機狙いで発射)
+	call	enemies_move		; [敵弾] 射撃AI(type≠0 自機狙い)は enemies_move に統合済
 	IFDEF	GROBDA_EXTDATA
 	call	grobda_move		; [M8⑥] Grobda 移動(道vy + スクロール追従)
 	ENDIF
@@ -2337,6 +2336,38 @@ enemies_move:
 	inc	a
 	ld	(hl), a
 .e_off:
+	; [敵弾] 射撃統合: type≠0 かつ !game_over なら ftmr 減算、0 で自機狙い発射。
+	;   (de=spr_i*1。ene_fire は spr_i を使い de を破壊するので後で復帰)
+	ld	a, (game_over)
+	or	a
+	jr	nz, .nofire
+	ld	hl, ene_type
+	add	hl, de
+	ld	a, (hl)
+	or	a
+	jr	z, .nofire		; Toroid は撃たない
+	ld	hl, ene_ftmr
+	add	hl, de
+	dec	(hl)
+	jr	nz, .nofire
+	call	ene_fire
+	ld	a, (framecnt)
+	and	7
+	inc	a
+	add	a, a
+	add	a, a
+	add	a, a			; ((framecnt&7)+1)*8
+	ld	c, a
+	ld	a, (spr_i)
+	ld	e, a
+	ld	d, 0
+	ld	hl, ene_ftmr
+	add	hl, de
+	ld	(hl), c
+.nofire:
+	ld	a, (spr_i)		; de=spr_i*1 復帰
+	ld	e, a
+	ld	d, 0
 	; off-screen 判定: ene_ex >= COLS (左underflow 0xFF / 右retreat 40+)で消滅
 	ld	hl, ene_ex
 	add	hl, de
@@ -3000,7 +3031,7 @@ ene_clr2x2:
 ;   (セル<<8 | frac)、画面セル座標。速度 ebul_vx/vy(dw 符号付, frac/frame)。
 ;   enemies 同様テキスト面の 2 窓(cur_pos / cur_pos^page)へ 2x2 描画。
 EBULLET_BASE	EQU	0x00
-MAX_EBUL	EQU	6
+MAX_EBUL	EQU	4		; (perf) 同時敵弾数
 
 gen_ebullet:
 	ld	a, EBULLET_BASE
@@ -3015,6 +3046,7 @@ ebul_init:
 .il:	ld	(hl), a
 	inc	hl
 	djnz	.il
+	ld	(ebul_cnt), a		; = 0
 	ret
 
 ; ebul_spawn: HL=x(cell<<8|frac), DE=y, (ebul_svx)/(ebul_svy)=速度。空き slot へ。
@@ -3034,6 +3066,8 @@ ebul_spawn:
 	ret				; 空き無し
 .found:
 	ld	(hl), 1			; active
+	ld	hl, ebul_cnt
+	inc	(hl)
 	; e = index*2 (dw 配列)
 	ld	a, c
 	add	a, a
@@ -3273,8 +3307,41 @@ ship_tick:
 	ld	(ship_inv), a
 	ret
 
-; ebul_update: 毎フレーム。各弾を消去→移動→画面外cull→2窓描画。
+; ebul_erase_prev: eb_i の prev1/prev2 が有効(≠0xFFFF)なら 2窓を ene_clr2x2 で消去。
+ebul_erase_prev:
+	ld	a, (eb_i)
+	add	a, a
+	ld	e, a
+	ld	d, 0
+	ld	hl, ebul_prev1
+	add	hl, de
+	ld	a, (hl)
+	inc	hl
+	ld	h, (hl)
+	ld	l, a			; hl = prev1
+	ld	a, h
+	and	l
+	inc	a
+	ret	z			; 0xFFFF → 消去不要
+	call	ene_clr2x2		; prev1
+	ld	a, (eb_i)
+	add	a, a
+	ld	e, a
+	ld	d, 0
+	ld	hl, ebul_prev2
+	add	hl, de
+	ld	a, (hl)
+	inc	hl
+	ld	h, (hl)
+	ld	l, a
+	call	ene_clr2x2		; prev2
+	ret
+
+; ebul_update: 毎フレーム。各弾を 移動→cull/被弾→idle-skip描画(セル不変なら省略)。
 ebul_update:
+	ld	a, (ebul_cnt)
+	or	a
+	ret	z			; アクティブ弾なし → early-out
 	xor	a
 	ld	(eb_i), a
 .ul:	ld	a, (eb_i)
@@ -3287,45 +3354,7 @@ ebul_update:
 	ld	a, (hl)
 	or	a
 	jp	z, .next
-	; de = index*2
-	ld	a, (eb_i)
-	add	a, a
-	ld	e, a
-	ld	d, 0
-	; --- 消去: prev1/prev2 が有効なら ene_clr2x2 ---
-	ld	hl, ebul_prev1
-	add	hl, de
-	ld	a, (hl)
-	inc	hl
-	ld	h, (hl)
-	ld	l, a
-	ld	a, h
-	and	l
-	inc	a			; 0xFFFF → 0x0000
-	jr	z, .noerase
-	ld	a, (eb_i)
-	add	a, a
-	ld	e, a
-	ld	d, 0
-	ld	hl, ebul_prev1
-	add	hl, de
-	ld	a, (hl)
-	inc	hl
-	ld	h, (hl)
-	ld	l, a
-	call	ene_clr2x2
-	ld	a, (eb_i)
-	add	a, a
-	ld	e, a
-	ld	d, 0
-	ld	hl, ebul_prev2
-	add	hl, de
-	ld	a, (hl)
-	inc	hl
-	ld	h, (hl)
-	ld	l, a
-	call	ene_clr2x2
-.noerase:
+	; (消去は idle-skip のため描画/消滅時のみ。ebul_erase_prev)
 	; --- 移動: x += vx, y += vy ---
 	ld	a, (eb_i)
 	add	a, a
@@ -3437,26 +3466,52 @@ ebul_update:
 	ld	d, 0
 	add	hl, de			; soff
 	ld	(eb_soff), hl
-	; 窓1: cell=(soff+cur_pos)&0x7FF
+	; 窓1 cell = newc1 = (soff+cur_pos)&0x7FF
 	ld	de, (cur_pos)
 	add	hl, de
 	ld	a, h
 	and	0x07
 	ld	h, a
-	push	hl			; cell1
-	ld	a, EBULLET_BASE
-	call	ene_put2x2
-	; prev1 保存
+	ld	(eb_newc1), hl		; newc1
+	; --- idle-skip: prev1 が有効 かつ prev1==newc1 なら再描画省略 ---
 	ld	a, (eb_i)
 	add	a, a
 	ld	e, a
 	ld	d, 0
 	ld	hl, ebul_prev1
 	add	hl, de
-	pop	bc			; bc = cell1
-	ld	(hl), c
+	ld	a, (hl)
 	inc	hl
-	ld	(hl), b
+	ld	h, (hl)
+	ld	l, a			; hl = prev1
+	ld	a, h
+	and	l
+	inc	a
+	jr	z, .dodraw		; prev1==0xFFFF(新規)→描画
+	ld	de, (eb_newc1)
+	ld	a, l
+	cp	e
+	jr	nz, .dodraw
+	ld	a, h
+	cp	d
+	jr	nz, .dodraw
+	jp	.next			; セル不変 → スキップ(スプライト維持)
+.dodraw:
+	call	ebul_erase_prev		; 旧位置を消去(有効時のみ)
+	; 窓1 描画 @ newc1
+	ld	hl, (eb_newc1)
+	ld	a, EBULLET_BASE
+	call	ene_put2x2
+	ld	a, (eb_i)
+	add	a, a
+	ld	e, a
+	ld	d, 0
+	ld	hl, ebul_prev1
+	add	hl, de
+	ld	de, (eb_newc1)
+	ld	(hl), e
+	inc	hl
+	ld	(hl), d
 	; 窓2: cell=(soff + (cur_pos^0x0400))&0x7FF
 	ld	hl, (cur_pos)
 	ld	a, h
@@ -3482,12 +3537,15 @@ ebul_update:
 	ld	(hl), b
 	jp	.next
 .kill:
+	call	ebul_erase_prev		; 消滅: 旧位置を消去
 	ld	a, (eb_i)
 	ld	e, a
 	ld	d, 0
 	ld	hl, ebul_active
 	add	hl, de
-	ld	(hl), 0			; 非アクティブ(消去は上で実施済)
+	ld	(hl), 0
+	ld	hl, ebul_cnt
+	dec	(hl)
 .next:
 	ld	a, (eb_i)
 	inc	a
@@ -3913,6 +3971,8 @@ eb_sx:		dw	0
 eb_sy:		dw	0
 eb_i:		db	0
 eb_soff:	dw	0
+eb_newc1:	dw	0		; idle-skip 用 窓1新セル
+ebul_cnt:	db	0		; アクティブ弾数(early-out 用)
 ebul_xtmp:	dw	0
 ebul_ytmp:	dw	0
 eb_test_tmr:	db	1		; EBUL_SELFTEST スポーンタイマー
