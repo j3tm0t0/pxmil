@@ -80,6 +80,48 @@ def main():
     ]
     open(os.path.join(OUT, "ui_layout.txt"), "w").write("\n".join(lay) + "\n")
 
+    # --- タイトルロゴのタイル列(fg char 0xA0-0xFF, bitmaps は fgfont.bin)---
+    ROMDIR = os.path.join(ROOT, "roms", "arcade", "xevious")
+    mrom = (open(os.path.join(ROMDIR, "xvi_1.3p"), "rb").read()
+            + open(os.path.join(ROMDIR, "xvi_2.3m"), "rb").read()
+            + open(os.path.join(ROMDIR, "xvi_3.2m"), "rb").read()
+            + open(os.path.join(ROMDIR, "xvi_4.2l"), "rb").read())
+    logo_rows = [(0x0A9F, 18), (0x0AB1, 19), (0x0AC4, 18), (0x0AD6, 19),
+                 (0x0AE9, 20), (0x0AFD, 19), (0x0B10, 17)]
+    llines = ["Xevious タイトルロゴ: 7行×fg char(0xA0-0xFF, 8x8 bitmap=fgfont.bin)。",
+              "各行の char コード列(左→右)。X1 では縦画面向けに再配置可(タイル自体は不変):"]
+    for i, (addr, ln) in enumerate(logo_rows):
+        llines.append(" row%d (%2d): %s" % (i+1, ln,
+                      " ".join("%02X" % mrom[addr+k] for k in range(ln))))
+    open(os.path.join(OUT, "logo_layout.txt"), "w").write("\n".join(llines) + "\n")
+
+    # --- スペシャルフラッグ固定位置(area stream type0x54)---
+    sub = (open(os.path.join(ROMDIR, "xvi_5.3f"), "rb").read()
+           + open(os.path.join(ROMDIR, "xvi_6.3j"), "rb").read())
+    REMAP = 0x06AA
+    FNLEN = {0:3,1:4,2:3,3:2,4:2,5:2,6:3,7:2,8:3,9:3,10:3,11:3,12:3,13:3,
+             14:5,15:None,16:3,17:3,18:2,19:2,20:2,21:2,22:3,23:2}
+    fn_of = lambda t: sub[REMAP + (t-1)] if 1 <= t <= 0x80 else -1
+
+    def elen(p):
+        fn = fn_of(sub[p+1])
+        return fn, (5 + 2*sub[p+4]) if fn == 15 else FNLEN.get(fn)
+    ptrs = [sub[0x1000+i*2] | (sub[0x1000+i*2+1] << 8) for i in range(16)]
+    flines = ["スペシャルフラッグ(type0x54, 不可視→ボムで1000pts, across-Y はランダム):",
+              "固定 col(X1列)=(trig+0xFD)&0xFF。出現はエリア 1/3/5/7(1周目奇数エリア):"]
+    for a in range(16):
+        start = ptrs[a]; end = ptrs[a+1] if a+1 < 16 else 0x1E52
+        p = start
+        while p < end - 1:
+            fn, L = elen(p)
+            if not L or L < 2 or p + L > end:
+                break
+            if sub[p+1] == 0x54:
+                flines.append("  area%d: col=%d (trig0x%02X)" % (a+1, (sub[p]+0xFD) & 0xFF, sub[p]))
+            p += L
+    open(os.path.join(OUT, "special_flag.txt"), "w").write("\n".join(flines) + "\n")
+    print("\n".join(llines)); print(); print("\n".join(flines))
+
     # preview (optional)
     try:
         from PIL import Image
