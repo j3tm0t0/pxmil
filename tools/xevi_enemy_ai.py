@@ -127,10 +127,13 @@ def main_dump():
     # --- X1 焼き込み用 inc(32方向速度表 + 敵スペック) ---
     out = os.path.join(ROOT, "roms", "arcade", "xevious-out")
     os.makedirs(out, exist_ok=True)
-    angtabs = [("ang_aimed_1_0px", 0x3DF3), ("ang_fast_1_5px", 0x3DB3),
-               ("ang_slow_0_75px", 0x3E33), ("ang_sheo_2_0px", 0x3D73)]
+    # 速度(px/frame): move_object_dX_dY が position += 2×(dY,dX) するので
+    #   実速 = 2×|r|/32 = |r|/16 px/f(較正: scroll_delta8→2×8/32=0.5px/f で裏取り)。
+    angtabs = [("ang_aimed_2_0px", 0x3DF3), ("ang_fast_3_0px", 0x3DB3),
+               ("ang_slow_1_5px", 0x3E33), ("ang_sheo_4_0px", 0x3D73)]
     with open(os.path.join(out, "enemy_ai.inc"), "w") as f:
-        f.write("; Xevious 敵AI焼き込みデータ(非コミット). 角度表=32方向 (dY,dX) 符号付 1/32px.\n")
+        f.write("; Xevious 敵AI焼き込みデータ(非コミット). 角度表=32方向 (dY,dX) 符号付.\n")
+        f.write("; 適用: position(1px=32) += **2×(dY,dX)** / ROMフレーム → 実速=|r|/16 px/f.\n")
         f.write("; index = get_index_for_angle(自機-自身) >>3 &0x1F。dY,dX をそのまま速度に。\n")
         for name, addr in angtabs:
             f.write("%s:\n" % name)
