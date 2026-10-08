@@ -1082,16 +1082,55 @@ sol_entry:	dw	SOL_COL		; crater_write_obj が読む 6B エントリ
 		dw	0		; crater_base(コマ毎に設定)
 
 ; sol_hit_check: 命中(hit_tcol,col_ey)が Sol 位置かつ未発動なら発動。
+;   ALLAREAS: sol_list(エリアごと, 最大8体)を走査。非: ハードコード単一。
 sol_hit_check:
 	ld	a, (sol_state)
 	or	a
 	ret	nz			; 既に発動/露出済み
+	IFDEF	ALLAREAS
+	ld	a, (sol_n)
+	or	a
+	ret	z			; Sol 無し
+	ld	b, a
+	ld	ix, sol_list
+.shl:
+	ld	a, (hit_tcol)
+	cp	(ix + 0)		; col lo
+	jr	nz, .shnext
+	ld	a, (col_ey)
+	cp	(ix + 2)		; row
+	jr	nz, .shnext
+	; 一致: sol_col/row/base_ptr を設定(bases は ix+3)
+	ld	a, (ix + 0)
+	ld	(sol_col), a
+	ld	a, (ix + 2)
+	ld	(sol_row), a
+	push	ix
+	pop	hl
+	ld	de, 3
+	add	hl, de
+	ld	(sol_base_ptr), hl
+	jr	.shhit
+.shnext:
+	ld	de, 11
+	add	ix, de
+	djnz	.shl
+	ret				; 一致無し
+.shhit:
+	ELSE
 	ld	a, (hit_tcol)
 	cp	SOL_COL
 	ret	nz
 	ld	a, (col_ey)
 	cp	SOL_ROW
 	ret	nz
+	ld	a, SOL_COL
+	ld	(sol_col), a
+	ld	a, SOL_ROW
+	ld	(sol_row), a
+	ld	hl, sol_bases
+	ld	(sol_base_ptr), hl
+	ENDIF
 	ld	a, 1
 	ld	(sol_state), a		; f0 から開始
 	xor	a
@@ -1116,21 +1155,26 @@ sol_update:
 	ld	(sol_timer), a
 	ret
 .step:
-	; sol_entry.base = sol_bases[sol_state-1]
+	; sol_entry.base = sol_base_ptr[sol_state-1]
 	ld	a, (sol_state)
 	dec	a
 	add	a, a
 	ld	e, a
 	ld	d, 0
-	ld	hl, sol_bases
+	ld	hl, (sol_base_ptr)
 	add	hl, de
 	ld	a, (hl)
 	ld	(sol_entry + 4), a
 	inc	hl
 	ld	a, (hl)
 	ld	(sol_entry + 5), a
-	; col_ex = SOL_COL - coarse_lo (画面列)
-	ld	a, SOL_COL
+	; sol_entry.col/row = sol_col/sol_row(エリアごと)
+	ld	a, (sol_col)
+	ld	(sol_entry + 0), a
+	ld	a, (sol_row)
+	ld	(sol_entry + 2), a
+	; col_ex = sol_col - coarse_lo (画面列)
+	ld	a, (sol_col)
 	ld	hl, coarse
 	sub	(hl)
 	ld	(col_ex), a
@@ -1140,9 +1184,15 @@ sol_update:
 	call	crater_enqueue		; GRAM へ(pump が分散描画)
 	ld	a, (sol_state)
 	inc	a
-	ld	(sol_state), a
 	cp	5
-	ret	z			; f3 まで出し切った
+	jr	nz, .sol_cont		; まだ f3 前
+	IFDEF	ALLAREAS
+	xor	a			; [⑦] 露出完了→state=0(他の Sol を発動可能に。露出タイルは残る)
+	ENDIF
+	ld	(sol_state), a
+	ret				; f3 まで出し切った
+.sol_cont:
+	ld	(sol_state), a
 	ld	a, SOL_STEP
 	ld	(sol_timer), a
 	ret
@@ -3222,6 +3272,13 @@ pc_coarse:	dw	0		; ヒット時の coarse(16bit, 分散描画中 GRAM 位置を�
 hit_tcol:	db	0		; 直近ブラスター着弾の tilemap 列(Sol 判定用)
 sol_state:	db	0		; [#3] Sol: 0=隠, 1..4=f0..f3 描画待ち, 5=露出完了
 sol_timer:	db	0		; Sol アニメのコマ内カウンタ
+sol_col:	db	0		; 発動中 Sol の col(エリアごと)
+sol_row:	db	0		; 発動中 Sol の row
+sol_base_ptr:	dw	0		; 発動中 Sol の 4フレーム base 配列へのポインタ
+	IFDEF	ALLAREAS
+sol_n:		db	0		; [⑦] エリアの Sol 数(gobj_load が設定)
+sol_list:	ds	11 * 8		; 1件=col(2),row(1),4フレームbase(8B)。最大8体
+	ENDIF
 ; 地上物リスト: 1件 = dw tilemap_col, db row, db type, dw crater_id (6B)。
 ;   実データは -DGOBJ_EXTDATA で roms/ から(gobj_n/gobj_list を定義)。既定は空。
 	IFDEF	GOBJ_EXTDATA

@@ -1509,6 +1509,44 @@ gobj_load:
 .gdone:
 	ld	a, (gl_wr)
 	ld	(gobj_n), a
+	; --- sol セクション: sol_count + 各 sol[col2,row,frame4x4addr] を sol_list へ ---
+	;   (EMM ポインタは gobj セクション直後。各フレームは base(=addr0)のみ保持し残3 addr 破棄)
+	ld	bc, EMM_DAT
+	in	a, (c)			; sol_count
+	ld	(sol_n), a
+	or	a
+	ret	z
+	ld	(gl_cnt), a
+	ld	de, sol_list
+.sol_rd:
+	in	a, (c)			; col lo
+	ld	(de), a
+	inc	de
+	in	a, (c)			; col hi
+	ld	(de), a
+	inc	de
+	in	a, (c)			; row
+	ld	(de), a
+	inc	de
+	; 4 フレーム: 各 base(2B)保持 + 残 3 addr(6B)破棄
+	REPT 4
+	in	a, (c)			; base lo
+	ld	(de), a
+	inc	de
+	in	a, (c)			; base hi
+	ld	(de), a
+	inc	de
+	in	a, (c)			; 破棄 TR,BL,BR (各2B=6B)
+	in	a, (c)
+	in	a, (c)
+	in	a, (c)
+	in	a, (c)
+	in	a, (c)
+	ENDR
+	ld	a, (gl_cnt)
+	dec	a
+	ld	(gl_cnt), a
+	jp	nz, .sol_rd
 	ret
 
 as_n:		dw	0
