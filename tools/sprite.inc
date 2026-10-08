@@ -23,12 +23,14 @@ ENEMY_BASE	EQU	0xB0		; [M8] Toroid PCG (0xB0..0xBF, 4フレーム x 2x2)
 JARA_BASE	EQU	0xE0		; [M8④] Jara PCG (0xE0..0xEF, 4フレーム x 2x2)
 TORKAN_BASE	EQU	0xF0		; [M8④] Torkan PCG (0xF0..0xF7, 2フレーム x 2x2)
 ZOSHI_BASE	EQU	0x04		; [敵] Zoshi PCG (0x04..0x0B, 2フレーム x 2x2)
+GIDDO_BASE	EQU	0x0C		; [敵] Giddo PCG (0x0C..0x0F, 1フレーム x 2x2)。[近似]PCG逼迫で
+					;   1コマのみ常駐(ROMは回転4コマ)。空きコード 0x0C-0x0F を使用。
 BACURA_RES_BASE	EQU	0x67		; [敵] Bacura 回転8コマ常駐先頭(自機dedupで空いた0x67..0x9F)
 BACURA_RES_N	EQU	43		; 8コマ重複除去後のユニークセル数(0x67..0x91)
 MAX_ENEMIES	EQU	5		; [M8④] 最大同時数(num_flying が 3→4→5 と上昇)
 DIFF_INTERVAL	EQU	1800		; [M8④] 難易度1段の経過フレーム(≒30s@60Hz)
 ENEMY_SPEED	EQU	1		; 横移動(セル/移動tick) ※敵は8pxグリッド
-EN_NTYPES	EQU	4		; [敵] 敵タイプ数 (Toroid/Jara/Torkan/Zoshi)
+EN_NTYPES	EQU	5		; [敵] 敵タイプ数 (Toroid/Jara/Torkan/Zoshi/Giddo)
 TOROID_STOP	EQU	16		; [M8④] Toroid が停止する画面セル列(寄って停止)(旧phase機械/未使用)
 TOR_SWING	EQU	24		; [32方向] Toroid swing の縦速度(0.75px/f=24)
 TOR_SWING_T	EQU	6		; swing 反転周期(tick)
@@ -1910,6 +1912,10 @@ gen_enemy:
 	ld	a, ZOSHI_BASE
 	ld	b, 8
 	call	gen_pcg_set
+	ld	hl, giddo_data		; [敵] Giddo(1コマ=4セル, 近似)
+	ld	a, GIDDO_BASE
+	ld	b, 4
+	call	gen_pcg_set
 	ld	hl, bacura_cells	; [敵] Bacura 回転8コマの重複除去済み43セルを常駐
 	ld	a, BACURA_RES_BASE
 	ld	b, BACURA_RES_N
@@ -1959,7 +1965,7 @@ enemy_spawn:
 	; [M8④] 難易度上昇(経過): difficulty<2 の間 diff_tmr を減らし 0 で +1。
 	;   num_flying=3+difficulty(3→4→5)。型解禁: type<=difficulty のみ(他はToroid)。
 	ld	a, (difficulty)
-	cp	3			; [敵] Zoshi(type3)解禁のため cap を 3 に
+	cp	4			; [敵] Giddo(type4)解禁のため difficulty cap を 4 に
 	jr	nc, .dskip
 	ld	hl, (diff_tmr)
 	dec	hl
@@ -4797,7 +4803,7 @@ grob_hi:	db	0		; grobda_hit_check 専用ループ(spr_i を壊さない)
 	ENDIF
 ; [M8④] 出現タイプ列(エリア1≒Toroid主体, たまに Jara(1)/Torkan(2))。12個循環。
 SPAWN_SEQ_LEN	EQU	12
-spawn_seq:	db	0,0,0,3, 1,0,0,0, 2,0,3,1	; [敵] 3=Zoshi(difficulty>=3 で解禁)
+spawn_seq:	db	0,0,0,3, 1,0,0,4, 2,0,3,4	; [敵] 3=Zoshi(diff>=3)/4=Giddo(diff>=4で解禁、未満はToroid)
 ; [M8④] 敵タイプ記述子: per type = (pcg_base, nframes, traj_id)。
 ;   traj_id: 0=Toroid(直進) / 1=Jara(縦振動) / 2=Torkan(斜めダイブ)。
 entype_tab:
@@ -4805,6 +4811,7 @@ entype_tab:
 	db	JARA_BASE,   4, 1	; type1: Jara(縦振動+左進)
 	db	TORKAN_BASE, 2, 2	; type2: Torkan(斜めダイブ, 高速)
 	db	ZOSHI_BASE,  2, 3	; type3: Zoshi(2コマ, ang_slow 自機方向+周期再照準, 撃つ)
+	db	GIDDO_BASE,  1, 4	; type4: Giddo(1コマ近似, ang_sheo 自機狙いダイブ)
 ene_atmr:	ds	MAX_ENEMIES
 ene_mtmr:	ds	MAX_ENEMIES
 ene_prev:	ds	MAX_ENEMIES * 2		; 前回 top-left セル 窓1
@@ -4857,6 +4864,9 @@ ebullet_data:
 zoshi_data:
 	INCBIN	"roms/arcade/xevious-out/enemy_zoshi_0.bin"
 	INCBIN	"roms/arcade/xevious-out/enemy_zoshi_1.bin"
+; [敵] Giddo PCG(1コマ×16x16=4セル=96B, 近似)。ROMは回転4コマだが PCG逼迫で1コマ常駐。
+giddo_data:
+	INCBIN	"roms/arcade/xevious-out/aerial/giddo_f0.bin"
 ; [敵] Bacura 回転8コマ(16x32=2幅×4高)の重複除去済み43セル(各24B)。rot180適用。
 ;   tools/gen_bac_res.py が bacura_rot0..7.bin から生成(非コミット)。
 bacura_cells:
