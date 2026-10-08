@@ -1963,24 +1963,10 @@ enemy_spawn:
 	ld	a, (game_over)
 	or	a
 	ret	nz			; ゲームオーバー中は出現しない
-	; [出現①] rank(enemy_AI_level)を時間で上昇(暫定。②で col トリガ fn3 に置換)。
-	;   DIFF_INTERVAL 毎に rank+=RANK_STEP、≥0x80 で −0x40(ROMクランプ)、
-	;   (fly_num,fly_off)=fly_offset_tbl[min(rank,31)]。
-	ld	hl, (diff_tmr)
-	dec	hl
-	ld	(diff_tmr), hl
-	ld	a, h
-	or	l
-	jr	nz, .dskip
-	ld	hl, DIFF_INTERVAL
-	ld	(diff_tmr), hl
-	ld	a, (rank)
-	add	a, RANK_STEP
-	cp	0x80
-	jr	c, .rkc
-	sub	0x40
-.rkc:	ld	(rank), a
-	call	rank_set_pop
+	; [出現②] col トリガ walker で fn2/fn3/fn5 を発火(①の時間駆動を置換)。
+	IFDEF	ENEMY_EXTDATA
+	call	fly_walk
+	ENDIF
 .dskip:
 	ld	a, (spawn_tmr)
 	or	a
@@ -3730,6 +3716,125 @@ rom_type_map:
 	ld	a, e			; type
 	ret
 
+	IFDEF	ENEMY_EXTDATA		; [出現②] fly 出現系(area_cur/fly_area_tab/fly_rec を使用)
+; [出現②] 非ALLAREAS(SOL等)でも fly_load が area_cur を参照できるようフォールバック定義。
+	IFNDEF	ALLAREAS
+area_cur:	db	0
+	ENDIF
+; [出現②] fly_load: area_cur の fly ストリームを fly_rec[] に展開(T,kind,num,off)。
+;   T=col-(COLS-1)(<0→0)。型バイトは読み飛ばし(fly_off=fly_type_tbl index で足りる)。ffreq は③で別処理。
+fly_load:
+	ld	a, (area_cur)
+	add	a, a
+	ld	e, a
+	ld	d, 0
+	ld	hl, fly_area_tab
+	add	hl, de
+	ld	e, (hl)
+	inc	hl
+	ld	d, (hl)			; de = ストリーム先頭
+	ld	a, (de)			; fly_count
+	inc	de
+	cp	FLY_REC_MAX + 1
+	jr	c, .fcok
+	ld	a, FLY_REC_MAX
+.fcok:	ld	(fly_rec_count), a
+	or	a
+	ret	z
+	ld	b, a
+	ld	hl, fly_rec
+.fl:	push	bc
+	ld	a, (de)			; col_lo
+	inc	de
+	inc	de			; col_hi 読み飛ばし(col<=255)
+	sub	COLS - 1		; T = col-(COLS-1)
+	jr	nc, .tp
+	xor	a			; <0 → 0(即発火)
+.tp:	ld	(hl), a
+	inc	hl
+	ld	a, (de)			; kind
+	inc	de
+	ld	(hl), a
+	inc	hl
+	ld	a, (de)			; num
+	inc	de
+	ld	c, a
+	ld	(hl), a
+	inc	hl
+	ld	a, (de)			; off
+	inc	de
+	ld	(hl), a
+	inc	hl
+	ld	a, c			; 型バイト num 個スキップ
+	or	a
+	jr	z, .nsk
+	ld	b, a
+.sk:	inc	de
+	djnz	.sk
+.nsk:	pop	bc
+	djnz	.fl
+	ret
+
+; [出現②] fly_walk: 毎フレーム。未消化(T≠0xFF)で coarse>=T なら発火し T=0xFF。
+fly_walk:
+	ld	a, (fly_rec_count)
+	or	a
+	ret	z
+	ld	b, a
+	ld	hl, fly_rec
+.wl:	push	bc
+	ld	a, (hl)			; T
+	cp	0xFF
+	jr	z, .wadv
+	ld	c, a			; c=T
+	ld	a, (coarse)		; coarse_lo
+	cp	c
+	jr	c, .wadv		; coarse<T → まだ
+	inc	hl			; kind
+	ld	a, (hl)
+	inc	hl			; num
+	ld	c, (hl)
+	inc	hl			; off
+	ld	e, (hl)
+	push	hl
+	call	fly_exec		; a=kind, c=num, e=off
+	pop	hl
+	dec	hl
+	dec	hl
+	dec	hl			; T へ戻す
+	ld	(hl), 0xFF		; 消化
+.wadv:	ld	de, 4
+	add	hl, de
+	pop	bc
+	djnz	.wl
+	ret
+
+; [出現②] fly_exec: a=kind(2/3/5), c=num, e=off。常駐人口を set/更新 or 停止。
+fly_exec:
+	cp	2
+	jr	nz, .fe3
+	ld	a, c			; fn2: fly_num=num, fly_off=off, 型巡回リセット
+	ld	(fly_num), a
+	ld	a, e
+	ld	(fly_off), a
+	xor	a
+	ld	(type_cycle), a
+	ret
+.fe3:	cp	3
+	jr	nz, .fe5
+	ld	a, (rank)		; fn3: rank+=RANK_STEP(クランプ)→offset_tbl[rank]
+	add	a, RANK_STEP
+	cp	0x80
+	jr	c, .fe3c
+	sub	0x40
+.fe3c:	ld	(rank), a
+	call	rank_set_pop
+	ret
+.fe5:	xor	a			; fn5: 人口0(枯らす)
+	ld	(fly_num), a
+	ret
+	ENDIF				; IFDEF ENEMY_EXTDATA (出現② fly 系)
+
 ; ene_fire: spr_i の敵から自機狙いの弾を1発。8方向近似。
 ene_fire:
 	ld	a, (spr_i)
@@ -4840,6 +4945,9 @@ rank:		db	0		; [出現] enemy_AI_level。fn3/進行で+、死亡/Zolbakで−。
 fly_num:	db	3		; [出現] 現在の常駐人口目標(初期=idx0 の num=3)
 fly_off:	db	1		; [出現] 現在の fly_type_tbl への型オフセット(初期=idx0 の off=1=Toroid)
 type_cycle:	db	0		; [出現] 次に出す型のインデックス(0..fly_num-1 を巡回)
+FLY_REC_MAX	EQU	48		; [出現②] エリアあたり最大 fly レコード数(超過は無視)
+;   fly_rec(パース済 (T,kind,num,off)×) は emmscroll64.asm 末尾で作業バッファ上(0xD808+)に配置。
+fly_rec_count:	db	0		; [出現②] 現エリアの fly レコード数
 difficulty:	db	0		; [M8④] 難易度(0..2)。経過で上昇、型解禁を制御
 diff_tmr:	dw	DIFF_INTERVAL	; [M8④] 次の難易度上昇までのフレーム
 eff_cap:	db	3		; [M8⑥(A)] 今回の実効同時上限(num_flying - 表示中Grobda)
@@ -4951,6 +5059,8 @@ rom_map_tab:	; 0x08..0x18
 	db	(3<<1)|1	; 0x16 Brag Zakato [代替]
 	db	(3<<1)|1	; 0x17 [代替]
 	db	(3<<1)|1	; 0x18 Garu Zakato [代替]
+; [出現②] fly 出現コマンド列(areaNN_fly.bin)と fly_rec は emmscroll64.asm 末尾で
+;   作業バッファ上の空き(ORG 0xD808)に配置(program 0x0100〜 を圧迫しないため)。
 ; [敵] Bacura 回転8コマ(16x32=2幅×4高)の重複除去済み43セル(各24B)。rot180適用。
 ;   tools/gen_bac_res.py が bacura_rot0..7.bin から生成(非コミット)。
 bacura_cells:

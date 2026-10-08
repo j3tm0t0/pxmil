@@ -168,6 +168,9 @@ realstart:
 	call	area_switch
 	xor	a			; area1 の gobj/sol/grobda を RAM へ(以降 sprite_init の grobda_init が使う)
 	call	gobj_load
+	IFDEF	ENEMY_EXTDATA
+	call	fly_load		; [出現②] area1 の flying 出現コマンド列をパース
+	ENDIF
 	; [⑦(3)] common_pal(EMM_PAL)を pal_buf へ読み HW パレット適用
 	xor	a
 	ld	(emm_a0), a
@@ -1422,6 +1425,9 @@ area_advance:
 	; 地上物切替
 	ld	a, (area_cur)
 	call	gobj_load
+	IFDEF	ENEMY_EXTDATA
+	call	fly_load		; [出現②] 新エリアの flying 出現コマンド列をパース
+	ENDIF
 	; adv_off = framecnt>>3 (エリア先頭で coarse=0)
 	ld	hl, (framecnt)
 	srl	h
@@ -1933,5 +1939,33 @@ bgm_phase:	db	0
 	;   コードを破壊しハング)。肥大したらビルドエラーになる。バッファ上限がスタックに迫らないことも。
 	ASSERT	$ <= WORKBUF_BASE
 	ASSERT	WORKBUF_TOP <= 0xE800
+
+	; [出現②] flying 出現コマンド列(areaNN_fly.bin, 計~1.5KB)を program ではなく作業バッファ上の
+	;   空き(0xD808〜0xE800)に配置。ロード時にこの範囲へ展開され(gap はゼロ埋め=作業バッファは実行時に
+	;   初期化されるので無害)、fly_load が EMM 経由でなく直接参照できる。
+	IFDEF	ENEMY_EXTDATA
+	DS	0xD808 - $		; ギャップを埋めて fly データを 0xD808 に正しく配置(--raw は ORG を pad しない)
+fly_a01: INCBIN "roms/arcade/xevious-out/enemies/area01_fly.bin"
+fly_a02: INCBIN "roms/arcade/xevious-out/enemies/area02_fly.bin"
+fly_a03: INCBIN "roms/arcade/xevious-out/enemies/area03_fly.bin"
+fly_a04: INCBIN "roms/arcade/xevious-out/enemies/area04_fly.bin"
+fly_a05: INCBIN "roms/arcade/xevious-out/enemies/area05_fly.bin"
+fly_a06: INCBIN "roms/arcade/xevious-out/enemies/area06_fly.bin"
+fly_a07: INCBIN "roms/arcade/xevious-out/enemies/area07_fly.bin"
+fly_a08: INCBIN "roms/arcade/xevious-out/enemies/area08_fly.bin"
+fly_a09: INCBIN "roms/arcade/xevious-out/enemies/area09_fly.bin"
+fly_a10: INCBIN "roms/arcade/xevious-out/enemies/area10_fly.bin"
+fly_a11: INCBIN "roms/arcade/xevious-out/enemies/area11_fly.bin"
+fly_a12: INCBIN "roms/arcade/xevious-out/enemies/area12_fly.bin"
+fly_a13: INCBIN "roms/arcade/xevious-out/enemies/area13_fly.bin"
+fly_a14: INCBIN "roms/arcade/xevious-out/enemies/area14_fly.bin"
+fly_a15: INCBIN "roms/arcade/xevious-out/enemies/area15_fly.bin"
+fly_a16: INCBIN "roms/arcade/xevious-out/enemies/area16_fly.bin"
+fly_area_tab:
+	dw	fly_a01, fly_a02, fly_a03, fly_a04, fly_a05, fly_a06, fly_a07, fly_a08
+	dw	fly_a09, fly_a10, fly_a11, fly_a12, fly_a13, fly_a14, fly_a15, fly_a16
+fly_rec:	ds	FLY_REC_MAX * 4	; パース済 (T,kind,num,off)×
+	ASSERT	$ <= 0xE800
+	ENDIF
 
 	END
