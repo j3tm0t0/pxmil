@@ -1448,6 +1448,9 @@ sprite_update:
 	call	ebul_spawn
 .ebnt:
 	ENDIF
+	IFDEF	ENEMY_EXTDATA
+	call	turret_fire		; [③(A)] 地上砲台の射撃(ebul へ spawn → ebul_update で処理)
+	ENDIF
 	call	ebul_update		; [敵弾] 移動+消去+描画(1パス)
 	IFDEF	MEAS
 	MEASCALL bacura_update, meas_bac	; [MEAS] Bacura 描画の T 数(実コスト = 値 - meas_base)
@@ -2048,6 +2051,7 @@ enemy_spawn:
 	; [出現②] col トリガ walker で fn2/fn3/fn5 を発火(①の時間駆動を置換)。
 	IFDEF	ENEMY_EXTDATA
 	call	fly_walk
+	call	ffreq_walk		; [③] coarse 到達で ffreq マスク/gnd_stop_fire を更新
 	ENDIF
 .dskip:
 	ld	a, (spawn_tmr)
@@ -3817,22 +3821,20 @@ fly_load:
 	ld	d, (hl)			; de = ストリーム先頭
 	ld	a, (de)			; fly_count
 	inc	de
-	cp	FLY_REC_MAX + 1
+	cp	FLY_REC_MAX + 1		; 全エリア<=22<48 なので実際は不発(安全用)
 	jr	c, .fcok
 	ld	a, FLY_REC_MAX
 .fcok:	ld	(fly_rec_count), a
 	or	a
-	ret	z
+	jr	z, .ffreq		; [③] fly_count=0 でも ffreq は続けて読む(area07 対策)
 	ld	b, a
 	ld	hl, fly_rec
 .fl:	push	bc
 	ld	a, (de)			; col_lo
 	inc	de
 	inc	de			; col_hi 読み飛ばし(col<=255)
-	sub	COLS - 1		; T = col-(COLS-1)
-	jr	nc, .tp
-	xor	a			; <0 → 0(即発火)
-.tp:	ld	(hl), a
+	call	col_to_T		; [③] T=(col>=217)?0:max(col-39,0)
+	ld	(hl), a
 	inc	hl
 	ld	a, (de)			; kind
 	inc	de
@@ -3855,6 +3857,45 @@ fly_load:
 	djnz	.sk
 .nsk:	pop	bc
 	djnz	.fl
+	; de は ffreq_count を指す(全 fly レコードを走査済み)
+.ffreq:	; [③] ffreq: ffreq_count + ×(u16 col, u8 mask_id, u8 mask) を ffreq_rec[] へ
+	ld	a, (de)
+	inc	de
+	cp	FFREQ_REC_MAX + 1
+	jr	c, .ffok
+	ld	a, FFREQ_REC_MAX
+.ffok:	ld	(ffreq_rec_count), a
+	or	a
+	ret	z
+	ld	b, a
+	ld	hl, ffreq_rec
+.ffl:	push	bc
+	ld	a, (de)			; col_lo
+	inc	de
+	inc	de			; col_hi skip
+	call	col_to_T
+	ld	(hl), a			; T
+	inc	hl
+	ld	a, (de)			; mask_id
+	inc	de
+	ld	(hl), a
+	inc	hl
+	ld	a, (de)			; mask
+	inc	de
+	ld	(hl), a
+	inc	hl
+	pop	bc
+	djnz	.ffl
+	ret
+
+; [③] a=col → a=T。col>=W_CELLS-COLS+1(=217, pre-start wrap) は T=0(エリア先頭で適用)。
+;   それ以外は T=max(col-(COLS-1), 0)。coarse>=T で発火。
+col_to_T:
+	cp	W_CELLS - COLS + 1
+	jr	nc, .c0
+	sub	COLS - 1
+	ret	nc
+.c0:	xor	a
 	ret
 
 ; [出現②] fly_walk: 毎フレーム。未消化(T≠0xFF)で coarse>=T なら発火し T=0xFF。
@@ -3915,6 +3956,134 @@ fly_exec:
 .fe5:	xor	a			; fn5: 人口0(枯らす)
 	ld	(fly_num), a
 	ret
+
+; [③] ffreq_walk: 毎フレーム。未消化(T≠0xFF)で coarse>=T なら ffreq_reg[mask_id-8]=mask
+;   を適用し T=0xFF。mask_id 0x08..0x11 のみ(=index 0..9)。範囲外(andor/空中敵 0x12+)は無視。
+ffreq_walk:
+	ld	a, (ffreq_rec_count)
+	or	a
+	ret	z
+	ld	b, a
+	ld	hl, ffreq_rec
+.fwl:	push	bc
+	ld	a, (hl)			; T
+	cp	0xFF
+	jr	z, .fwadv
+	ld	c, a
+	ld	a, (coarse)
+	cp	c
+	jr	c, .fwadv		; coarse<T → まだ
+	inc	hl			; mask_id
+	ld	a, (hl)
+	sub	0x08			; index = mask_id-8
+	cp	FFREQ_REG_N		; >=10 → 範囲外(andor等)→適用せず消化のみ
+	jr	nc, .fwcons
+	ld	e, a
+	ld	d, 0
+	inc	hl			; mask
+	ld	c, (hl)
+	dec	hl			; mask_id に戻す(以降 T まで戻す)
+	push	hl
+	ld	hl, ffreq_reg
+	add	hl, de
+	ld	(hl), c			; ffreq_reg[index] = mask
+	pop	hl
+	dec	hl			; T へ
+	ld	(hl), 0xFF		; 消化
+	jr	.fwadv
+.fwcons:
+	dec	hl			; mask_id→T
+	ld	(hl), 0xFF		; 消化(適用はしない)
+.fwadv:	ld	de, 3
+	add	hl, de
+	pop	bc
+	djnz	.fwl
+	ret
+
+; [③(A)] rnd_step: a = 次の擬似乱数(8bit Galois LFSR 多項式0xB8, 周期255, 非ゼロ)。rnd_seed 更新。
+rnd_step:
+	ld	a, (rnd_seed)
+	srl	a
+	jr	nc, .rs
+	xor	0xB8
+.rs:	ld	(rnd_seed), a
+	ret
+
+; [③(A)] turret_fire: 地上砲台の射撃。frame&7==0 のフレームのみ(countup ゲート, 8f周期)。
+;   各砲台(fire_mask_id≠0)について scol=tile_col-coarse が前方帯
+;   (scol >= COLS-1-gnd_stop_fire)にある間だけ、timer 0 で anchor セルから
+;   自機狙い弾(ene_fire 流用)を発射し timer=(rnd & ffreq[mask])+1 で再装填。
+;   gnd_stop_fire=ffreq_reg[0x0A-8=2]、mask=ffreq_reg[mask_id-8]。xevi-re ROM 確定。
+;   (奥で撃ち自機を過ぎると停止。rot180 の符号はこの写像=実機で最終確認)
+turret_fire:
+	ld	a, (game_over)
+	or	a
+	ret	nz
+	ld	a, (framecnt)
+	and	7
+	ret	nz			; 8フレームに1回のみ処理(countup&7==0 相当)
+	ld	a, (turret_n)
+	or	a
+	ret	z
+	ld	b, a
+	ld	ix, turret_list
+.tfl:	push	bc
+	ld	a, (ix + 3)		; mask_id(0=空き/破壊)
+	or	a
+	jp	z, .tfn
+	; scol = tile_col(16bit) - coarse
+	ld	l, (ix + 0)
+	ld	h, (ix + 1)
+	ld	de, (coarse)
+	or	a
+	sbc	hl, de
+	jp	c, .tfn			; scol<0(自機を過ぎ後方)→停止
+	ld	a, h
+	or	a
+	jp	nz, .tfn		; scol>=256(前方遠すぎ=未出現)
+	ld	a, l			; scol(0..)
+	cp	COLS
+	jp	nc, .tfn		; scol>=COLS(画面右外=前方まだ)
+	ld	c, a			; c=scol
+	; 前方帯しきい値 = COLS-1 - gnd_stop_fire (負はクランプ0)
+	ld	a, (ffreq_reg + 2)	; gnd_stop_fire
+	ld	e, a
+	ld	a, COLS - 1
+	sub	e
+	jr	nc, .gsok
+	xor	a			; gnd_stop>COLS-1 → しきい値0(全域で撃つ)
+.gsok:	; a=しきい値。scol(c) >= a なら前方帯。cp c: a<c→carry, a==c→zero のとき撃つ
+	cp	c
+	jr	c, .front
+	jr	z, .front
+	jp	.tfn			; しきい値>scol → まだ前方帯でない → 撃たない
+.front:	dec	(ix + 4)		; timer
+	jp	nz, .tfn		; まだ
+	; FIRE: timer = (rnd & ffreq_reg[mask_id-8]) + 1
+	ld	a, (ix + 3)		; mask_id
+	sub	8
+	ld	e, a
+	ld	d, 0
+	ld	hl, ffreq_reg
+	add	hl, de
+	ld	e, (hl)			; e=mask
+	call	rnd_step		; a=rnd
+	and	e			; rnd & mask
+	inc	a
+	ld	(ix + 4), a		; timer 再装填
+	; 発射セル: ef_ex=scol(c), ef_ey=row(ix+2)
+	ld	a, c
+	ld	(ef_ex), a
+	ld	a, (ix + 2)
+	ld	(ef_ey), a
+	push	ix
+	call	ef_aim_spawn		; 自機狙い弾を1発(ene_fire 流用)
+	pop	ix
+.tfn:	ld	de, TURREC
+	add	ix, de
+	pop	bc
+	djnz	.tfl
+	ret
 	ENDIF				; IFDEF ENEMY_EXTDATA (出現② fly 系)
 
 ; ene_fire: spr_i の敵から自機狙いの弾を1発。8方向近似。
@@ -3930,6 +4099,8 @@ ene_fire:
 	add	hl, de
 	ld	a, (hl)
 	ld	(ef_ey), a
+; [③(A)] ef_aim_spawn: ef_ex/ef_ey(発射セル)から自機狙い弾を1発。turret_fire も流用。
+ef_aim_spawn:
 	; dx = (ship_hx>>2) - ef_ex
 	ld	a, (ship_hx)
 	srl	a
@@ -5037,6 +5208,21 @@ type_cycle:	db	0		; [出現] 次に出す型のインデックス(0..fly_num-1 �
 FLY_REC_MAX	EQU	48		; [出現②] エリアあたり最大 fly レコード数(超過は無視)
 ;   fly_rec(パース済 (T,kind,num,off)×) は emmscroll64.asm 末尾で作業バッファ上(0xD808+)に配置。
 fly_rec_count:	db	0		; [出現②] 現エリアの fly レコード数
+; [③] ffreq: 地上砲台等の射撃頻度マスク。mask_id 0x08=derota/0x09=logram/0x0A=gnd_stop_fire/
+;   0x0B=zoshi/0x0C=terrazi/0x0D=kapi/0x10=boza/0x11=domogram。index=mask_id-8(0..9)。
+FFREQ_REC_MAX	EQU	16		; 最大 ffreq レコード数(全エリア最大9)
+FFREQ_REG_N	EQU	10		; ffreq_reg スロット数(mask_id 0x08..0x11)
+;   ffreq_rec(ds, パース済 T,mask_id,mask) は program 節約で emmscroll64.asm の 0xD808+ に配置。
+ffreq_rec_count: db	0
+ffreq_reg:	ds	FFREQ_REG_N	; 現在の各マスク。ffreq_walk が coarse 到達で更新
+; [③(A)] 地上砲台 turret_list。gobj_load が射撃型(TID=3 Logram/Boza→logram mask 0x09,
+;   TID=6 GaruDerota→derota mask 0x08)を拾う。Derota(0x1B)/Domogram(0x2E)は未ベイク=対象外。
+;   レコード5B(TURREC): col_lo, col_hi, row, mask_id, timer。mask_id=0 は空き/破壊済。
+;   turret_list(ds) 本体は program 節約で emmscroll64.asm の 0xD808+ に配置。
+MAX_TURRETS	EQU	24		; 全エリア最大=20(area16)+余裕
+TURREC		EQU	5
+turret_n:	db	0
+rnd_seed:	db	0xA5		; [③(A)] 8bit Galois LFSR(非ゼロ)。rnd_step で進める
 difficulty:	db	0		; [M8④] 難易度(0..2)。経過で上昇、型解禁を制御
 diff_tmr:	dw	DIFF_INTERVAL	; [M8④] 次の難易度上昇までのフレーム
 eff_cap:	db	3		; [M8⑥(A)] 今回の実効同時上限(num_flying - 表示中Grobda)

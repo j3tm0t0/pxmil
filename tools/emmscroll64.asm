@@ -1486,6 +1486,9 @@ gobj_load:
 	ld	(gl_cnt), a
 	xor	a
 	ld	(gl_wr), a
+	IFDEF	ENEMY_EXTDATA
+	ld	(turret_n), a		; [③(A)] 地上砲台リストをエリア毎にリセット
+	ENDIF
 	ld	de, gobj_list
 .gl:
 	ld	a, (gl_cnt)
@@ -1493,9 +1496,9 @@ gobj_load:
 	jp	z, .gdone
 	dec	a
 	ld	(gl_cnt), a
-	; col(2),row,type,size,addr0(2) を gl_buf(7B)へ
+	; col(2),row,type,size,fire_mask_id,addr0(2) を gl_buf(8B)へ
 	ld	hl, gl_buf
-	ld	a, 7
+	ld	a, 8
 	ld	(gl_dc), a
 .rdhdr:	in	a, (c)
 	ld	(hl), a
@@ -1521,10 +1524,10 @@ gobj_load:
 	jr	nz, .dloop
 .wr:
 	; addr0==0xFFFF ならスキップ(off-map。engine の +48/96/144 導出が暴走するため)
-	ld	a, (gl_buf + 5)
+	ld	a, (gl_buf + 6)		; addr0_lo(新フォーマットで +5=mask_id の後)
 	cp	0xFF
 	jr	nz, .dowrite
-	ld	a, (gl_buf + 6)
+	ld	a, (gl_buf + 7)		; addr0_hi
 	cp	0xFF
 	jp	z, .gl			; 両 FF → スキップ
 .dowrite:
@@ -1542,12 +1545,51 @@ gobj_load:
 	ld	a, (gl_buf + 4)		; size(1 or 2)
 	ld	(de), a
 	inc	de
-	ld	a, (gl_buf + 5)
+	ld	a, (gl_buf + 6)		; crater_lo(addr0)
 	ld	(de), a
 	inc	de
-	ld	a, (gl_buf + 6)
+	ld	a, (gl_buf + 7)		; crater_hi
 	ld	(de), a
 	inc	de
+	IFDEF	ENEMY_EXTDATA
+	; [③(A)] 射撃砲台(fire_mask_id≠0)を turret_list へ。mask_id は gobj データが直接保持。
+	;   ※bc=EMM_DAT(次レコードの EMM 読込に必須)なので push/pop で保護する。
+	push	bc
+	ld	a, (gl_buf + 5)		; fire_mask_id(0=非射撃 / 0x08 derota / 0x09 logram / 0x10 boza)
+	or	a
+	jr	z, .tur_no
+	ld	c, a			; c=mask_id
+	ld	a, (turret_n)
+	cp	MAX_TURRETS
+	jr	nc, .tur_no		; 満杯
+	ld	b, a
+	add	a, a
+	add	a, a
+	add	a, b			; turret_n*5
+	push	de			; de は gobj_list 用に保持
+	ld	e, a
+	ld	d, 0
+	ld	hl, turret_list
+	add	hl, de
+	ld	a, (gl_buf + 0)
+	ld	(hl), a			; col_lo
+	inc	hl
+	ld	a, (gl_buf + 1)
+	ld	(hl), a			; col_hi
+	inc	hl
+	ld	a, (gl_buf + 2)
+	ld	(hl), a			; row
+	inc	hl
+	ld	(hl), c			; mask_id
+	inc	hl
+	ld	(hl), 1			; timer=1(初回はすぐ発火→適切マスクで再装填)
+	pop	de
+	ld	a, (turret_n)
+	inc	a
+	ld	(turret_n), a
+.tur_no:
+	pop	bc			; bc(=EMM_DAT)復帰(次レコードの EMM 読込用)
+	ENDIF
 	ld	a, (gl_wr)
 	inc	a
 	ld	(gl_wr), a
@@ -1631,7 +1673,7 @@ as_tick:	db	0		; snd_tick カウンタ
 amb_lo16:	dw	0		; [⑦(3)] area_map_base(EMM_MAPS+area*0x3200) 低16
 amb_hi8:	db	0		; 高8
 pal_buf:	ds	320		; [⑦(3)] common_pal(64×5B)
-used_buf:	ds	1024		; 共通index列(最大 area10 n=401→802B, 余裕込み)
+;   used_buf(ds 1024) は program 節約で 0xD808+ (fly データ領域) へ移動。
 man_buf:	ds	256		; sector0(マニフェスト)
 al_count:	db	0
 al_i:		db	0
@@ -1644,7 +1686,7 @@ blackpal:	ds	320		; 黒パレット(pal_buf の色を 0 に。boot で生成)
 gl_cnt:		db	0		; gobj_load: 残エントリ
 gl_wr:		db	0		; gobj_load: 書込済み件数
 gl_dc:		db	0		; gobj_load: discard/読みカウンタ
-gl_buf:		ds	7		; gobj_load: ヘッダ一時(col2,row,type,size,addr0_2)
+gl_buf:		ds	8		; gobj_load: ヘッダ一時(col2,row,type,size,fire_mask_id,addr0_2)
 	ENDIF
 
 ;=====================================================================
@@ -2023,6 +2065,9 @@ fly_area_tab:
 	dw	fly_a01, fly_a02, fly_a03, fly_a04, fly_a05, fly_a06, fly_a07, fly_a08
 	dw	fly_a09, fly_a10, fly_a11, fly_a12, fly_a13, fly_a14, fly_a15, fly_a16
 fly_rec:	ds	FLY_REC_MAX * 4	; パース済 (T,kind,num,off)×
+ffreq_rec:	ds	FFREQ_REC_MAX * 3	; [③] パース済 (T,mask_id,mask)× (program 節約で高位メモリへ)
+turret_list:	ds	MAX_TURRETS * TURREC	; [③(A)] 地上砲台 (col2,row,mask_id,timer)×
+used_buf:	ds	1024		; 共通index列(program 節約で高位メモリへ, 最大 n=431→862B)
 	ASSERT	$ <= 0xE800
 	ENDIF
 
