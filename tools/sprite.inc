@@ -2884,23 +2884,20 @@ enemies_draw:
 
 ; hl=top-left セル, a=先頭コード。2x2 (code+0,+1 / +2,+3) を配置。
 ene_put2x2:
-	ld	(ene_tl), hl
+	; [perf] hl 保存 PUTCELL により inc hl / add で連鎖(ld hl,(ene_tl) 再ロード除去)。
+	ld	(ene_tl), hl		; (他参照に備え保持)
 	ld	(ene_bc), a
 	PUTCELL				; TL (hl=TL, a=code)
-	ld	hl, (ene_tl)
-	inc	hl
+	inc	hl			; → TL+1
 	ld	a, (ene_bc)
 	inc	a
 	PUTCELL				; TR
-	ld	hl, (ene_tl)
-	ld	de, COLS
-	add	hl, de
+	ld	bc, COLS - 1
+	add	hl, bc			; → TL+COLS
 	ld	a, (ene_bc)
 	add	a, 2
 	PUTCELL				; BL
-	ld	hl, (ene_tl)
-	ld	de, COLS + 1
-	add	hl, de
+	inc	hl			; → TL+COLS+1
 	ld	a, (ene_bc)
 	add	a, 3
 	PUTCELL				; BR
@@ -2968,24 +2965,26 @@ bac_put2x4:
 	BPCELLA	3 * COLS + 1
 	ret
 
-; ene_clr2x4: hl=TL。Bacura 8セルを消去。
+; ene_clr2x4: hl=TL。Bacura 8セル(2x4)を消去。[perf] アンロール(CLRCELL は hl 保存)。
 ene_clr2x4:
-	ld	(bp_tl), hl
-	ld	hl, bac_offs
-	ld	(bp_offp), hl
-	ld	b, 8
-.l:	push	bc
-	ld	hl, (bp_offp)
-	ld	e, (hl)
+	CLRCELL				; (0,0)
 	inc	hl
-	ld	d, (hl)
+	CLRCELL				; (0,1)
+	ld	bc, COLS - 1
+	add	hl, bc
+	CLRCELL				; (1,0)
 	inc	hl
-	ld	(bp_offp), hl
-	ld	hl, (bp_tl)
-	add	hl, de
-	CLRCELL
-	pop	bc
-	djnz	.l
+	CLRCELL				; (1,1)
+	ld	bc, COLS - 1
+	add	hl, bc
+	CLRCELL				; (2,0)
+	inc	hl
+	CLRCELL				; (2,1)
+	ld	bc, COLS - 1
+	add	hl, bc
+	CLRCELL				; (3,0)
+	inc	hl
+	CLRCELL				; (3,1)
 	ret
 
 	IFDEF	GROBDA_EXTDATA

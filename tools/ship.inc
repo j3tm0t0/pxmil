@@ -46,17 +46,18 @@
 ;   各版 = 3列x3行 = 9セル。計 16*9 = 144 セル (SHIP_BASE..+143)。
 ;   版番号 = (ship_vy&3)*4 + (ship_hx&3)。code = SHIP_BASE + 版*9 + cr*3 + col。
 ; [perf(2)] PUTCELL/CLRCELL: put_cell/clr_cell のインライン版(call/ret 除去)。
-;   hl=セル(0x07xx), a=ANK コード(PUTCELL のみ)。a/b/c/e/h 破壊。最初の使用前に定義。
+;   hl=セル(0x07xx), a=ANK コード(PUTCELL のみ)。a/b/c/e 破壊、**hl は保存**(ld h,a 廃止)。
+;   hl 保存によりアンロール描画で push/pop hl 無しに inc hl で次セルへ進める。最初の使用前に定義。
 	MACRO	PUTCELL
 	ld	e, a
 	ld	a, h
 	and	0x07
-	ld	h, a
 	or	(TVRAM >> 8)
 	ld	b, a
 	ld	c, l
 	out	(c), e
-	ld	a, h
+	ld	a, h			; h は元のまま → 再度 &7 して ATR ポートへ
+	and	0x07
 	or	(TATTR >> 8)
 	ld	b, a
 	ld	a, SHIP_ATR
@@ -65,13 +66,13 @@
 	MACRO	CLRCELL
 	ld	a, h
 	and	0x07
-	ld	h, a
 	or	(TVRAM >> 8)
 	ld	b, a
 	ld	c, l
 	xor	a
 	out	(c), a
 	ld	a, h
+	and	0x07
 	or	(TATTR >> 8)
 	ld	b, a
 	xor	a
@@ -689,31 +690,39 @@ overlay_ship:
 
 ; hl=top-left。選択版の 3列x3行 (9セル) を配置。コードは ship_code から連番。
 ;   row r (0..2): code+r*3+0,+1,+2  cell = top + r*COLS + col
-write_ship_3x3:
-	ld	(ws_tl), hl
-	; ws_codeptr は overlay_ship が ship_codetab+版*9 に設定済。9セルを順次参照。
-	ld	c, 3			; c = 残り行数
-	ld	hl, (ws_tl)
-.rowl:
-	ld	(ws_tl), hl		; この行の先頭
-	ld	b, 3
-.coll:	push	bc
-	ld	de, (ws_codeptr)	; dedup後コードを表から順次取得
+; [perf] 1セル配置マクロ: de=コードptr から1つ読んで配置。PUTCELL は hl 保存なので
+;   行内は inc hl で次セルへ(push/pop hl 不要)。PUTCELL が e を壊すので de のみ push/pop。
+	MACRO	WSC
 	ld	a, (de)
 	inc	de
-	ld	(ws_codeptr), de
-	push	hl
+	push	de
 	PUTCELL
-	pop	hl
+	pop	de
+	ENDM
+write_ship_3x3:
+	; [perf] アンロール(ループ/push-pop bc/push-pop hl 除去)。ws_codeptr は overlay_ship が
+	;   ship_codetab+版*9 に設定済。9セルを順次参照し、窓2の呼び出しに備え ws_codeptr を進めて書き戻す。
+	ld	de, (ws_codeptr)
+	WSC				; (0,0)
 	inc	hl
-	pop	bc
-	djnz	.coll
-	; 次の行 = 行先頭 + COLS
-	ld	hl, (ws_tl)
-	ld	de, COLS
-	add	hl, de
-	dec	c
-	jr	nz, .rowl
+	WSC				; (0,1)
+	inc	hl
+	WSC				; (0,2)
+	ld	bc, COLS - 2
+	add	hl, bc			; 次行先頭
+	WSC				; (1,0)
+	inc	hl
+	WSC				; (1,1)
+	inc	hl
+	WSC				; (1,2)
+	ld	bc, COLS - 2
+	add	hl, bc
+	WSC				; (2,0)
+	inc	hl
+	WSC				; (2,1)
+	inc	hl
+	WSC				; (2,2)
+	ld	(ws_codeptr), de	; 進めた位置を保存(現挙動を維持)
 	ret
 
 ; hl=cell(要マスク), a=code。ANK=code, ATR=SHIP_ATR。
@@ -733,24 +742,27 @@ put_cell:
 	out	(c), a			; ATR
 	ret
 
-; hl=top-left。3列x2行 を消去(ANK=0,ATR=0)。
+; hl=top-left。3列x3行 を消去(ANK=0,ATR=0)。[perf] アンロール(CLRCELL は hl 保存)。
 erase_3x3:
-	ld	c, 3			; c = 残り行数
-.rowl:
-	ld	(ws_tl), hl		; 行先頭
-	ld	b, 3
-.coll:	push	bc
-	push	hl
 	CLRCELL
-	pop	hl
 	inc	hl
-	pop	bc
-	djnz	.coll
-	ld	hl, (ws_tl)
-	ld	de, COLS
-	add	hl, de
-	dec	c
-	jr	nz, .rowl
+	CLRCELL
+	inc	hl
+	CLRCELL
+	ld	bc, COLS - 2
+	add	hl, bc
+	CLRCELL
+	inc	hl
+	CLRCELL
+	inc	hl
+	CLRCELL
+	ld	bc, COLS - 2
+	add	hl, bc
+	CLRCELL
+	inc	hl
+	CLRCELL
+	inc	hl
+	CLRCELL
 	ret
 
 clr_cell:
