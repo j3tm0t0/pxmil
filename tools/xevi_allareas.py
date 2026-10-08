@@ -13,9 +13,13 @@
   areaNN_used.bin    : 先頭2B=タイル数 n、続いて local_idx 順の「共通表 index」
                        一覧(2B×n)。engine は common[used[i]] を RAM[TB+i*48] へ集約コピー。
   areaNN_map.bin     : ローカルIDタイルマップ(256列×25行×2B = RAM アドレス TB+local_idx*48)
-  areaNN_gobj.bin    : 地上物リスト。gobj_count(1B)+ 1件[col:2B,row:1B,type:1B,
-                       size:1B, crater_addr[(2*size)^2]:各2B]。
+  areaNN_gobj.bin    : 地上物リスト。gobj_count(1B)+ 1件[col:2B,row:1B,type(TID):1B,
+                       size:1B, fire_mask_id:1B, crater_addr[(2*size)^2]:各2B]。
                        size=1 → 2x2(16x16), size=2 → 4x4(32x32)。
+                       fire_mask_id: 0=非射撃 / 0x08=derota(Derota/GaruDerota) /
+                       0x09=logram(Logram) / 0x10=boza(BozaLogram)。TID=3 の
+                       Logram/BozaLogram 曖昧をこの mask で区別。射撃=自機狙い弾
+                       type6 1.0px/f, ((rnd&ffreq[mask])+1)*8f, scol が前方帯の間のみ。
                        続いて sol_count(1B)+
                        1件[col:2B,row:1B, frame[4]の各[TL,TR,BL,BR]addr:2B×16]。
 座標: col=(trigger+0xFD)&0xFF, row=(spriteY>>3)-2 (エリア1で検証, 全エリア共通式)。
@@ -43,6 +47,10 @@ GS = {0x1E: 0x17, 0x1F: 0x1F, 0x26: 0x2C, 0x20: 0x17, 0x2D: 0x2C}   # 焼込 16x
 GS32 = {0x21: 0x24}                                    # 焼込 32x32(2x2 sprite base tile)
 TID = {0x1E: 1, 0x1F: 2, 0x26: 3, 0x20: 1, 0x2D: 3, 0x21: 6}
 GROB = {0x2C, 0x38, 0x3A}   # 動く地上物 Grobda(stationary/stops/darts)。焼込まず位置のみ出力
+# 射撃砲台の ffreq mask_id(= SUB fn index, ffreq レコードと同じ番号)。非射撃=0。
+#   Derota(0x1B)/GaruDerota(0x21)=derota 0x08, Logram(0x26)=logram 0x09, BozaLogram(0x2D)=boza 0x10。
+#   gobj レコードに 1 バイト追加(TID=3 の Logram/Boza 曖昧を解消し turret 発火を正確化)。
+FIRE_MASK = {0x1B: 0x08, 0x21: 0x08, 0x26: 0x09, 0x2D: 0x10}
 SOL_FRAMES = (168, 169, 170, 171)
 
 def sprite_rgb32(ex, g3, sp, rgb, base, cs):
@@ -166,12 +174,12 @@ def main():
             if typ in GS:
                 bake_cells(c0, r0, XB.sprite_rgb16(ex, rgb, sp_pen, GS[typ], 7), True)
                 cids = bake_cells(c0, r0, crater, False)
-                gobj.append((c0, r0, TID[typ], 1, cids))
+                gobj.append((c0, r0, TID[typ], 1, FIRE_MASK.get(typ, 0), cids))
             elif typ in GS32:
                 over32 = sprite_rgb32(ex, g3, sp_pen, rgb, GS32[typ], 7)
                 bake_cells(c0, r0, over32, True, ncell=4)
                 cids = bake_cells(c0, r0, crater32, False, ncell=4)
-                gobj.append((c0, r0, TID[typ], 2, cids))
+                gobj.append((c0, r0, TID[typ], 2, FIRE_MASK.get(typ, 0), cids))
             elif typ == 0x1D:
                 frames = [bake_cells(c0, r0, XB.sprite_rgb16(ex, rgb, sp_pen, fr, 7), False)
                           for fr in SOL_FRAMES]
@@ -189,8 +197,9 @@ def main():
                 f.write(struct.pack("<H", ci))
         with open(os.path.join(OUT, "area%02d_gobj.bin" % a), "wb") as f:
             f.write(bytes([len(gobj)]))
-            for col, row, t, sz, cids in gobj:
-                f.write(struct.pack("<H", col) + bytes([row & 0xff, t, sz]))
+            for col, row, t, sz, fmask, cids in gobj:
+                # col:2B, row:1B, TID:1B, size:1B, fire_mask_id:1B(0=非射撃/0x08/0x09/0x10), crater addrs
+                f.write(struct.pack("<H", col) + bytes([row & 0xff, t, sz, fmask]))
                 for li in cids:
                     f.write(struct.pack("<H", addr_of(li)))
             f.write(bytes([len(sol)]))
