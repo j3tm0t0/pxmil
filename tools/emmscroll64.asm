@@ -1426,6 +1426,7 @@ area_advance:
 	IFDEF	GROBDA_EXTDATA
 	call	grobda_init
 	ENDIF
+	call	bacura_init		; [敵] 切替で Bacura クリア
 	; 暗転: 黒パレットを最後にロード(EMM/GRAM I/O の後で palandply を確定させる)
 	ld	ix, blackpal
 	call	load_palette64

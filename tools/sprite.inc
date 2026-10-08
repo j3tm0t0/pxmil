@@ -22,7 +22,8 @@ TRIG1		EQU	0x20		; PSG port A bit5 (トリガ1, 負論理)
 ENEMY_BASE	EQU	0xB0		; [M8] Toroid PCG (0xB0..0xBF, 4フレーム x 2x2)
 JARA_BASE	EQU	0xE0		; [M8④] Jara PCG (0xE0..0xEF, 4フレーム x 2x2)
 TORKAN_BASE	EQU	0xF0		; [M8④] Torkan PCG (0xF0..0xF7, 2フレーム x 2x2)
-ZOSHI_BASE	EQU	0x04		; [敵] Zoshi PCG (0x04..0x0F, 3フレーム x 2x2)
+ZOSHI_BASE	EQU	0x04		; [敵] Zoshi PCG (0x04..0x0B, 2フレーム x 2x2)
+BACURA_BASE	EQU	0x0C		; [敵] Bacura PCG (0x0C..0x0F, 1フレーム x 2x2)
 MAX_ENEMIES	EQU	5		; [M8④] 最大同時数(num_flying が 3→4→5 と上昇)
 DIFF_INTERVAL	EQU	1800		; [M8④] 難易度1段の経過フレーム(≒30s@60Hz)
 ENEMY_SPEED	EQU	1		; 横移動(セル/移動tick) ※敵は8pxグリッド
@@ -76,6 +77,7 @@ sprite_init:
 	call	gen_expl
 	call	gen_ebullet		; [敵弾] スパリオ PCG
 	call	ebul_init
+	call	bacura_init		; [敵] Bacura
 	ld	a, 3			; [敵弾] 残機初期化
 	ld	(lives), a
 	xor	a
@@ -1438,6 +1440,7 @@ sprite_update:
 .ebnt:
 	ENDIF
 	call	ebul_update		; [敵弾] 移動+消去+描画(1パス)
+	call	bacura_update		; [敵] Bacura スクロール+衝突+描画
 	call	expls_draw
 	call	reticle_draw
 	ret
@@ -1895,9 +1898,13 @@ gen_enemy:
 	ld	a, TORKAN_BASE
 	ld	b, 8
 	call	gen_pcg_set
-	ld	hl, zoshi_data		; [敵] Zoshi(3コマ=12セル)
+	ld	hl, zoshi_data		; [敵] Zoshi(2コマ=8セル)
 	ld	a, ZOSHI_BASE
-	ld	b, 12
+	ld	b, 8
+	call	gen_pcg_set
+	ld	hl, bacura_data		; [敵] Bacura(1コマ=4セル)
+	ld	a, BACURA_BASE
+	ld	b, 4
 	call	gen_pcg_set
 	ret
 ; gen_pcg_set: hl=データ先頭, a=先頭PCGコード, b=セル数。連番で定義。
@@ -3591,6 +3598,270 @@ ebul_update:
 	jp	.ul
 
 ;=====================================================================
+; [敵] Bacura: 破壊不可の板(回転は MVP 省略)。world列固定でスクロール(scroll_moved で sx--)。
+;   ショット貫通(弾衝突なし)・接触死(自機3x3 と重なりで ship_hit)。BAC_SPAWN_INTERVAL 毎に
+;   1体増殖(最大 MAX_BACURA)。area 切替で bacura_init でクリア。
+MAX_BACURA	EQU	2
+BAC_SPAWN_INTERVAL	EQU	60
+
+bacura_init:
+	ld	hl, bac_active
+	ld	b, MAX_BACURA
+	xor	a
+.bil:	ld	(hl), a
+	inc	hl
+	djnz	.bil
+	ld	a, BAC_SPAWN_INTERVAL
+	ld	(bac_spawn_tmr), a
+	ret
+
+; bacura_spawn: 空き slot に 1体。sx=COLS+1(画面外右), row=(framecnt&0x0F)+2
+bacura_spawn:
+	ld	c, 0
+	ld	hl, bac_active
+.bfl:	ld	a, (hl)
+	or	a
+	jr	z, .bfound
+	inc	hl
+	inc	c
+	ld	a, c
+	cp	MAX_BACURA
+	jr	nz, .bfl
+	ret				; 空き無し
+.bfound:
+	ld	(hl), 1
+	ld	a, c
+	ld	e, a
+	ld	d, 0
+	ld	hl, bac_sx
+	add	hl, de
+	ld	(hl), COLS + 1
+	ld	hl, bac_row
+	add	hl, de
+	ld	a, (framecnt)
+	and	0x0F
+	add	a, 2
+	ld	(hl), a
+	ld	a, c
+	add	a, a
+	ld	e, a
+	ld	d, 0
+	ld	hl, bac_prev1
+	add	hl, de
+	ld	(hl), 0xFF
+	inc	hl
+	ld	(hl), 0xFF
+	ld	hl, bac_prev2
+	add	hl, de
+	ld	(hl), 0xFF
+	inc	hl
+	ld	(hl), 0xFF
+	ret
+
+; bacura_erase_prev: bac_i の prev1/prev2 が有効なら 2窓消去
+bacura_erase_prev:
+	ld	a, (bac_i)
+	add	a, a
+	ld	e, a
+	ld	d, 0
+	ld	hl, bac_prev1
+	add	hl, de
+	ld	a, (hl)
+	inc	hl
+	ld	h, (hl)
+	ld	l, a
+	ld	a, h
+	and	l
+	inc	a
+	ret	z
+	call	ene_clr2x2
+	ld	a, (bac_i)
+	add	a, a
+	ld	e, a
+	ld	d, 0
+	ld	hl, bac_prev2
+	add	hl, de
+	ld	a, (hl)
+	inc	hl
+	ld	h, (hl)
+	ld	l, a
+	call	ene_clr2x2
+	ret
+
+bacura_update:
+	ld	a, (bac_spawn_tmr)
+	dec	a
+	ld	(bac_spawn_tmr), a
+	jr	nz, .bns
+	ld	a, BAC_SPAWN_INTERVAL
+	ld	(bac_spawn_tmr), a
+	call	bacura_spawn
+.bns:
+	xor	a
+	ld	(bac_i), a
+.bul:	ld	a, (bac_i)
+	cp	MAX_BACURA
+	ret	z
+	ld	e, a
+	ld	d, 0
+	ld	hl, bac_active
+	add	hl, de
+	ld	a, (hl)
+	or	a
+	jp	z, .bnext
+	; scroll_moved なら sx--
+	ld	a, (scroll_moved)
+	or	a
+	jr	z, .bnosc
+	ld	hl, bac_sx
+	add	hl, de
+	dec	(hl)
+.bnosc:
+	ld	hl, bac_sx
+	add	hl, de
+	ld	a, (hl)
+	ld	(bac_cursx), a
+	cp	0x80
+	jr	c, .bnotgone
+	; 左に抜けた → 消去 + deactivate
+	call	bacura_erase_prev
+	ld	a, (bac_i)
+	ld	e, a
+	ld	d, 0
+	ld	hl, bac_active
+	add	hl, de
+	ld	(hl), 0
+	jp	.bnext
+.bnotgone:
+	cp	COLS
+	jr	c, .bvis
+	; 右・非表示 → 消去 + prev無効
+	call	bacura_erase_prev
+	ld	a, (bac_i)
+	add	a, a
+	ld	e, a
+	ld	d, 0
+	ld	hl, bac_prev1
+	add	hl, de
+	ld	(hl), 0xFF
+	inc	hl
+	ld	(hl), 0xFF
+	jp	.bnext
+.bvis:
+	; 衝突: bac 2x2(sx,row) vs 自機 3x3
+	ld	a, (ship_hx)
+	srl	a
+	srl	a
+	ld	c, a
+	ld	a, (bac_cursx)
+	sub	c
+	add	a, 1
+	cp	4
+	jr	nc, .bnohit
+	ld	a, (bac_i)
+	ld	e, a
+	ld	d, 0
+	ld	hl, bac_row
+	add	hl, de
+	ld	a, (hl)
+	ld	b, a
+	ld	a, (ship_vy)
+	srl	a
+	srl	a
+	ld	c, a
+	ld	a, b
+	sub	c
+	add	a, 1
+	cp	4
+	jr	nc, .bnohit
+	call	ship_hit		; 接触死(無敵中は無視)
+.bnohit:
+	; idle-skip: scroll_moved でなく prev1 有効なら再描画省略(静止)
+	ld	a, (scroll_moved)
+	or	a
+	jr	nz, .bdraw
+	ld	a, (bac_i)
+	add	a, a
+	ld	e, a
+	ld	d, 0
+	ld	hl, bac_prev1
+	add	hl, de
+	ld	a, (hl)
+	inc	hl
+	ld	a, (hl)			; prev1 hi
+	inc	a			; 0xFF→0x00
+	jp	nz, .bnext		; prev 有効(hi≠0xFF)かつ非スクロール → スキップ
+.bdraw:
+	; 描画: soff=row*40+sx, 2窓(erase prev + put)
+	call	bacura_erase_prev
+	ld	a, (bac_i)
+	ld	e, a
+	ld	d, 0
+	ld	hl, bac_row
+	add	hl, de
+	ld	a, (hl)
+	ld	l, a
+	ld	h, 0
+	add	hl, hl
+	add	hl, hl
+	add	hl, hl
+	ld	d, h
+	ld	e, l
+	add	hl, hl
+	add	hl, hl
+	add	hl, de			; row*40
+	ld	a, (bac_cursx)
+	ld	e, a
+	ld	d, 0
+	add	hl, de			; soff
+	ld	(bac_soff), hl
+	ld	de, (cur_pos)
+	add	hl, de
+	ld	a, h
+	and	0x07
+	ld	h, a
+	push	hl
+	ld	a, BACURA_BASE
+	call	ene_put2x2
+	ld	a, (bac_i)
+	add	a, a
+	ld	e, a
+	ld	d, 0
+	ld	hl, bac_prev1
+	add	hl, de
+	pop	bc
+	ld	(hl), c
+	inc	hl
+	ld	(hl), b
+	ld	hl, (cur_pos)
+	ld	a, h
+	xor	0x04
+	ld	h, a
+	ld	de, (bac_soff)
+	add	hl, de
+	ld	a, h
+	and	0x07
+	ld	h, a
+	push	hl
+	ld	a, BACURA_BASE
+	call	ene_put2x2
+	ld	a, (bac_i)
+	add	a, a
+	ld	e, a
+	ld	d, 0
+	ld	hl, bac_prev2
+	add	hl, de
+	pop	bc
+	ld	(hl), c
+	inc	hl
+	ld	(hl), b
+.bnext:
+	ld	a, (bac_i)
+	inc	a
+	ld	(bac_i), a
+	jp	.bul
+
+;=====================================================================
 ; 爆発 PCG 生成: expl_data(3フレーム×96B = 12セル×24B)を EXPL_BASE から定義。
 gen_expl:
 	ld	hl, expl_data
@@ -4025,6 +4296,16 @@ ef_vmy:		db	0
 lives:		db	3		; [敵弾] 残機(0 でゲームオーバー)
 ship_inv:	db	0		; 復活無敵フレーム
 game_over:	db	0		; 1=ゲームオーバー
+; [敵] Bacura
+bac_active:	ds	MAX_BACURA
+bac_sx:		ds	MAX_BACURA	; 画面列(0xFF.. = 左に抜けた)
+bac_row:	ds	MAX_BACURA
+bac_prev1:	ds	MAX_BACURA * 2	; 窓1 前回セル
+bac_prev2:	ds	MAX_BACURA * 2
+bac_spawn_tmr:	db	0
+bac_i:		db	0
+bac_soff:	dw	0
+bac_cursx:	db	0
 spawn_type:	db	0		; (旧)未使用
 spawn_idx:	db	0		; [M8④] spawn_seq のインデックス
 num_flying:	db	3		; [M8④] 現在の同時出現上限(3→4→5)
@@ -4056,7 +4337,7 @@ entype_tab:
 	db	ENEMY_BASE,  4, 0	; type0: Toroid(円盤, 直進)
 	db	JARA_BASE,   4, 1	; type1: Jara(縦振動+左進)
 	db	TORKAN_BASE, 2, 2	; type2: Torkan(斜めダイブ, 高速)
-	db	ZOSHI_BASE,  3, 1	; type3: Zoshi(3コマ, 縦振動+左進=Jara traj 流用, 撃つ)
+	db	ZOSHI_BASE,  2, 1	; type3: Zoshi(2コマ, 縦振動+左進=Jara traj 流用, 撃つ)
 ene_atmr:	ds	MAX_ENEMIES
 ene_mtmr:	ds	MAX_ENEMIES
 ene_prev:	ds	MAX_ENEMIES * 2		; 前回 top-left セル 窓1
@@ -4105,11 +4386,13 @@ rr_zero:	db	0,0,0,0,0,0,0,0	; 使わないプレーンに書く 0 データ
 ebullet_data:
 	INCBIN	"roms/arcade/xevious-out/enemy_ebullet.bin"
 
-; [敵] Zoshi PCG(3コマ×16x16=12セル=288B)。xevi_enemy_sprites.py 生成(非コミット)。
+; [敵] Zoshi PCG(2コマ×16x16=8セル=192B)。xevi_enemy_sprites.py 生成(非コミット)。
 zoshi_data:
 	INCBIN	"roms/arcade/xevious-out/enemy_zoshi_0.bin"
 	INCBIN	"roms/arcade/xevious-out/enemy_zoshi_1.bin"
-	INCBIN	"roms/arcade/xevious-out/enemy_zoshi_2.bin"
+; [敵] Bacura PCG(1コマ×16x16=4セル=96B, 平板)。回転は MVP で省略。
+bacura_data:
+	INCBIN	"roms/arcade/xevious-out/enemy_bacura_flat.bin"
 
 enemy_data:
 	IFDEF	ENEMY_EXTDATA
