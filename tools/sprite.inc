@@ -2913,15 +2913,8 @@ get_index_for_angle:
 	ld	a, (gia_big)
 	ld	e, a
 	ld	d, 0			; de=big
-	ld	c, 0			; ratio
-.rl:	or	a
-	sbc	hl, de
-	jr	c, .rdone
-	inc	c
-	jr	.rl
-.rdone:
-	ld	a, c			; ang = octant_angle_tbl[ratio]
-	ld	e, a
+	call	gia_divide		; a = ratio = floor(small*32/big), 0..32
+	ld	e, a			; ang = octant_angle_tbl[ratio]
 	ld	d, 0
 	ld	hl, octant_angle_tbl
 	add	hl, de
@@ -2961,6 +2954,8 @@ gia_abs:				; a=|a| (符号付8bit)
 	ret	p
 	neg
 	ret
+
+	INCLUDE	"gia_div.inc"		; gia_divide / gia_div_sub / gia_div_bin
 
 ; 全敵を新位置に描画(両窓, 2x2), prev 記録。
 enemies_draw:
