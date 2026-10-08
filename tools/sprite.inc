@@ -2409,7 +2409,7 @@ enemies_move:
 	ld	a, (hl)
 	or	a
 	jr	nz, .e_jara_fly
-	ld	hl, ang_fast_1_5px	; phase0: ang_fast で照準 → phase1
+	ld	hl, ang_fast_3_0px	; phase0: ang_fast で照準 → phase1
 	ld	(ene_aim_tbl), hl
 	call	ene_aim
 	ld	hl, ene_phase
@@ -2472,7 +2472,7 @@ enemies_move:
 	ld	a, (hl)
 	or	a
 	jr	nz, .e_zoshi_fly
-	ld	hl, ang_slow_0_75px	; phase0: 初照準 → phase1、再照準タイマ設定
+	ld	hl, ang_slow_1_5px	; phase0: 初照準 → phase1、再照準タイマ設定
 	ld	(ene_aim_tbl), hl
 	call	ene_aim
 	ld	hl, ene_phase
@@ -2488,7 +2488,7 @@ enemies_move:
 	dec	(hl)
 	jp	nz, .e_off
 	ld	(hl), ZOSHI_REAIM
-	ld	hl, ang_slow_0_75px
+	ld	hl, ang_slow_1_5px
 	ld	(ene_aim_tbl), hl
 	call	ene_aim
 	jp	.e_off
@@ -2498,7 +2498,7 @@ enemies_move:
 	ld	a, (hl)
 	or	a
 	jp	nz, .e_off		; phase1: ダイブ継続
-	ld	hl, ang_sheo_2_0px	; phase0: 一度だけ照準 → phase1
+	ld	hl, ang_sheo_4_0px	; phase0: 一度だけ照準 → phase1
 	ld	(ene_aim_tbl), hl
 	call	ene_aim
 	ld	hl, ene_phase
@@ -2512,7 +2512,7 @@ enemies_move:
 	or	a
 	jr	nz, .e_tor_fly
 	; phase0: 自機へ一度照準 → phase1
-	ld	hl, ang_slow_0_75px
+	ld	hl, ang_slow_1_5px
 	ld	(ene_aim_tbl), hl
 	call	ene_aim
 	ld	hl, ene_phase
@@ -2577,7 +2577,7 @@ enemies_move:
 	ld	a, (hl)
 	or	a
 	jr	nz, .e_tk_fly
-	ld	hl, ang_aimed_1_0px	; phase0: ang_aimed で照準(ダイブ) → phase1
+	ld	hl, ang_aimed_2_0px	; phase0: ang_aimed で照準(ダイブ) → phase1
 	ld	(ene_aim_tbl), hl
 	call	ene_aim
 	ld	hl, ene_phase
@@ -2598,7 +2598,7 @@ enemies_move:
 	add	a, 1
 	cp	3
 	jp	nc, .e_off
-	ld	hl, ang_fast_1_5px	; 離脱: ang_fast で照準して符号反転(反対方向 1.5px/f)
+	ld	hl, ang_fast_3_0px	; 離脱: ang_fast で照準して符号反転(反対方向 1.5px/f)
 	ld	(ene_aim_tbl), hl
 	call	ene_aim
 	ld	hl, ene_vx
@@ -4137,7 +4137,7 @@ ef_aim_spawn:
 	add	a, a			; idx*2
 	ld	l, a
 	ld	h, 0
-	ld	bc, ang_aimed_1_0px
+	ld	bc, ang_aimed_2_0px
 	add	hl, bc			; &ang_aimed[idx*2]
 	ld	a, (hl)			; dY → ebul_svy(符号拡張)
 	ld	e, a
