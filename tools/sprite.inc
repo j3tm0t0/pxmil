@@ -1567,6 +1567,15 @@ collision_check:
 	jp	.bl
 	; --- 敵 vs 自機 ---
 .evs:
+	; [perf] 自機セル scx/scy はフレーム内で一定 → ループ外で1回だけ算出(旧: 敵毎に5回)。
+	ld	a, (ship_hx)
+	srl	a
+	srl	a
+	ld	(col_scx), a		; scx = ship_hx>>2
+	ld	a, (ship_vy)
+	srl	a
+	srl	a
+	ld	(col_scy), a		; scy = ship_vy>>2
 	xor	a
 	ld	(spr_j), a
 .vl:	ld	a, (spr_j)
@@ -1579,8 +1588,7 @@ collision_check:
 	ld	a, (hl)
 	or	a
 	jr	z, .vn
-	; 自機セル scx=(ship_hx>>2) 幅3, scy=(ship_vy>>2) 高3
-	; 矩形重なり: ex < scx+3 && ex+2 > scx && ey < scy+3 && ey+2 > scy
+	; 自機セル scx(幅3), scy(高3) は .evs で算出済。矩形重なり判定のみ。
 	ld	hl, ene_ex
 	add	hl, de
 	ld	a, (hl)
@@ -1589,14 +1597,6 @@ collision_check:
 	add	hl, de
 	ld	a, (hl)
 	ld	(col_ey), a
-	ld	a, (ship_hx)
-	srl	a
-	srl	a
-	ld	(col_scx), a		; scx
-	ld	a, (ship_vy)
-	srl	a
-	srl	a
-	ld	(col_scy), a
 	; 矩形重なり: 敵[ex,ex+1] と 自機[scx,scx+2] が重なる ⇔ (ex-scx) in [-1..2]。
 	;   (ex - scx + 1) in [0..3] で重なり。
 	ld	a, (col_ex)
