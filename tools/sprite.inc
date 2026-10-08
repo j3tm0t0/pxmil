@@ -2046,6 +2046,31 @@ enemy_spawn:
 	ld	hl, ene_phase		; [M8④] Toroid フェーズ 初期=approach
 	add	hl, de
 	ld	(hl), 0
+	; [32方向] 16bit位置 = セル<<8(frac=0), 速度=0(per-typeが設定)
+	ld	hl, ene_ex
+	add	hl, de
+	ld	b, (hl)			; b=ex
+	ld	hl, ene_ey
+	add	hl, de
+	ld	c, (hl)			; c=ey
+	ld	hl, ene_wx
+	add	hl, de
+	add	hl, de
+	ld	(hl), 0
+	inc	hl
+	ld	(hl), b
+	ld	hl, ene_wy
+	add	hl, de
+	add	hl, de
+	ld	(hl), 0
+	inc	hl
+	ld	(hl), c
+	ld	hl, ene_vx
+	add	hl, de
+	ld	(hl), 0
+	ld	hl, ene_vy
+	add	hl, de
+	ld	(hl), 0
 	; [M8④] タイプ = spawn_seq[spawn_idx] (エリア1はToroid主体, たまにJara/Torkan)
 	push	de			; slot index 退避
 	ld	a, (spawn_idx)
@@ -2233,16 +2258,25 @@ enemies_move:
 	add	hl, de
 	ld	(hl), 1
 .amv:
-	; 移動
+	; [32方向] move-tick(ene_mtmr)ごとに位置積分(ene_wx+=sext(vx)*ENEMY_MOVE)+cell導出+消滅判定。
+	;   描画はセル単位なので tick 更新で視覚は従来同等、per-frame 積分よりコストは 1/ENEMY_MOVE。
 	ld	hl, ene_mtmr
 	add	hl, de
 	dec	(hl)
 	jp	nz, .mn
 	ld	(hl), ENEMY_MOVE
-	ld	hl, ene_dirty		; 移動 → dirty
+	call	ene_integrate
+	ld	hl, ene_ex
 	add	hl, de
-	ld	(hl), 1
-	; [M8④] per-type 移動(横+縦)。de=slot。traj_id を取得して分岐。
+	ld	a, (hl)
+	cp	COLS			; ex>=COLS(左underflow0xFF/右40+) → 消滅
+	jp	c, .onscr
+	ld	hl, ene_active
+	add	hl, de
+	ld	(hl), 0
+	jp	.mn
+.onscr:
+	; [M8④] per-type 速度設定。de=slot。traj_id を取得して分岐。
 	;   Toroid: 横入り→STOP列で停止(pause)→後退(右へ) / Jara: 左進+上下振動 /
 	;   Torkan: 斜めダイブ(左2倍+下)。
 	push	de			; slot index
@@ -2267,33 +2301,33 @@ enemies_move:
 	jp	z, .e_tor		; 0=Toroid
 	cp	2
 	jp	z, .e_tk		; 2=Torkan
-	; --- 1=Jara: 横=左, 縦=振動(ene_dir, 4..20) ---
-	ld	hl, ene_ex
+	; --- 1=Jara: vx=-32(左1px/f), vy=±32(ene_dir 振動, ey 4..20) ---
+	ld	hl, ene_vx
 	add	hl, de
-	ld	a, (hl)
-	sub	ENEMY_SPEED
-	ld	(hl), a
+	ld	(hl), -32
 	ld	hl, ene_dir
 	add	hl, de
 	ld	a, (hl)
 	or	a
 	jr	nz, .e_jup
-	ld	hl, ene_ey		; dir=0: 下へ
+	ld	hl, ene_vy		; dir=0: 下(vy=+32)
+	add	hl, de
+	ld	(hl), 32
+	ld	hl, ene_ey
 	add	hl, de
 	ld	a, (hl)
-	inc	a
-	ld	(hl), a
 	cp	20
 	jp	c, .e_off
 	ld	hl, ene_dir
 	add	hl, de
 	ld	(hl), 1
 	jp	.e_off
-.e_jup:	ld	hl, ene_ey		; dir=1: 上へ
+.e_jup:	ld	hl, ene_vy		; dir=1: 上(vy=-32)
+	add	hl, de
+	ld	(hl), -32
+	ld	hl, ene_ey
 	add	hl, de
 	ld	a, (hl)
-	dec	a
-	ld	(hl), a
 	cp	4
 	jp	nc, .e_off
 	ld	hl, ene_dir
@@ -2306,16 +2340,23 @@ enemies_move:
 	ld	a, (hl)
 	or	a
 	jr	nz, .e_tor12
-	ld	hl, ene_ex		; phase0 approach: 左へ
+	ld	hl, ene_vx		; phase0 approach: vx=-32(左)
+	add	hl, de
+	ld	(hl), -32
+	ld	hl, ene_vy
+	add	hl, de
+	ld	(hl), 0
+	ld	hl, ene_ex
 	add	hl, de
 	ld	a, (hl)
-	sub	ENEMY_SPEED
-	ld	(hl), a
 	cp	TOROID_STOP + 1
 	jp	nc, .e_off		; まだ手前 → 継続
 	ld	hl, ene_phase		; STOP 到達 → pause
 	add	hl, de
 	ld	(hl), 1
+	ld	hl, ene_vx		; 停止(vx=0)
+	add	hl, de
+	ld	(hl), 0
 	ld	hl, ene_ptmr
 	add	hl, de
 	ld	(hl), TOROID_PAUSE
@@ -2330,27 +2371,32 @@ enemies_move:
 	ld	hl, ene_phase
 	add	hl, de
 	ld	(hl), 2			; → retreat
-	jp	.e_off
-.e_tor_ret:				; phase2 retreat: 右へ
-	ld	hl, ene_ex
+	ld	hl, ene_vx		; retreat 右(vx=+32)
 	add	hl, de
-	ld	a, (hl)
-	add	a, ENEMY_SPEED
-	ld	(hl), a
+	ld	(hl), 32
 	jp	.e_off
-.e_tk:	; --- 2=Torkan: 左2倍(ダイブ) + 下 ---
-	ld	hl, ene_ex
+.e_tor_ret:				; phase2 retreat: vx=+32(右)
+	ld	hl, ene_vx
 	add	hl, de
-	ld	a, (hl)
-	sub	2
-	ld	(hl), a
+	ld	(hl), 32
+	jp	.e_off
+.e_tk:	; --- 2=Torkan: vx=-64(左2px/f ダイブ) + vy=+32(ey<22で下) ---
+	ld	hl, ene_vx
+	add	hl, de
+	ld	(hl), -64
 	ld	hl, ene_ey
 	add	hl, de
 	ld	a, (hl)
 	cp	22
-	jr	nc, .e_off
-	inc	a
-	ld	(hl), a
+	jr	c, .e_tk_dn
+	ld	hl, ene_vy		; ey>=22: 下げ止め
+	add	hl, de
+	ld	(hl), 0
+	jp	.e_off
+.e_tk_dn:
+	ld	hl, ene_vy
+	add	hl, de
+	ld	(hl), 32
 .e_off:
 	; [敵弾] 射撃統合: type≠0 かつ !game_over なら ftmr 減算、0 で自機狙い発射。
 	;   (de=spr_i*1。ene_fire は spr_i を使い de を破壊するので後で復帰)
@@ -2381,22 +2427,99 @@ enemies_move:
 	add	hl, de
 	ld	(hl), c
 .nofire:
-	ld	a, (spr_i)		; de=spr_i*1 復帰
-	ld	e, a
-	ld	d, 0
-	; off-screen 判定: ene_ex >= COLS (左underflow 0xFF / 右retreat 40+)で消滅
-	ld	hl, ene_ex
-	add	hl, de
-	ld	a, (hl)
-	cp	COLS
-	jr	c, .mn
-	ld	hl, ene_active
-	add	hl, de
-	ld	(hl), 0
+	; off-screen 判定は .amv(毎フレーム積分後)に移動済
 .mn:	ld	a, (spr_i)
 	inc	a
 	ld	(spr_i), a
 	jp	.ml
+
+;=====================================================================
+; [敵32方向] ene_integrate: ene_wx += sext(vx)*ENEMY_MOVE, ene_wy += sext(vy)*ENEMY_MOVE,
+;   ene_ex/ey=(>>8)。速度は 1/32px/frame なので tick(ENEMY_MOVE frame)あたり *ENEMY_MOVE。
+;   セル(高位バイト)変化で ene_dirty=1(描画 idle-skip)。de=slot。a/b/c/hl 破壊。
+ene_integrate:
+	ld	hl, ene_vx		; vx → bc=sext16(vx)*ENEMY_MOVE
+	add	hl, de
+	ld	a, (hl)
+	ld	b, 0
+	or	a
+	jp	p, .xp
+	dec	b			; b=0xFF(負)
+.xp:	ld	c, a
+	IF ENEMY_MOVE >= 2
+	sla	c
+	rl	b
+	ENDIF
+	IF ENEMY_MOVE >= 4
+	sla	c
+	rl	b
+	ENDIF
+	IF ENEMY_MOVE >= 8
+	sla	c
+	rl	b
+	ENDIF
+	ld	hl, ene_wx		; &ene_wx[slot](dw) += bc
+	add	hl, de
+	add	hl, de
+	ld	a, (hl)
+	add	a, c
+	ld	(hl), a
+	inc	hl
+	ld	a, (hl)
+	adc	a, b
+	ld	(hl), a
+	ld	c, a			; c=新 ex(=hi)
+	ld	hl, ene_ex
+	add	hl, de
+	ld	a, (hl)
+	cp	c
+	jr	z, .xsame
+	ld	(hl), c
+	ld	hl, ene_dirty
+	add	hl, de
+	ld	(hl), 1
+.xsame:
+	ld	hl, ene_vy		; vy → bc=sext16(vy)*ENEMY_MOVE
+	add	hl, de
+	ld	a, (hl)
+	ld	b, 0
+	or	a
+	jp	p, .yp
+	dec	b
+.yp:	ld	c, a
+	IF ENEMY_MOVE >= 2
+	sla	c
+	rl	b
+	ENDIF
+	IF ENEMY_MOVE >= 4
+	sla	c
+	rl	b
+	ENDIF
+	IF ENEMY_MOVE >= 8
+	sla	c
+	rl	b
+	ENDIF
+	ld	hl, ene_wy
+	add	hl, de
+	add	hl, de
+	ld	a, (hl)
+	add	a, c
+	ld	(hl), a
+	inc	hl
+	ld	a, (hl)
+	adc	a, b
+	ld	(hl), a
+	ld	c, a			; 新 ey
+	ld	hl, ene_ey
+	add	hl, de
+	ld	a, (hl)
+	cp	c
+	ret	z
+	ld	(hl), c
+	ld	hl, ene_dirty
+	add	hl, de
+	ld	(hl), 1
+	ret
 
 ;=====================================================================
 ; [敵32方向] get_index_for_angle: 自機への32方向index(0..31)。
@@ -4413,8 +4536,12 @@ ene_bc:		db	0
 spawn_tmr:	db	0
 spawn_row:	db	0
 ene_active:	ds	MAX_ENEMIES
-ene_ex:		ds	MAX_ENEMIES		; セル列 (8px)
-ene_ey:		ds	MAX_ENEMIES		; セル行
+ene_ex:		ds	MAX_ENEMIES		; セル列 (8px) = ene_wx>>8 (描画/衝突用)
+ene_ey:		ds	MAX_ENEMIES		; セル行   = ene_wy>>8
+ene_wx:		ds	MAX_ENEMIES * 2		; [32方向] 16bit固定小数位置 cell<<8|frac(frac=1/32px)
+ene_wy:		ds	MAX_ENEMIES * 2
+ene_vx:		ds	MAX_ENEMIES		; [32方向] 速度(符号付, 1/32px/frame)
+ene_vy:		ds	MAX_ENEMIES
 ene_frm:	ds	MAX_ENEMIES		; アニメフレーム 0..3
 ene_type:	ds	MAX_ENEMIES		; [M8] 敵タイプ index (0..EN_NTYPES-1)
 ene_dir:	ds	MAX_ENEMIES		; [M8④] Jara 振動方向(0=下/1=上)
