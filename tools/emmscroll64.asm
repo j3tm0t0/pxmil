@@ -646,6 +646,8 @@ SOL_FRAME	EQU	1280		; coarse≈79 → Sol は画面 col≈23 に表示
 	ld	hl, (meas_col)  : ld bc,0x00FE : out (c),l : ld bc,0x00FF : out (c),h
 	ld	hl, (meas_tur)  : ld bc,0x00FE : out (c),l : ld bc,0x00FF : out (c),h
 	ld	hl, (meas_ebul) : ld bc,0x00FE : out (c),l : ld bc,0x00FF : out (c),h
+	ld	hl, (meas_bule) : ld bc,0x00FE : out (c),l : ld bc,0x00FF : out (c),h
+	ld	hl, (meas_buld) : ld bc,0x00FE : out (c),l : ld bc,0x00FF : out (c),h
 	; フレーム区切りセンチネル 0xDEAD(Python で整列)
 	ld	a,0xAD : ld bc,0x00FE : out (c),a : ld a,0xDE : ld bc,0x00FF : out (c),a
 	ELSE
@@ -676,6 +678,8 @@ meas_enm:	dw	0		; [MEAS] enemies_move(敵移動+射撃AI)
 meas_col:	dw	0		; [MEAS] collision_check
 meas_tur:	dw	0		; [MEAS] turret_fire(地上砲台 walker+spawn)
 meas_ebul:	dw	0		; [MEAS] ebul_update(敵+砲台弾)
+meas_bule:	dw	0		; [MEAS] bullets_erase(自機弾消去)
+meas_buld:	dw	0		; [MEAS] bullets_draw(自機弾描画)
 	ENDIF
 
 ;=====================================================================

@@ -17,7 +17,7 @@
 ; =====================================================================
 
 BULLET_BASE	EQU	0xA0		; 弾 PCG 先頭 (0xA0..0xAF)
-MAX_BULLETS	EQU	4		; 同時存在数 (ザッパー2発 x 3組)。PCG は共有16版で不変
+MAX_BULLETS	EQU	3		; [ROM準拠] 画面内同時上限3(slot 0x24-0x26)。1トリガ=1オブジェクト
 TRIG1		EQU	0x20		; PSG port A bit5 (トリガ1, 負論理)
 ENEMY_BASE	EQU	0xB0		; [M8] Toroid PCG (0xB0..0xBF, 4フレーム x 2x2)
 JARA_BASE	EQU	0xE0		; [M8④] Jara PCG (0xE0..0xEF, 4フレーム x 2x2)
@@ -64,7 +64,7 @@ FRAMEUNIT	EQU	1
 	ENDIF
 	IFDEF	FRAMEUNIT
 BULLET_SPEED	EQU	3		; 前進/呼出 (2px単位; 3=6px/frame, 速め)
-FIRE_DELAY	EQU	8		; 連射間隔(フレーム)
+FIRE_DELAY	EQU	20		; [ROM準拠] 連射間隔20f(押し始めはfire_tmr=0で即発)
 ENEMY_ANIM	EQU	12		; アニメ更新間隔(フレーム)
 ENEMY_SPAWN	EQU	96		; 出現間隔(フレーム)
 ENEMY_MOVE	EQU	8		; 移動間隔(フレーム) 8=1セル/8frame≒1px/frame平均
@@ -140,56 +140,41 @@ sprite_init:
 	ld	(spawn_tmr), a
 	ret
 
-; 弾 PCG 生成: 小ドット(左上 2x2, B プレーン=白 slot1)の 16 シフト版。
-;   版 = vv*4 + vh。shift 右 2*vh / 下 2*vv。R,G=0。
+; 弾 PCG 生成: [ROM準拠] 上下2ドット(アーケードの 16x16 上下2点を 8x8 1セルに収めた近似)
+;   を1スプライトとして、水平サブセル 4 シフト版(版=vh=0..3)。dot=0xC0>>(2*vh)。
+;   上ドット=raster1,2 / 下ドット=raster5,6。R,G=0。縦方向は cell スナップ(vv 不使用)。
+;   使用 PCG は BULLET_BASE+0..3 の4セルのみ(旧16版→0xA4-0xAF が空く)。
 gen_bullet:
-	xor	a
-	ld	(sp_vv), a
-.vvl:
+	push	hl
 	xor	a
 	ld	(sp_vh), a
 .vhl:
-	; --- 8ラスタの B パターンを SPRGEN[0..7] に作る ---
-	;   ドット: raster r0,r1 = 0xC0。下へ 2*vv、右へ 2*vh シフト。
-	push	hl
+	; SPRGEN[0..7] を 0 クリア
 	ld	hl, SPRGEN
 	ld	b, 8
 	xor	a
-.zf:	ld	(hl), a			; 0 クリア 8バイト
+.zf:	ld	(hl), a
 	inc	hl
 	djnz	.zf
-	; dot row = 2*vv, 2*vv+1 に 0xC0>>(2*vh) を置く
+	; dot = 0xC0 >> (2*vh)
 	ld	a, (sp_vh)
 	add	a, a			; 2*vh
-	ld	b, a			; シフト量
+	ld	b, a
 	ld	a, 0xC0
 	inc	b
 .shr:	dec	b
 	jr	z, .shd
 	srl	a
 	jr	.shr
-.shd:	; a = 0xC0 >> 2vh (ドットの1ラスタ)
-	ld	c, a			; パターン
-	ld	a, (sp_vv)
-	add	a, a			; row = 2*vv
-	ld	e, a
-	ld	d, 0
-	ld	hl, SPRGEN
-	add	hl, de
-	ld	(hl), c			; raster 2vv
-	inc	hl
-	ld	(hl), c			; raster 2vv+1
-	pop	hl
-	; --- PCG セル定義: code = BULLET_BASE + vv*4 + vh ---
-	ld	a, (sp_vv)
-	add	a, a
-	add	a, a			; vv*4
-	ld	b, a
+.shd:	; a = dot ラスタ。上ドット=raster1,2 / 下ドット=raster5,6
+	ld	(SPRGEN + 1), a
+	ld	(SPRGEN + 2), a
+	ld	(SPRGEN + 5), a
+	ld	(SPRGEN + 6), a
+	; PCG セル定義: code = BULLET_BASE + vh
 	ld	a, (sp_vh)
-	add	a, b			; 版
 	add	a, BULLET_BASE
 	call	pcg_select
-	; B プレーン = SPRGEN(8), R/G = 0
 	ld	hl, SPRGEN
 	ld	d, PCG_B >> 8
 	call	def_plane		; B (hl += 8)
@@ -204,11 +189,7 @@ gen_bullet:
 	ld	(sp_vh), a
 	cp	4
 	jp	nz, .vhl
-	ld	a, (sp_vv)
-	inc	a
-	ld	(sp_vv), a
-	cp	4
-	jp	nz, .vvl
+	pop	hl
 	ret
 
 ;=====================================================================
@@ -1436,10 +1417,18 @@ sprite_update:
 	IFDEF	GROBDA_EXTDATA
 	call	grobda_erase		; [M8⑥]
 	ENDIF
+	IFDEF	MEAS
+	MEASCALL bullets_erase, meas_bule
+	ELSE
 	call	bullets_erase
+	ENDIF
 	call	blaster_erase
 	; 全描画(アクティブのみ)。照準は最後=最前面。
+	IFDEF	MEAS
+	MEASCALL bullets_draw, meas_buld
+	ELSE
 	call	bullets_draw
+	ENDIF
 	call	blaster_draw
 	call	enemies_draw
 	IFDEF	GROBDA_EXTDATA
@@ -1731,12 +1720,9 @@ fire_check:
 	call	read_joy		; a = PSG port A (負論理)
 	bit	5, a			; トリガ1
 	ret	nz			; 押されていない(bit=1)
-	; [M8] ザッパー2発: vy(X1縦方向)で上下に並べて同時発射。
+	; [ROM準拠] 1トリガ=1オブジェクト(上下2ドットは1スプライト)。自機中央から1発。
 	ld	a, (ship_vy)
-	add	a, 2			; 上側 (自機上寄り)
-	call	spawn_bullet
-	ld	a, (ship_vy)
-	add	a, 10			; 下側 (自機下寄り)
+	add	a, 6			; 中央
 	call	spawn_bullet
 	IFDEF	SOUND
 	ld	hl, se_zapper		; [SND] ザッパー発射音
@@ -1929,22 +1915,14 @@ bullets_draw:
 	ld	d, 0
 	add	hl, de
 	ld	(spr_soff), hl
-	; code = BULLET_BASE + (vy&3)*4 + (hx&3)
+	; [ROM準拠] code = BULLET_BASE + (hx&3)。縦は cell スナップ(2ドットはPCGパターン内)。
 	ld	a, (spr_i)
 	ld	e, a
 	ld	d, 0
-	ld	hl, bul_vy
-	add	hl, de
-	ld	a, (hl)
-	and	3
-	add	a, a
-	add	a, a
-	ld	b, a
 	ld	hl, bul_hx
 	add	hl, de
 	ld	a, (hl)
 	and	3
-	add	a, b
 	add	a, BULLET_BASE
 	ld	(spr_code), a
 	; 窓1: cell = (cur_pos + soff) & 0x7FF
