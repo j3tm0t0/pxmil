@@ -124,6 +124,28 @@ def main_dump():
     print("  jara_right @0x235C:", ["0x%02X" % main[0x235C + i] for i in range(6)])
     print("  jara_left  @0x2362:", ["0x%02X" % main[0x2362 + i] for i in range(6)])
 
+    # --- X1 焼き込み用 inc(32方向速度表 + 敵スペック) ---
+    out = os.path.join(ROOT, "roms", "arcade", "xevious-out")
+    os.makedirs(out, exist_ok=True)
+    angtabs = [("ang_aimed_1_0px", 0x3DF3), ("ang_fast_1_5px", 0x3DB3),
+               ("ang_slow_0_75px", 0x3E33), ("ang_sheo_2_0px", 0x3D73)]
+    with open(os.path.join(out, "enemy_ai.inc"), "w") as f:
+        f.write("; Xevious 敵AI焼き込みデータ(非コミット). 角度表=32方向 (dY,dX) 符号付 1/32px.\n")
+        f.write("; index = get_index_for_angle(自機-自身) >>3 &0x1F。dY,dX をそのまま速度に。\n")
+        for name, addr in angtabs:
+            f.write("%s:\n" % name)
+            for i in range(32):
+                dy, dx = s8(main[addr + i*2]), s8(main[addr + i*2 + 1])
+                f.write("\tdb\t%d,%d\t; [%2d]\n" % (dy, dx, i))
+        f.write("; 敵スペック(速度表/射撃/挙動):\n")
+        f.write("; Toroid ang_slow 直進→自機Y一致で左右スイング(dY±1,8コマ回転)\n")
+        f.write("; Torkan ang_aimed ダイブ→射撃→28fホバー→ang_fast で自機逆方向へ離脱\n")
+        f.write("; Jara   ang_fast 接近→自機Y一致で左右バンク(dY±1,6コマ)\n")
+        f.write("; Zoshi  ang_slow 自機方向(射撃時 top/bot=再照準, rnd=ランダム変針)\n")
+        f.write("; Giddo  ang_sheo 自機狙いダイブ / Kapi ang_aimed 射撃 / Terrazi ang_fast 射撃\n")
+        f.write("; 弾 type6=ang_aimed 自機狙い直進 / Brag Spario=加速ホーミング / 拡散=ang_fast 扇\n")
+    print("\n焼き込み inc: roms/arcade/xevious-out/enemy_ai.inc")
+
 
 if __name__ == "__main__":
     main_dump()
