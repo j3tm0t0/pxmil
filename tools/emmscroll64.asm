@@ -277,8 +277,7 @@ realstart:
 	ENDIF
 	IFDEF	SOUND
 	call	snd_init		; [SND] PSG 無音化 + サウンド初期化
-	ld	ix, snd_bgm_fanfare	; 開始ファンファーレ(終了後 bgm_mgr が本BGMへ)
-	call	snd_play_bgm
+	; BGM は snd_bgm_mgr が駆動(bgm_silent=1 起動 → 1フレーム目で opening 開始)。
 	ENDIF
 
 	ld	hl, 0
@@ -1410,6 +1409,11 @@ area_advance:
 .aa_inc:
 	inc	a
 	ld	(area_cur), a
+	IFDEF	SOUND
+	ld	a, 1			; [SND] 次エリアは opening から。切替中は無音(mgr が復帰で opening)
+	ld	(bgm_silent), a
+	call	snd_bgm_stop
+	ENDIF
 	IFDEF	ALLAREAS_DBG
 	ld	e, a			; PROBE 0xA0<area>: エリア切替を通知
 	ld	bc, 0x00FE
@@ -1898,10 +1902,10 @@ tpal_a:	db	0x3F, 0x2A, 0x15, 0x00, 0x0C, 0x27, 0x2D
 ; [SND] サウンド: xevi-extract の PSG プレイヤ(sndplay.inc) + データ。
 ;   データは xevi_sound.py 出力(非コミット, roms/)。差し替えは incbin パスのみ。
 	INCLUDE	"tools/sndplay.inc"
-snd_bgm_fanfare:
-	incbin	"roms/arcade/xevious-out/sound/xevi_fanfare.bin"
-snd_bgm_main:
-	incbin	"roms/arcade/xevious-out/sound/xevi_bgm.bin"
+snd_bgm_opening:
+	incbin	"roms/arcade/xevious-out/sound/xevi_opening.bin"	; tune1(3ch) 開始/復活/次エリアで1回
+snd_bgm_arpeggio:
+	incbin	"roms/arcade/xevious-out/sound/xevi_arpeggio.bin"	; tune E(1ch) 飛行中ループ
 se_zapper:
 	incbin	"roms/arcade/xevious-out/sound/se_00_zapper.bin"
 se_blaster:
@@ -1914,20 +1918,66 @@ se_exp_aerial:
 	incbin	"roms/arcade/xevious-out/sound/se_07_exp_aerial.bin"
 se_exp_ground:
 	incbin	"roms/arcade/xevious-out/sound/se_08_exp_ground.bin"
-; BGM 終了検出 → 次曲(fanfare→本BGM→本BGMループ)。mainloop から毎フレーム。
+; BGM 状態機械(mainloop から毎フレーム)。
+;   無音条件 = game_over または ship_inv!=0(死亡の爆発/復活無敵中)。
+;   無音→再生へ移る瞬間(開始・復活・次エリア)は opening(tune1) を1回。
+;   opening 終了(snd_bgm_active=0)で arpeggio(tune E) へ、以降 arpeggio をループ。
+;   死亡で停止(PSG 音量 0、C は爆発SFXが使うので保護)。
 snd_bgm_mgr:
+	ld	a, (game_over)
+	or	a
+	jr	nz, .silent
+	ld	a, (ship_inv)
+	or	a
+	jr	nz, .silent
+	; --- BGM を鳴らすべき状態 ---
+	ld	a, (bgm_silent)
+	or	a
+	jr	nz, .restart_opening	; 無音→再生: opening 再開
+	; 通常飛行: opening → arpeggio → arpeggio ループ
 	call	snd_bgm_active
 	or	a
-	ret	nz
+	ret	nz			; まだ再生中
 	ld	a, (bgm_phase)
 	or	a
-	jr	nz, .main
+	jr	nz, .arp
 	ld	a, 1
-	ld	(bgm_phase), a
-.main:
-	ld	ix, snd_bgm_main
+	ld	(bgm_phase), a		; opening 終了 → 以降 arpeggio
+.arp:
+	ld	ix, snd_bgm_arpeggio
 	jp	snd_play_bgm
-bgm_phase:	db	0
+.restart_opening:
+	xor	a
+	ld	(bgm_silent), a
+	ld	(bgm_phase), a		; =0: opening フェーズ
+	ld	ix, snd_bgm_opening
+	jp	snd_play_bgm
+.silent:
+	ld	a, (bgm_silent)
+	or	a
+	ret	nz			; 既に無音
+	ld	a, 1
+	ld	(bgm_silent), a
+	jp	snd_bgm_stop
+
+; BGM 停止: tick 無効化 + PSG A/B 音量 0。C(R10)は SFX 稼働中なら保護。
+snd_bgm_stop:
+	xor	a
+	ld	(bgm_nch), a		; snd_tick が BGM voice を進めない
+	ld	d, 8			; R8 = vol A
+	ld	e, 0
+	call	psg_set
+	ld	d, 9			; R9 = vol B
+	ld	e, 0
+	call	psg_set
+	ld	a, (sfx_type)
+	or	a
+	ret	nz			; SFX が PSG C を使用中 → R10 は触らない
+	ld	d, 10			; R10 = vol C
+	ld	e, 0
+	jp	psg_set
+bgm_phase:	db	0		; 0=opening, 1=arpeggio
+bgm_silent:	db	1		; 1=無音(起動時/死亡中/game_over)。起動時1で opening が始まる
 	ENDIF
 	ENDIF
 
