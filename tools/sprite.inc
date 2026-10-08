@@ -2398,6 +2398,99 @@ enemies_move:
 	ld	(spr_i), a
 	jp	.ml
 
+;=====================================================================
+; [敵32方向] get_index_for_angle: 自機への32方向index(0..31)。
+;   ROM get_index_for_angle@0x0EB2 と同一(atan2不要のoctant法)。
+;   入力 gia_dx,gia_dy = 符号付セル差(ship_cell - self_cell。8px=1セル粒度=ROM忠実)。
+;   出力 A=idx(0..31)。aim 時のみ呼ぶ(spawn/再照準)。octant_angle_tbl は enemy_ai.inc。
+get_index_for_angle:
+	ld	a, (gia_dx)		; ax=|dx|
+	call	gia_abs
+	ld	(gia_ax), a
+	ld	a, (gia_dy)		; c=ay=|dy|
+	call	gia_abs
+	ld	c, a
+	ld	a, (gia_ax)
+	cp	c			; ax>=ay ?
+	jr	nc, .flat		; flat(steep=0): big=ax, small=ay
+	ld	a, 1			; steep=1: big=ay, small=ax
+	ld	(gia_steep), a
+	ld	a, c
+	ld	(gia_big), a
+	ld	a, (gia_ax)
+	ld	(gia_small), a
+	jr	.ratio
+.flat:
+	xor	a
+	ld	(gia_steep), a
+	ld	a, (gia_ax)
+	ld	(gia_big), a
+	ld	a, c
+	ld	(gia_small), a
+.ratio:
+	ld	a, (gia_big)
+	or	a
+	jr	z, .idx0		; big=0 → idx0
+	ld	a, (gia_small)		; hl = small*32
+	ld	l, a
+	ld	h, 0
+	add	hl, hl
+	add	hl, hl
+	add	hl, hl
+	add	hl, hl
+	add	hl, hl
+	ld	a, (gia_big)
+	ld	e, a
+	ld	d, 0			; de=big
+	ld	c, 0			; ratio
+.rl:	or	a
+	sbc	hl, de
+	jr	c, .rdone
+	inc	c
+	jr	.rl
+.rdone:
+	ld	a, c			; ang = octant_angle_tbl[ratio]
+	ld	e, a
+	ld	d, 0
+	ld	hl, octant_angle_tbl
+	add	hl, de
+	ld	b, (hl)			; ang
+	ld	a, (gia_steep)
+	or	a
+	jr	z, .nosteep
+	ld	a, 0x41			; steep: 0x41-ang
+	sub	b
+	ld	b, a
+.nosteep:
+	ld	a, (gia_dx)
+	or	a
+	jp	p, .nodxn
+	ld	a, 0x81			; dx<0: 0x81-ang
+	sub	b
+	ld	b, a
+.nodxn:
+	ld	a, (gia_dy)
+	or	a
+	jp	p, .nodyn
+	xor	a			; dy<0: -ang
+	sub	b
+	ld	b, a
+.nodyn:
+	ld	a, b			; idx=(ang>>3)&0x1F
+	srl	a
+	srl	a
+	srl	a
+	and	0x1F
+	ret
+.idx0:	xor	a
+	ret
+
+gia_abs:				; a=|a| (符号付8bit)
+	or	a
+	ret	p
+	neg
+	ret
+
 ; 全敵を新位置に描画(両窓, 2x2), prev 記録。
 enemies_draw:
 	xor	a
@@ -4372,6 +4465,13 @@ bac_ftptr:	dw	0		; 現回転コマの frametab 行ポインタ(bacura_update 冒
 bp_tl:		dw	0		; bac_put2x4/ene_clr2x4 作業: TL
 bp_ptr:		dw	0		; 〃 frametab コードポインタ
 bp_offp:	dw	0		; 〃 bac_offs ポインタ
+; [敵32方向] get_index_for_angle 作業
+gia_dx:		db	0		; 符号付セル差(ship-self)
+gia_dy:		db	0
+gia_ax:		db	0
+gia_big:	db	0
+gia_small:	db	0
+gia_steep:	db	0
 spawn_type:	db	0		; (旧)未使用
 spawn_idx:	db	0		; [M8④] spawn_seq のインデックス
 num_flying:	db	3		; [M8④] 現在の同時出現上限(3→4→5)
@@ -4462,6 +4562,9 @@ bacura_cells:
 	INCBIN	"roms/arcade/xevious-out/bacura_cells.bin"
 ; bacura_frametab: 8コマ×8セル(draw順)→実PCGコード。
 	INCLUDE	"roms/arcade/xevious-out/bacura_frametab.inc"
+; [敵32方向] 角度→速度表(ang_aimed/fast/slow/sheo 各32方向 dY,dX 1/32px) + octant_angle_tbl。
+;   tools/xevi_enemy_ai.py が ROM から生成(非コミット)。get_index_for_angle が octant_angle_tbl を使用。
+	INCLUDE	"roms/arcade/xevious-out/enemy_ai.inc"
 
 enemy_data:
 	IFDEF	ENEMY_EXTDATA
