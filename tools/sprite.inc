@@ -1478,7 +1478,11 @@ sprite_update:
 	; 全消去(前回位置)。敵は idle-skip, 非アクティブ化された敵も消去される。
 	call	reticle_erase
 	call	expls_erase
+	IFDEF	MEAS
+	MEASCALL enemies_erase, meas_ee
+	ELSE
 	call	enemies_erase
+	ENDIF
 	IFDEF	GROBDA_EXTDATA
 	call	grobda_erase		; [M8⑥]
 	ENDIF
@@ -1498,7 +1502,11 @@ sprite_update:
 	call	bullets_draw
 	ENDIF
 	call	blaster_draw
+	IFDEF	MEAS
+	MEASCALL enemies_draw, meas_ed
+	ELSE
 	call	enemies_draw
+	ENDIF
 	IFDEF	GROBDA_EXTDATA
 	call	grobda_draw		; [M8⑥]
 	ENDIF
