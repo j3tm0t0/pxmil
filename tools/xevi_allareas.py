@@ -85,6 +85,11 @@ def main():
     ex = X
     g1, g2, g3, g4, pr = X.build_regions(); XB.gfx3_cache = g3
     rgb, bg_pen, sp_pen, fg_pen = X.build_palette(pr)
+    # crater 絵は ROM の実 crater スプライト tile 0xA6(colour 0x0D, 1コマ)を使用。
+    #   旧 = 手描き灰色円(crater_rgb16/crater_rgb)。bomb_explosion_finished@0x31D7 が
+    #   被弾地上物を code 0xA6 の crater に変えて地形速度でスクロールさせる(ROM確定)。
+    rom_crater16 = XB.sprite_rgb16(ex, rgb, sp_pen, 0xA6, 0x0D)
+    rom_crater32 = [[rom_crater16[y // 2][x // 2] for x in range(32)] for y in range(32)]
     areatbl = T.load_area_table(); rom = O.load_subrom(); ptrs = O.area_ptrs(rom)
 
     # --- union palette(全エリア地形 + 地上物/Sol + crater) ---
@@ -106,7 +111,7 @@ def main():
                 pen = sp_pen[7*8 + px[y][x]]
                 if pen != 0x80:
                     addq(uc, rgb, rgb[pen])
-    for cr in (XB.crater_rgb16(), crater_rgb(32)):
+    for cr in (rom_crater16, rom_crater32):
         for row in cr:
             for c in row:
                 if c is not None:
@@ -121,7 +126,7 @@ def main():
             ci = len(common); pat2ci[pat] = ci; common.append(pat)
         return ci
 
-    crater = XB.crater_rgb16()
+    crater = rom_crater16
     os.makedirs(OUT, exist_ok=True)
     summary = []
 
@@ -167,7 +172,7 @@ def main():
                     ids.append(li)
             return ids
 
-        crater32 = crater_rgb(32)
+        crater32 = rom_crater32
         gobj = []; sol = []; grobda = []
         for trig, typ, o, y in objs:
             c0, r0 = col_of(trig), row_of(y)
