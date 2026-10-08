@@ -34,9 +34,9 @@ PTR = [struct.unpack_from("<H", snd, 0x48A + i*2)[0] for i in range(27)]
 TRIPLET = [(snd[0x4C0 + i*3], snd[0x4C0 + i*3 + 1], snd[0x4C0 + i*3 + 2]) for i in range(15)]
 TEMPO = [snd[0x4ED + i] for i in range(15)]
 # WSG出力 = freq_reg * WSG_HZ。導出: 20bitアキュム, index=bit[19:15], BCは下位16bitに
-#   格納, マスタ3.072MHz → 3.072e6/2^20 = 2.9297(旋律~1.4kHz, Xeviousテーマは明るく高い
-#   のでこれが妥当)。相対音程は byte_568(平均律)で確実。もし実機で1オクターブ高ければ
-#   1オクターブ下げ(/2 = 96000/2^16 = 1.465)に変更可。
+#   格納, マスタ3.072MHz → 3.072e6/2^20 = 2.9297。オクターブ検証済(opening=tune1 の実 note):
+#   ×2.9297 で F6旋律/F3ベース=音楽的に整合。対抗の ×0.0916(96kHz/2^20)だと同じ曲が
+#   F-2≈5.5Hz の可聴外ベースになり物理的にあり得ない → ×2.9297 で確定。相対音程は byte_568(平均律)。
 WSG_HZ = 3072000.0 / (2**20)   # 2.9297 Hz / freq_reg(標準 Namco WSG)
 FPS = 120.0                    # サウンド CPU NMI レート(1 フレーム 2 回)
 PSG_CLK = 1996800.0            # X1 AY-3-8910 clock(4MHz/2。beep実測 period256→~464Hz で裏付け)
@@ -105,8 +105,11 @@ SE_LIST = [                                  # snd_play_se の id 順(0..)
     ("bonus",        "tone",  0xD),
     ("bacura",       "tone",  0xA),   # カンカン: shot が Bacura 命中(MAIN 0x19A2 bacura_hit_snd@0xA00A=1,
                                        #   弾は state=3 で消滅=貫通せず, Bacura 不滅)。tune A=2ch(ch21/22)
-                                       #   波形1=矩形, C5→C#5, tempo6, vmode2/attack4(鋭アタック), sub_214 ワンショット
-                                       #   (飛行中BGM=tune E アルペジオの ch を一時奪取)。X1版は ch0 のみ(ch21列 C5,C#5)。
+                                       #   波形=byte_517[21/22]=1=50%矩形, tempo6, vmode2/attack4(鋭アタック)。
+                                       #   音程は C7→C#7(= 2127/2253Hz, period59/55)。※以前 C5 と誤記。
+                                       #   オクターブ検証: opening(tune1)を ×2.9297 で鳴らすと F6旋律/F3ベースで整合、
+                                       #   ×0.0916(96kHz)だと F-2≈5.5Hz の可聴外ベース=棄却 → ×2.9297 が正。
+                                       #   sub_214 ワンショット(飛行中BGM=tune E の ch を一時奪取)。X1版は ch21列のみ。
     ("exp_aerial",   "noise", "exp_aerial"),
     ("exp_ground",   "noise", "exp_ground"),
     ("exp_solvalou", "noise", "exp_solvalou"),
