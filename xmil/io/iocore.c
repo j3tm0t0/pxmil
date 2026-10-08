@@ -306,19 +306,23 @@ REG8 IOINPCALL iocore_inp(UINT port) {
 	{
 		static int cyc_init = 0;
 		static int cyc_on = 0;
-		static unsigned cyc_hi = 0;
+		static UINT32 cyc_shift = 0;	/* 0xFC で 32bit をラッチ、0xFD 読みごとに下位から1バイト排出 */
 		if (!cyc_init) {
 			cyc_init = 1;
 			cyc_on = (getenv("XMIL_PROBE") != NULL);
 		}
 		if (cyc_on) {
 			if (port == 0x00fc) {
+				/* 32bit CPU_CLOCKCOUNT をラッチ。byte0 を返し、残り24bit を 0xFD 用に保持。
+				 * guest: in(0xFC)=b0, in(0xFD)=b1, in(0xFD)=b2, in(0xFD)=b3。 */
 				UINT32 cc = (UINT32)CPU_CLOCKCOUNT;
-				cyc_hi = (cc >> 8) & 0xff;
+				cyc_shift = cc >> 8;
 				return (REG8)(cc & 0xff);
 			}
 			if (port == 0x00fd) {
-				return (REG8)cyc_hi;
+				REG8 b = (REG8)(cyc_shift & 0xff);
+				cyc_shift >>= 8;
+				return b;
 			}
 		}
 	}
