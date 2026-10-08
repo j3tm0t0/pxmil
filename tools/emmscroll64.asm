@@ -1359,11 +1359,9 @@ area_advance:
 .aa_inc:
 	inc	a
 	ld	(area_cur), a
-	IFDEF	SOUND
-	ld	a, 1			; [SND] 次エリアは opening から。切替中は無音(mgr が復帰で opening)
-	ld	(bgm_silent), a
-	call	snd_bgm_stop
-	ENDIF
+	; [BGM修正] シームレスなエリア境界では opening を鳴らさず arpeggio を継続
+	;   (ROM: opening は各ライフ開始時のみ。死亡なしのエリア進行では鳴らない)。
+	;   → 旧 bgm_silent=1 + snd_bgm_stop は削除。
 	IFDEF	ALLAREAS_DBG
 	ld	e, a			; PROBE 0xA0<area>: エリア切替を通知
 	ld	bc, 0x00FE
@@ -1928,11 +1926,21 @@ se_bacura:
 ;   無音→再生へ移る瞬間(開始・復活・次エリア)は opening(tune1) を1回。
 ;   opening 終了(snd_bgm_active=0)で arpeggio(tune E) へ、以降 arpeggio をループ。
 ;   死亡で停止(PSG 音量 0、C は爆発SFXが使うので保護)。
+	IFDEF	BGMTRACE
+; [BGMTRACE] BGM イベント(ev: 0=opening/1=arp/2=stop)を framecnt 付きで PROBE。
+;   lo=marker 0xE0+ev(値=framecnt_lo), hi=marker 0xE4+ev(値=framecnt_hi)。
+	MACRO	BGMEV ev
+	push	af : push bc : push hl
+	ld	hl, (framecnt)
+	ld	a, l : ld bc,0x00FE : out (c),a : ld a,0xE0+ev : ld bc,0x00FF : out (c),a
+	ld	a, h : ld bc,0x00FE : out (c),a : ld a,0xE4+ev : ld bc,0x00FF : out (c),a
+	pop	hl : pop bc : pop af
+	ENDM
+	ENDIF
 snd_bgm_mgr:
+	; [BGM修正] 無音は game_over のみ。無敵中(ship_inv≠0)は生存扱いで鳴らす
+	;   (ROM: 無敵中も arpeggio。opening は各ライフ開始時=死亡→再スタートで ship_hit が trigger)。
 	ld	a, (game_over)
-	or	a
-	jr	nz, .silent
-	ld	a, (ship_inv)
 	or	a
 	jr	nz, .silent
 	; --- BGM を鳴らすべき状態 ---
@@ -1949,9 +1957,15 @@ snd_bgm_mgr:
 	ld	a, 1
 	ld	(bgm_phase), a		; opening 終了 → 以降 arpeggio
 .arp:
+	IFDEF	BGMTRACE
+	BGMEV 1
+	ENDIF
 	ld	ix, snd_bgm_arpeggio
 	jp	snd_play_bgm
 .restart_opening:
+	IFDEF	BGMTRACE
+	BGMEV 0
+	ENDIF
 	xor	a
 	ld	(bgm_silent), a
 	ld	(bgm_phase), a		; =0: opening フェーズ
@@ -1961,6 +1975,9 @@ snd_bgm_mgr:
 	ld	a, (bgm_silent)
 	or	a
 	ret	nz			; 既に無音
+	IFDEF	BGMTRACE
+	BGMEV 2
+	ENDIF
 	ld	a, 1
 	ld	(bgm_silent), a
 	jp	snd_bgm_stop

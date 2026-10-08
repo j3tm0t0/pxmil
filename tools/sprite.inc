@@ -4203,6 +4203,14 @@ ship_hit:
 	jr	z, .shgo
 	ld	a, SHIP_INV_FRAMES
 	ld	(ship_inv), a		; 復活無敵
+	IFDEF	SOUND
+	; [BGM修正] 死亡→再スタート=各ライフ開始時なので opening を頭から鳴らす
+	;   (ROM: 各ライフ開始で tune1。無敵中も鳴り続け、終わると arpeggio)。
+	ld	a, 1
+	ld	(bgm_silent), a		; mgr が次フレームで .restart_opening
+	xor	a
+	ld	(bgm_phase), a
+	ENDIF
 	ret
 .shgo:
 	ld	a, 1
