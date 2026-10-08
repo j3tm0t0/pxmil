@@ -282,7 +282,7 @@ domo_draw:
 	bit	0, (ix + DM_ACT) : jp z, .dn
 	ld	l, (ix + DM_WCXH) : ld h, 0		; col
 	ld	de, (coarse) : or a : sbc hl, de		; scol
-	jr	c, .offleft				; scol<0 → 左に消えた
+	jp	c, .offleft				; scol<0 → 左に消えた
 	ld	a, h : or a : jp nz, .dn			; scol>=256 → 右遠く(未出現)
 	ld	a, l : cp COLS - 1 : jp nc, .dn		; scol>=COLS-1 → 右外(まだ)
 	ld	c, a					; c=ex(scol)
@@ -301,7 +301,12 @@ domo_draw:
 	ld	e, DM_PG1
 .pg:	add	ix, de : push de			; page1 なら IX+DM_PG1 で page1 の prev を指す
 	ld	a, (ix + DM_PREVL) : cp l : jr nz, .chg	; idle-skip: このページの prev と同じなら何もしない
-	ld	a, (ix + DM_PREVH) : cp h : jr z, .same
+	ld	a, (ix + DM_PREVH) : cp h : jr nz, .chg
+	; 同じセル: 他スプライト(自分の撃った弾・上空の敵)の消去で欠けていないか 4f に1回 TVRAM を確認し、
+	;   欠けていれば描き直す(TVRAM は1層なので重なりでセルが空白になり得る)。
+	ld	a, (framecnt) : and 2 : jr nz, .same
+	push	hl : call dm_chk : pop hl : jr z, .same
+	push	hl : jr .nope				; 描き直し(消去不要)
 .chg:	push	hl					; 新 cell 退避
 	ld	a, (ix + DM_PREVH) : cp 0xFF : jr z, .nope
 	ld	l, (ix + DM_PREVL) : ld h, a
@@ -322,6 +327,17 @@ domo_draw:
 .dn:	inc	ix
 	pop	bc
 	dec	b : jp nz, .dl
+	ret
+
+; dm_chk: hl=TL セル。2x2 の TVRAM コードが DOMO_BASE..+3 のままなら Z、1つでも違えば NZ。
+dm_chk:
+	ld	a, DOMO_BASE : call .c1 : ret nz
+	inc	hl : ld a, DOMO_BASE + 1 : call .c1 : ret nz
+	ld	de, COLS - 1 : add hl, de : ld a, DOMO_BASE + 2 : call .c1 : ret nz
+	inc	hl : ld a, DOMO_BASE + 3
+.c1:	ld	e, a
+	ld	a, h : and 0x07 : or TVRAM >> 8 : ld b, a : ld c, l
+	in	a, (c) : cp e
 	ret
 
 ; domo_fire: turret_fire と同一のゲート(countup&7, 前方帯 gnd_stop, ffreq mask)で自機狙い弾(type6)。
@@ -641,12 +657,22 @@ domo_selftest:
 
 	IFDEF	DOMOPROBE
 ; domo_probe: active Domogram 数を PROBE 出力(spawn/move 検証用)。XMIL_PROBE で "PROBE <count>"。
-domo_probe:
+domo_probe:	; 表示ページに描画済み(prev 有効)の active 数
 	ld	ix, dm_slots
 	ld	b, MAX_DOMOGRAM
 	ld	c, 0
+	ld	a, (cur_pos + 1) : and 0x04 : ld d, a
 .pl:	bit	0, (ix + DM_ACT) : jr z, .pn
+	ld	a, d : or a : ld a, (ix + DM_PREVH) : jr z, .ck
+	ld	a, (ix + DM_PRV1H)
+.ck:	cp	0xFF : jr z, .pn
 	inc	c
+	push	bc					; [検証] 描画済み slot の位置 PROBE 0x89<scol>, 0x8A<row>
+	ld	a, (ix + DM_WCXH) : ld hl, coarse : sub (hl) : ld bc, 0x00FE : out (c), a
+	ld	a, 0x89 : ld bc, 0x00FF : out (c), a
+	ld	a, (ix + DM_WCYH) : ld bc, 0x00FE : out (c), a
+	ld	a, 0x8A : ld bc, 0x00FF : out (c), a
+	pop	bc
 .pn:	inc	ix
 	djnz	.pl
 	ld	a, c : ld bc, 0x00FE : out (c), a	; lo = count

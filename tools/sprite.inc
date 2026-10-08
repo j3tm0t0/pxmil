@@ -1400,6 +1400,15 @@ gobj_check:
 ; 毎フレーム(vblank 中, ship_update の後)。発射/移動/消去/描画。
 ;   順序: 発射判定 → 全弾消去 → 移動/寿命 → 全弾描画 (重なり対策で分離)。
 sprite_update:
+	IFDEF	ALLAREAS
+	; [Domogram] スクロールステップ(ページ切替, framecnt&7==0)では、ラスタに遅れないよう先頭で
+	;   新ページへ描く(遅れると旧ページの8f前の絵が1フレーム見え、1セル左にずれて見える)。
+	;   move はステップで休みなので位置は確定済。後段の通常 domo_draw は idle-skip で何もしない。
+	ld	a, (framecnt) : and 7 : jr nz, .nodstep
+	inc	a : ld (scroll_moved), a		; (全 slot を描く指定。後で本来の値に再計算される)
+	call	domo_draw
+.nodstep:
+	ENDIF
 	IFDEF	SUPROBE
 	ld	a, (framecnt) : ld bc, 0x00FE : out (c), a	; [検証] PROBE 0x81<framecnt_lo>=呼出1回
 	ld	a, 0x81 : ld bc, 0x00FF : out (c), a
