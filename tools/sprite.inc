@@ -33,6 +33,7 @@ TOROID_STOP	EQU	16		; [M8④] Toroid が停止する画面セル列(寄って停
 TOR_SWING	EQU	24		; [32方向] Toroid swing の縦速度(0.75px/f=24)
 TOR_SWING_T	EQU	6		; swing 反転周期(tick)
 JARA_BANK	EQU	48		; [32方向] Jara バンクの縦速度(1.5px/f=48)
+ZOSHI_REAIM	EQU	20		; [32方向] Zoshi が自機へ再照準する周期(移動tick)
 TOROID_PAUSE	EQU	24		; 停止フレーム数(移動tick単位 ×ENEMY_MOVE)
 EXPL_BASE	EQU	0xC0		; 爆発 PCG 先頭 (0xC0..0xCB, 3フレーム x 2x2)
 MAX_EXPL	EQU	1		; 同時爆発数 (ピーク負荷削減)
@@ -2308,6 +2309,10 @@ enemies_move:
 	jp	z, .e_tor		; 0=Toroid
 	cp	2
 	jp	z, .e_tk		; 2=Torkan
+	cp	3
+	jp	z, .e_zoshi		; 3=Zoshi
+	cp	4
+	jp	z, .e_giddo		; 4=Giddo
 	; --- 1=Jara: 自機狙い(ang_fast 1.5px/f)→自機Y一致で左右バンク ---
 	ld	hl, ene_phase
 	add	hl, de
@@ -2370,6 +2375,45 @@ enemies_move:
 	ld	hl, ene_vy
 	add	hl, de
 	ld	(hl), -JARA_BANK
+	jp	.e_off
+.e_zoshi:	; --- 3=Zoshi: ang_slow(0.75px/f)で自機方向、周期的に再照準(ゆるいホーミング) ---
+	ld	hl, ene_phase
+	add	hl, de
+	ld	a, (hl)
+	or	a
+	jr	nz, .e_zoshi_fly
+	ld	hl, ang_slow_0_75px	; phase0: 初照準 → phase1、再照準タイマ設定
+	ld	(ene_aim_tbl), hl
+	call	ene_aim
+	ld	hl, ene_phase
+	add	hl, de
+	ld	(hl), 1
+	ld	hl, ene_ptmr
+	add	hl, de
+	ld	(hl), ZOSHI_REAIM
+	jp	.e_off
+.e_zoshi_fly:				; phase1: ZOSHI_REAIM ごとに自機へ再照準
+	ld	hl, ene_ptmr
+	add	hl, de
+	dec	(hl)
+	jp	nz, .e_off
+	ld	(hl), ZOSHI_REAIM
+	ld	hl, ang_slow_0_75px
+	ld	(ene_aim_tbl), hl
+	call	ene_aim
+	jp	.e_off
+.e_giddo:	; --- 4=Giddo: ang_sheo(2.0px/f)で自機狙いダイブ(一直線、再照準なし) ---
+	ld	hl, ene_phase
+	add	hl, de
+	ld	a, (hl)
+	or	a
+	jp	nz, .e_off		; phase1: ダイブ継続
+	ld	hl, ang_sheo_2_0px	; phase0: 一度だけ照準 → phase1
+	ld	(ene_aim_tbl), hl
+	call	ene_aim
+	ld	hl, ene_phase
+	add	hl, de
+	ld	(hl), 1
 	jp	.e_off
 .e_tor:	; --- 0=Toroid: 自機狙いダイブ(ang_slow 0.75px/f)→自機Y一致で左右swing ---
 	ld	hl, ene_phase
@@ -4760,7 +4804,7 @@ entype_tab:
 	db	ENEMY_BASE,  4, 0	; type0: Toroid(円盤, 直進)
 	db	JARA_BASE,   4, 1	; type1: Jara(縦振動+左進)
 	db	TORKAN_BASE, 2, 2	; type2: Torkan(斜めダイブ, 高速)
-	db	ZOSHI_BASE,  2, 1	; type3: Zoshi(2コマ, 縦振動+左進=Jara traj 流用, 撃つ)
+	db	ZOSHI_BASE,  2, 3	; type3: Zoshi(2コマ, ang_slow 自機方向+周期再照準, 撃つ)
 ene_atmr:	ds	MAX_ENEMIES
 ene_mtmr:	ds	MAX_ENEMIES
 ene_prev:	ds	MAX_ENEMIES * 2		; 前回 top-left セル 窓1
