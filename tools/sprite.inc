@@ -29,6 +29,7 @@ BACURA_RES_BASE	EQU	0x67		; [敵] Bacura 回転8コマ常駐先頭(自機dedup�
 BACURA_RES_N	EQU	43		; 8コマ重複除去後のユニークセル数(0x67..0x91)
 MAX_ENEMIES	EQU	5		; [M8④] 最大同時数(num_flying が 3→4→5 と上昇)
 DIFF_INTERVAL	EQU	1800		; [M8④] 難易度1段の経過フレーム(≒30s@60Hz)
+RANK_STEP	EQU	2		; [出現①暫定] rank の時間上昇量(ROM difficulty_tbl[DIP=0]=2 相当)
 ENEMY_SPEED	EQU	1		; 横移動(セル/移動tick) ※敵は8pxグリッド
 EN_NTYPES	EQU	5		; [敵] 敵タイプ数 (Toroid/Jara/Torkan/Zoshi/Giddo)
 TOROID_STOP	EQU	16		; [M8④] Toroid が停止する画面セル列(寄って停止)(旧phase機械/未使用)
@@ -1962,28 +1963,24 @@ enemy_spawn:
 	ld	a, (game_over)
 	or	a
 	ret	nz			; ゲームオーバー中は出現しない
-	; [M8④] 難易度上昇(経過): difficulty<2 の間 diff_tmr を減らし 0 で +1。
-	;   num_flying=3+difficulty(3→4→5)。型解禁: type<=difficulty のみ(他はToroid)。
-	ld	a, (difficulty)
-	cp	4			; [敵] Giddo(type4)解禁のため difficulty cap を 4 に
-	jr	nc, .dskip
+	; [出現①] rank(enemy_AI_level)を時間で上昇(暫定。②で col トリガ fn3 に置換)。
+	;   DIFF_INTERVAL 毎に rank+=RANK_STEP、≥0x80 で −0x40(ROMクランプ)、
+	;   (fly_num,fly_off)=fly_offset_tbl[min(rank,31)]。
 	ld	hl, (diff_tmr)
 	dec	hl
 	ld	(diff_tmr), hl
 	ld	a, h
 	or	l
 	jr	nz, .dskip
-	ld	a, (difficulty)
-	inc	a
-	ld	(difficulty), a
-	add	a, 3			; 3+difficulty
-	cp	MAX_ENEMIES + 1
-	jr	c, .nfok
-	ld	a, MAX_ENEMIES		; num_flying は MAX_ENEMIES でクランプ
-.nfok:
-	ld	(num_flying), a
 	ld	hl, DIFF_INTERVAL
 	ld	(diff_tmr), hl
+	ld	a, (rank)
+	add	a, RANK_STEP
+	cp	0x80
+	jr	c, .rkc
+	sub	0x40
+.rkc:	ld	(rank), a
+	call	rank_set_pop
 .dskip:
 	ld	a, (spawn_tmr)
 	or	a
@@ -1995,9 +1992,12 @@ enemy_spawn:
 	ld	a, ENEMY_SPAWN
 	ld	(spawn_tmr), a
 	; [M8④] 同時数制限: active >= 実効上限 なら出さない。
-	;   [M8⑥(A)] 実効上限 = num_flying - 表示中Grobda数(最低1)。敵+Grobda を bounded に。
-	ld	a, (num_flying)
-	ld	(eff_cap), a
+	;   [出現①] 実効上限 = min(fly_num, MAX_ENEMIES)(ROM は飛行6枠だが X1 は5)− 表示中Grobda数(最低1)。
+	ld	a, (fly_num)
+	cp	MAX_ENEMIES
+	jr	c, .capok
+	ld	a, MAX_ENEMIES
+.capok:	ld	(eff_cap), a
 	IFDEF	GROBDA_EXTDATA
 	call	count_grob_onscreen	; a = 表示中Grobda数
 	ld	c, a
@@ -2085,32 +2085,35 @@ enemy_spawn:
 	ld	hl, ene_vy
 	add	hl, de
 	ld	(hl), 0
-	; [M8④] タイプ = spawn_seq[spawn_idx] (エリア1はToroid主体, たまにJara/Torkan)
+	; [出現①] タイプ = rom_type_map(fly_type_tbl[fly_off + type_cycle])。type_cycle は 0..fly_num-1 巡回。
 	push	de			; slot index 退避
-	ld	a, (spawn_idx)
+	ld	a, (type_cycle)		; 現在の型インデックス(0..fly_num-1)
+	ld	c, a
+	ld	a, (fly_off)
+	add	a, c			; fly_off + idx
 	ld	e, a
 	ld	d, 0
-	ld	hl, spawn_seq
+	ld	hl, fly_type_tbl
 	add	hl, de
-	ld	a, (hl)			; 出現タイプ
+	ld	a, (hl)			; ROM 型コード
+	call	rom_type_map		; a=demo type, c=shoot
 	pop	de			; slot index
-	; [M8④] 型解禁: type > difficulty なら Toroid(0) に落とす
-	ld	c, a
-	ld	a, (difficulty)
-	cp	c
-	jr	nc, .tclamp		; difficulty >= type → そのまま
-	ld	c, 0			; 未解禁 → Toroid
-.tclamp:
-	ld	a, c
+	push	bc			; shoot(c) 退避
 	ld	hl, ene_type
 	add	hl, de
-	ld	(hl), a
-	ld	a, (spawn_idx)
+	ld	(hl), a			; ene_type = demo type
+	pop	bc
+	ld	hl, ene_shoot
+	add	hl, de
+	ld	(hl), c			; ene_shoot = shoot
+	; type_cycle = (type_cycle+1) mod fly_num
+	ld	a, (type_cycle)
 	inc	a
-	cp	SPAWN_SEQ_LEN
+	ld	hl, fly_num
+	cp	(hl)
 	jr	c, .tok
 	xor	a
-.tok:	ld	(spawn_idx), a
+.tok:	ld	(type_cycle), a
 	; 負荷分散: スロット index でタイマー位相をずらす(1フレームに描き直す敵を減らす)
 	ld	a, (spr_i)		; ene_atmr = slot+1 (アニメ位相ずらし)
 	inc	a
@@ -2531,16 +2534,16 @@ enemies_move:
 	add	hl, de
 	ld	(hl), 2
 .e_off:
-	; [敵弾] 射撃統合: type≠0 かつ !game_over なら ftmr 減算、0 で自機狙い発射。
+	; [敵弾] 射撃統合: [出現①] ene_shoot=1 かつ !game_over なら ftmr 減算、0 で自機狙い発射。
 	;   (de=spr_i*1。ene_fire は spr_i を使い de を破壊するので後で復帰)
 	ld	a, (game_over)
 	or	a
 	jr	nz, .nofire
-	ld	hl, ene_type
+	ld	hl, ene_shoot
 	add	hl, de
 	ld	a, (hl)
 	or	a
-	jr	z, .nofire		; Toroid は撃たない
+	jr	z, .nofire		; 非射撃個体は撃たない
 	ld	hl, ene_ftmr
 	add	hl, de
 	dec	(hl)
@@ -3677,6 +3680,56 @@ ene_fire_check:
 	ld	(spr_i), a
 	jp	.fcl
 
+; [出現] rank_set_pop: (fly_num,fly_off)=fly_offset_tbl[min(rank,31)]。型巡回をリセット。破壊 a,de,hl。
+rank_set_pop:
+	ld	a, (rank)
+	cp	32
+	jr	c, .rp
+	ld	a, 31
+.rp:	add	a, a			; idx*2
+	ld	e, a
+	ld	d, 0
+	ld	hl, fly_offset_tbl
+	add	hl, de
+	ld	a, (hl)			; num
+	ld	(fly_num), a
+	inc	hl
+	ld	a, (hl)			; off
+	ld	(fly_off), a
+	xor	a
+	ld	(type_cycle), a		; 新人口 → 型巡回を先頭へ
+	ret
+
+; [出現] rom_type_map: a=ROM型コード → a=demo entype index(0-4), c=shoot(0/1)。破壊 hl,de。
+rom_type_map:
+	cp	0x56
+	jr	nz, .m1
+	ld	c, 0			; 0x56 Jara → type1, 非射撃
+	ld	a, 1
+	ret
+.m1:	cp	0x55
+	jr	nz, .m2
+	ld	c, 1			; 0x55 Jara_shoot → type1, 射撃
+	ld	a, 1
+	ret
+.m2:	sub	0x08			; 0x08..0x18 を rom_map_tab で引く
+	cp	0x11
+	jr	c, .mok
+	ld	c, 0			; 範囲外 → Toroid
+	xor	a
+	ret
+.mok:	ld	e, a
+	ld	d, 0
+	ld	hl, rom_map_tab
+	add	hl, de
+	ld	a, (hl)			; packed = (type<<1)|shoot
+	ld	e, a
+	and	1
+	ld	c, a			; shoot
+	srl	e
+	ld	a, e			; type
+	ret
+
 ; ene_fire: spr_i の敵から自機狙いの弾を1発。8方向近似。
 ene_fire:
 	ld	a, (spr_i)
@@ -4723,6 +4776,7 @@ ene_vx:		ds	MAX_ENEMIES		; [32方向] 速度(符号付, 1/32px/frame)
 ene_vy:		ds	MAX_ENEMIES
 ene_frm:	ds	MAX_ENEMIES		; アニメフレーム 0..3
 ene_type:	ds	MAX_ENEMIES		; [M8] 敵タイプ index (0..EN_NTYPES-1)
+ene_shoot:	ds	MAX_ENEMIES		; [出現] 1=この個体は射撃する(Toroid_shoot 等)。ene_fire が参照。
 ene_dir:	ds	MAX_ENEMIES		; [M8④] Jara 振動方向(0=下/1=上)
 ene_phase:	ds	MAX_ENEMIES		; [M8④] Toroid フェーズ(0=approach/1=pause/2=retreat)
 ene_ptmr:	ds	MAX_ENEMIES		; [M8④] Toroid pause タイマー
@@ -4781,7 +4835,11 @@ gia_small:	db	0
 gia_steep:	db	0
 spawn_type:	db	0		; (旧)未使用
 spawn_idx:	db	0		; [M8④] spawn_seq のインデックス
-num_flying:	db	3		; [M8④] 現在の同時出現上限(3→4→5)
+num_flying:	db	3		; [M8④](旧)現在の同時出現上限。出現①で fly_num に置換。
+rank:		db	0		; [出現] enemy_AI_level。fn3/進行で+、死亡/Zolbakで−。fly_offset_tbl の index。
+fly_num:	db	3		; [出現] 現在の常駐人口目標(初期=idx0 の num=3)
+fly_off:	db	1		; [出現] 現在の fly_type_tbl への型オフセット(初期=idx0 の off=1=Toroid)
+type_cycle:	db	0		; [出現] 次に出す型のインデックス(0..fly_num-1 を巡回)
 difficulty:	db	0		; [M8④] 難易度(0..2)。経過で上昇、型解禁を制御
 diff_tmr:	dw	DIFF_INTERVAL	; [M8④] 次の難易度上昇までのフレーム
 eff_cap:	db	3		; [M8⑥(A)] 今回の実効同時上限(num_flying - 表示中Grobda)
@@ -4867,6 +4925,32 @@ zoshi_data:
 ; [敵] Giddo PCG(1コマ×16x16=4セル=96B, 近似)。ROMは回転4コマだが PCG逼迫で1コマ常駐。
 giddo_data:
 	INCBIN	"roms/arcade/xevious-out/aerial/giddo_f0.bin"
+; [出現] ROM 出現テーブル(xevi-re 抽出)。fly_offset_tbl=32×(num,off): rank/payload index →
+;   (人数, fly_type_tbl への off)。fly_type_tbl=off→ROM型コード列。
+fly_offset_tbl:
+	INCBIN	"roms/arcade/xevious-out/enemies/fly_offset_tbl.bin"	; 64B
+fly_type_tbl:
+	INCBIN	"roms/arcade/xevious-out/enemies/fly_type_tbl.bin"	; 128B
+; [出現] ROM型コード → (demo entype index<<1 | shoot)。index=ROM code-0x08 (0x08..0x18)。
+;   未実装型(Kapi/Terrazi/Zakato)は最寄り実装へ[代替](後で本実装に差替)。0x55/0x56 は別処理。
+rom_map_tab:	; 0x08..0x18
+	db	(4<<1)|0	; 0x08 Giddo → type4
+	db	(0<<1)|0	; 0x09 (未使用)→ Toroid
+	db	(0<<1)|0	; 0x0A Toroid
+	db	(0<<1)|1	; 0x0B Toroid_shoot → Toroid+射撃
+	db	(3<<1)|1	; 0x0C Zoshi_rnd → Zoshi+射撃
+	db	(3<<1)|1	; 0x0D Zoshi_top
+	db	(3<<1)|1	; 0x0E Zoshi_bot
+	db	(2<<1)|1	; 0x0F Torkan → 射撃
+	db	(0<<1)|1	; 0x10 Kapi [代替] → Toroid_shoot
+	db	(2<<1)|1	; 0x11 Terrazi [代替] → Torkan
+	db	(3<<1)|1	; 0x12 Zakato [代替] → Zoshi
+	db	(3<<1)|1	; 0x13 Zakato [代替]
+	db	(3<<1)|1	; 0x14 Zakato [代替]
+	db	(3<<1)|1	; 0x15 Brag Zakato [代替]
+	db	(3<<1)|1	; 0x16 Brag Zakato [代替]
+	db	(3<<1)|1	; 0x17 [代替]
+	db	(3<<1)|1	; 0x18 Garu Zakato [代替]
 ; [敵] Bacura 回転8コマ(16x32=2幅×4高)の重複除去済み43セル(各24B)。rot180適用。
 ;   tools/gen_bac_res.py が bacura_rot0..7.bin から生成(非コミット)。
 bacura_cells:
