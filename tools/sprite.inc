@@ -2739,6 +2739,11 @@ ene_integrate:
 	sla	c
 	rl	b
 	ENDIF
+	; [速度2× ROM準拠] ROM は position += 2×(dY,dX)(move_object が2倍加算)。
+	;   X1 は ENEMY_MOVE フレーム毎更新なので 1 tick で 2×ENEMY_MOVE×vx を積む。
+	;   実測(VELMEAS): 修正前 Toroid 0.71px/f(scroll 0.5 と 1.42:1)→ 修正後 1.5px/f(3:1)。
+	sla	c
+	rl	b
 	ld	hl, ene_wx		; &ene_wx[slot](dw) += bc
 	add	hl, de
 	add	hl, de
@@ -4191,8 +4196,9 @@ ef_aim_spawn:
 	ld	hl, ef_ey
 	sub	(hl)
 	ld	(ef_dy), a
-	; [32方向] dx,dy → get_index_for_angle → ang_aimed(1.0px/f)[idx]=(dY,dX) を速度に(符号拡張16bit)。
-	;   ebul 速度は frac/frame=1/32px/frame で ang_aimed と同単位。発射時のみ算出(安価)。
+	; [32方向] dx,dy → get_index_for_angle → ang_aimed(2.0px/f)[idx]=(dY,dX) を速度に(符号拡張16bit)。
+	;   ebul は毎フレーム x+=vx。ROM は position += 2×(dY,dX) なので svx/svy を ×2(=2.0px/f)。
+	;   (砲台弾 ebul_svx は別途 +0.25cell/f=2.0px/f で設定済=既にROM準拠)。
 	ld	a, (ef_dx)
 	ld	(gia_dx), a
 	ld	a, (ef_dy)
@@ -4203,18 +4209,20 @@ ef_aim_spawn:
 	ld	h, 0
 	ld	bc, ang_aimed_2_0px
 	add	hl, bc			; &ang_aimed[idx*2]
-	ld	a, (hl)			; dY → ebul_svy(符号拡張)
+	ld	a, (hl)			; dY → ebul_svy(符号拡張 ×2)
 	ld	e, a
 	add	a, a
 	sbc	a, a
 	ld	d, a
+	sla	e : rl d		; [速度2× ROM準拠]
 	ld	(ebul_svy), de
 	inc	hl
-	ld	a, (hl)			; dX → ebul_svx
+	ld	a, (hl)			; dX → ebul_svx(符号拡張 ×2)
 	ld	e, a
 	add	a, a
 	sbc	a, a
 	ld	d, a
+	sla	e : rl d		; [速度2× ROM準拠]
 	ld	(ebul_svx), de
 .spawn:
 	; x = ef_ex<<8, y = ef_ey<<8
