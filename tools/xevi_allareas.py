@@ -225,6 +225,29 @@ def main():
     with open(os.path.join(OUT, "common_tiles.bin"), "wb") as f:
         for p in common:
             f.write(p)
+    # [Domogram] 実行時 crater 合成用: ROM tile 0xA6 の 4象限(TL,TR,BL,BR)を union パレットで
+    #   6面パターン化(透過=全面0)+ 透過マスク(行ごと 1=不透明)。破壊位置の地形タイルに
+    #   dst = (terrain & ~mask) | pattern で重ねる。出力 = 4×48B パターン + 4×8B マスク = 224B。
+    with open(os.path.join(OUT, "domo_crater.bin"), "wb") as f:
+        pats = []; masks = []
+        for cy, cx in ((0, 0), (0, 1), (1, 0), (1, 1)):
+            planes = [bytearray(8) for _ in range(6)]; m = bytearray(8)
+            for y in range(8):
+                for x in range(8):
+                    c = crater[cy*8+y][cx*8+x]
+                    if c is None:
+                        continue
+                    r, g, b = c
+                    key = (T.q4(b), T.q4(r), T.q4(g))
+                    idx = ucmap.get(key)
+                    if idx is None:
+                        idx = XB.nearest_idx(uorder, *key)
+                    m[y] |= 0x80 >> x
+                    for p in range(6):
+                        if (idx >> p) & 1:
+                            planes[p][y] |= 0x80 >> x
+            pats.append(b"".join(planes)); masks.append(bytes(m))
+        f.write(b"".join(pats) + b"".join(masks))
     with open(os.path.join(OUT, "common_pal.bin"), "wb") as f:
         for i in range(64):
             b4, r4, g4v = uorder[i] if i < len(uorder) else (0, 0, 0)

@@ -16,8 +16,14 @@
 ; 公開: sprite_init(起動時), sprite_update(毎フレーム, ship_update の後)。
 ; =====================================================================
 
-BULLET_BASE	EQU	0xA0		; 弾 PCG 先頭 (0xA0..0xAF)
+BULLET_BASE	EQU	0xA0		; 弾 PCG 先頭 (0xA0..0xAF)。実使用は 0xA0-0xA3(2ドット4変種)のみ
 MAX_BULLETS	EQU	3		; [ROM準拠] 画面内同時上限3(slot 0x24-0x26)。1トリガ=1オブジェクト
+	IFDEF	ALLAREAS
+DOMO_BASE	EQU	0xA4		; [Domogram] 本体 PCG 2x2=4セル(0xA4-0xA7, 弾予約域の空き)
+MAX_DOMOGRAM	EQU	8		; 同時最大(ROM: 40桁窓の同時出現上限)
+MAX_DOMO_PEND	EQU	19		; per-area pending 上限(=bake 最大 ndomo。切り詰め無し)
+DOMO_MASK	EQU	0x11		; [Domogram] 射撃 ffreq mask_id(Derota/Logram と同一, index=0x11-8=9)
+	ENDIF
 TRIG1		EQU	0x20		; PSG port A bit5 (トリガ1, 負論理)
 ENEMY_BASE	EQU	0xB0		; [M8] Toroid PCG (0xB0..0xBF, 4フレーム x 2x2)
 JARA_BASE	EQU	0xE0		; [M8④] Jara PCG (0xE0..0xEF, 4フレーム x 2x2)
@@ -98,6 +104,9 @@ sprite_init:
 	IFDEF	GROBDA_EXTDATA
 	call	gen_grobda		; [M8⑥] Grobda PCG
 	call	grobda_init		; Grobda 初期配置
+	ENDIF
+	IFDEF	ALLAREAS
+	call	gen_domogram		; [Domogram] 本体 PCG(0xA4, 4セル)。slot は domo_load で初期化済
 	ENDIF
 	ld	hl, 0xFFFF		; 照準 prev 無効化
 	ld	(ret_prev), hl
@@ -551,6 +560,12 @@ blaster_move:
 	ld	a, (hit_tcol)
 	ld	c, a
 	ENDIF
+	IFDEF	ALLAREAS
+	call	domo_hit_check		; [Domogram] 標的(hit_tcol,col_ey)が Domogram の ±10px 窓なら破壊
+	jr	c, .domohit		; 当たり → 爆発(crater は爆発後に GRAM 焼込)
+	ld	a, (hit_tcol)		; domo_hit_check は c を壊すので gobj_check 用に戻す
+	ld	c, a
+	ENDIF
 	ld	a, (col_ey)
 	call	gobj_check
 	jr	nc, .trysol		; 地上物ミス → Sol 判定へ
@@ -567,6 +582,14 @@ blaster_move:
 	ENDIF
 	IFDEF	GROBDA_EXTDATA
 	call	grobda_hit_check	; [M8⑥] Grobda 命中で破壊
+	ENDIF
+	IFDEF	ALLAREAS
+	jr	.nobj
+.domohit:				; [Domogram] 破壊音 + 爆発(.nobj の expl_spawn)
+	IFDEF	SOUND
+	ld	hl, se_exp_ground
+	call	snd_play_se
+	ENDIF
 	ENDIF
 .nobj:
 	call	expl_spawn
@@ -1377,10 +1400,17 @@ gobj_check:
 ; 毎フレーム(vblank 中, ship_update の後)。発射/移動/消去/描画。
 ;   順序: 発射判定 → 全弾消去 → 移動/寿命 → 全弾描画 (重なり対策で分離)。
 sprite_update:
+	IFDEF	SUPROBE
+	ld	a, (framecnt) : ld bc, 0x00FE : out (c), a	; [検証] PROBE 0x81<framecnt_lo>=呼出1回
+	ld	a, 0x81 : ld bc, 0x00FF : out (c), a
+	ENDIF
 	call	ship_tick		; [敵弾] 無敵タイマ減算
 	call	fire_check		; トリガ1でザッパー発射
 	call	fire_blaster		; トリガ2でブラスター発射
 	call	enemy_spawn		; 一定間隔で右端から出現(game_over 中は内部で抑止)
+	IFDEF	ALLAREAS
+	call	domo_spawn		; [Domogram] スクロールで画面入りした未出現を slot へ
+	ENDIF
 	; scroll_moved = (cur_pos != prev_cur_pos) : cur_pos は SPEED フレームごとにしか
 	;   変わらない。変わらないフレームは動いていない敵の描き直しを省略(idle-skip)。
 	ld	hl, (cur_pos)
@@ -1407,7 +1437,16 @@ sprite_update:
 	IFDEF	GROBDA_EXTDATA
 	call	grobda_move		; [M8⑥] Grobda 移動(道vy + スクロール追従)
 	ENDIF
+	IFDEF	ALLAREAS
+	call	domo_move		; [Domogram] 経路 vector 移動 + セグメント進行
+	ENDIF
 	call	expls_anim
+	IFDEF	ALLAREAS
+	call	dmc_tick		; [Domogram] 爆発終了後の crater 焼込(1f 1象限)
+	IFDEF	DMC_SELFTEST
+	call	domo_selftest		; [検証] 擬似命中
+	ENDIF
+	ENDIF
 	; 衝突判定(弾vs敵, 敵vs自機) → 当たった弾/敵を非アクティブ化 + 爆発発生
 	IFDEF	MEAS
 	MEASCALL collision_check, meas_col
@@ -1431,6 +1470,9 @@ sprite_update:
 	ENDIF
 	call	blaster_erase
 	; 全描画(アクティブのみ)。照準は最後=最前面。
+	IFDEF	ALLAREAS
+	call	domo_draw		; [Domogram] 1窓 idle-skip(消去+描画の1パス)。地上物=最背面に先に描く
+	ENDIF
 	IFDEF	MEAS
 	MEASCALL bullets_draw, meas_buld
 	ELSE
@@ -1464,6 +1506,9 @@ sprite_update:
 	ELSE
 	call	turret_fire		; [③(A)] 地上砲台の射撃(ebul へ spawn → ebul_update で処理)
 	ENDIF
+	IFDEF	ALLAREAS
+	call	domo_fire		; [Domogram] turret 同等の射撃(ebul へ spawn, ebul_update の前)
+	ENDIF
 	ENDIF
 	IFDEF	MEAS
 	MEASCALL ebul_update, meas_ebul
@@ -1477,6 +1522,9 @@ sprite_update:
 	ENDIF
 	call	expls_draw
 	call	reticle_draw
+	IFDEF	DOMOPROBE
+	call	domo_probe		; [検証] active Domogram 数を PROBE 出力
+	ENDIF
 	ret
 
 ; 衝突判定(セル空間)。弾セルが敵2x2矩形内 → 両方消滅 + 爆発。
@@ -5578,4 +5626,8 @@ blaster_data:
 	db	0xC0,0xC0,0x00,0x00,0x00,0x00,0x00,0x00	; BR B
 	db	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00	; BR R
 	db	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00	; BR G
+	ENDIF
+
+	IFDEF	ALLAREAS
+	INCLUDE	"tools/domogram.inc"	; [Domogram] 移動地上砲台(EMM per-area, 1窓 idle-skip)
 	ENDIF

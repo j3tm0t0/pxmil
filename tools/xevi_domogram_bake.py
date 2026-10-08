@@ -50,7 +50,8 @@ def main():
     areas = parse()
     total = 0
     for a in range(1, 17):
-        doms = areas.get(a, [])
+        # col 昇順(= 出現順)。asm の domo_spawn は先頭ポインタだけを見て進める。
+        doms = sorted(areas.get(a, []), key=lambda d: d[0])
         buf = bytearray([len(doms)])
         for col, row, segs in doms:
             if col > 255 or row > 255 or len(segs) > 255:

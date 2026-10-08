@@ -61,6 +61,8 @@ EMM_MAPS	EQU	0x020000	; +a*0x3200 : areaNN_map 12800B
 EMM_MAPS_STR	EQU	0x3200
 EMM_GOBJ	EQU	0x060000	; +a*0x0400 : areaNN_gobj
 EMM_GOBJ_STR	EQU	0x0400
+EMM_DOMO	EQU	0x064000	; [Domogram] domogram_all.bin(1332B)。=LZTEMP域(boot decode後は空き、
+				;   domogram は allarea_load の最終ファイルで decode 完了後にロード=非衝突)
 SPEED		EQU	3		; adv = framecnt >> SPEED (8frame=4px => 0.5px/frame)
 
 ; EMM
@@ -173,6 +175,10 @@ realstart:
 	call	gobj_load
 	IFDEF	ENEMY_EXTDATA
 	call	fly_load		; [出現②] area1 の flying 出現コマンド列をパース
+	ENDIF
+	IFDEF	ALLAREAS
+	call	domo_emm_copy		; [Domogram] area1 の Domogram ブロックを EMM→domo_data
+	call	domo_load		; dm_pend 展開 + active リセット
 	ENDIF
 	; [⑦(3)] common_pal(EMM_PAL)を pal_buf へ読み HW パレット適用
 	xor	a
@@ -1375,6 +1381,9 @@ area_advance:
 	out	(c), a
 	ld	a, (area_cur)
 	ENDIF
+	IFDEF	ALLAREAS
+	call	dmc_restore		; [Domogram crater] 旧エリア map の差し替えを戻す(area_switch 前)
+	ENDIF
 	; タイル表 + map base 切替
 	ld	a, (area_cur)
 	call	area_switch
@@ -1383,6 +1392,10 @@ area_advance:
 	call	gobj_load
 	IFDEF	ENEMY_EXTDATA
 	call	fly_load		; [出現②] 新エリアの flying 出現コマンド列をパース
+	ENDIF
+	IFDEF	ALLAREAS
+	call	domo_emm_copy		; [Domogram] 新エリアの Domogram ブロックを EMM→domo_data
+	call	domo_load		; dm_pend 展開 + active リセット(旧エリアの残像も消去)
 	ENDIF
 	; adv_off = framecnt>>3 (エリア先頭で coarse=0)
 	ld	hl, (framecnt)
@@ -2088,6 +2101,18 @@ allarea_load:
 
 ; al_emm_addr: al_i から EMM dst を計算し set_emm_dst。
 al_emm_addr:
+	; [Domogram] 通常ファイルは pal/tiles(2)+ area×(used/map/gobj)(16*3=48)= al_i 0..49。
+	;   al_i>=50 は ALLAREAS の最終 --data = domogram_all → EMM_DOMO へ(decode なし=sub 0xFF)。
+	;   位置ベース判定なので、domogram を同梱しない ALLAREAS ビルドでも gobj を誤配送しない。
+	ld	a, (al_i)
+	cp	2 + 16 * 3
+	jr	c, .notdomo
+	ld	a, 0xFF
+	ld	(al_sub), a		; sub!=1 → ループの decode を回避
+	ld	hl, EMM_DOMO & 0xFFFF
+	ld	a, EMM_DOMO >> 16
+	jp	set_emm_dst
+.notdomo:
 	ld	a, (al_i)
 	or	a
 	jr	nz, .n0
@@ -2405,6 +2430,41 @@ lz_flag:	db	0		; 現フラグバイト(回転)
 lz_bitcnt:	db	0		; 残ビット数(0..8)
 lz_dist:	db	0		; マッチ距離(1..256)
 lz_len:		db	0		; マッチ長
+	IFDEF	ALLAREAS
+	; [Domogram] per-area データ(domo_data)+ active slot + pending + 作業変数(高位メモリ)。
+	;   domo_data は EMM_DOMO の当エリアブロック(最大209B)を area_advance でコピー。
+	ASSERT	MAX_DOMO_PEND >= 19	; bake 最大 ndomo(=area8, 19)未満だと経路切り詰め=不可
+dm_slots:	ds	(DM_PREVH / MAX_DOMOGRAM) * MAX_DOMOGRAM, 0	; parallel array(SoA)。ACT..PREVL=0
+	ds	MAX_DOMOGRAM, 0xFF			; PREVH=0xFF(未描画)
+	ds	(DM_PENDH - DM_LAST) , 0		; LAST, PENDL
+	ds	MAX_DOMOGRAM, 0xFF			; PENDH=0xFF(遅延消去なし)
+	ASSERT	$ - dm_slots == DMFIELDS * MAX_DOMOGRAM
+	ASSERT	DM_PREVH + MAX_DOMOGRAM == DM_LAST && DM_PENDH == (DMFIELDS - 1) * MAX_DOMOGRAM
+dm_nact:	db	0			; active 数(0 なら move/draw/fire/hit を即 return)
+dm_pidx:	db	0			; 次に見る pending(col 昇順)
+dm_pend:	ds	MAX_DOMO_PEND * 6	; pending(col,row,ppath2,nseg,spawn)
+dm_pn:		db	0			; pending 数
+domo_data:	ds	256			; 当エリアブロック(ndomo + domograms)。>=209 必須
+	ASSERT	256 >= 209
+dm_off:		dw	0			; domo_emm_copy 作業(off[area])
+dm_len:		dw	0			; 〃 (ブロック長)
+dmm_now:	db	0			; domo_move: 今フレームの framecnt 下位
+dmm_n:		db	0			; domo_move: 経過フレーム n
+domogram_vec:	INCBIN	"roms/arcade/xevious-out/enemies/domo_vec_x1.bin"	; 32方向×(2dY, 16−2dX) X1 world 換算済
+	; [Domogram crater] 実行時合成: ROM tile 0xA6 の4象限パターン(4×48B)+透過マスク(4×8B)。
+dmc_pat:	INCBIN	"roms/arcade/xevious-out/allareas/domo_crater.bin"
+	ASSERT	$ - dmc_pat == 224
+dmc_q:		ds	DMC_QMAX * DMCREC	; 予約キュー(tmr,col,row,q,k)
+dmc_k:		db	0			; 次のスロット組(エリア内 0..DMC_KMAX-1)
+dmc_rn:		db	0			; map 復元記録数
+dmc_rest:	ds	DMC_KMAX * 4 * 4	; 復元記録(col,row,orig16)×(最大 KMAX×4セル)
+dmc_col:	db	0
+dmc_row:	db	0
+dmc_pp:		dw	0			; 合成中パターン ptr
+dmc_mp:		dw	0			; 合成中マスク ptr
+	; 合成スロット(タイル index DMC_SLOT0..+KMAX*4)がタイル表領域(〜realstart)に収まること
+	ASSERT	TILEBASE + (DMC_SLOT0 + DMC_KMAX * 4) * TILEBYTES <= realstart
+	ENDIF
 	ASSERT	$ <= 0xE800
 	ENDIF
 
