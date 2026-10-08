@@ -68,12 +68,19 @@ EMM_A0		EQU	0x0D00
 EMM_DAT		EQU	0x0D03
 
 ; 作業領域 (0xC000〜)
-SHLTAB		EQU	0xC000		; 2ページ: 0xC000(np0) 0xC100(np1)
-SHRTAB		EQU	0xC200		; 0xC200 0xC300
-TBUF		EQU	0xC400		; compose 48B 作業 (未使用: COLBUF へ直接)
-IDBUFA		EQU	0xC500		; 50B
-IDBUFB		EQU	0xC560		; 50B
-COLBUF		EQU	0xC600		; 25タイル x 48B = 1200B (〜0xCAB0)
+; === 作業バッファを 0xCC00〜 へまとめて退避(旧 0xC000〜0xCBE8)。プログラムが肥大して
+;     これらと重なるとスクロール書込がコード/データを破壊しハングするため、program が
+;     0xCC00 まで伸ばせるよう上げた(敵32方向 step(d) で 0xC428 到達→旧0xC000台と衝突しハングした)。===
+SHLTAB		EQU	0xCE00		; 2ページ: 0xCE00(np0) 0xCF00(np1) (旧0xC000)
+SHRTAB		EQU	0xD000		; 0xD000 0xD100 (旧0xC200)
+; TBUF(=CG_IDBUF 200B)/IDBUFA/IDBUFB は SPRGEN後の空き(0xCC00〜)へ移動。
+;   以前は 0xC400-0xC5B0 にあり、プログラム肥大で 0xC400 を越えると CG_IDBUF(使用中)と
+;   重なりコードを破壊→ハングした(敵32方向 step(d) で 0xC428 到達)。これで program は
+;   次の使用中バッファ COLBUF(0xC600) まで伸ばせる。
+TBUF		EQU	0xCC00		; CG_IDBUF 200B (〜0xCCC8) (旧0xC400)
+IDBUFA		EQU	0xCD00		; 50B (旧0xC500)
+IDBUFB		EQU	0xCD60		; 50B (旧0xC560)
+COLBUF		EQU	0xD200		; 25タイル x 48B = 1200B (〜0xD6B0) (旧0xC600)
 
 ; === 自機(M6) ship.inc 用の設定 (IFDEF SHIP。64色デフォルトビルドは不変) ===
 	IFDEF	SHIP
@@ -94,9 +101,9 @@ SHIP_PLANES	EQU	0x07		; 全プレーン有効 (per-pixel でスロット選択=�
 SHIP_ATR	EQU	0x20 | SHIP_PLANES	; PCG + プレーン有効化マスク (=0x27)
 SHIP_HX0	EQU	18 * 4
 SHIP_VY0	EQU	12 * 4
-SHIPGEN		EQU	0xCB00		; COLBUF(〜0xCAB0)の後の空き RAM (216B 〜0xCBD8)
+SHIPGEN		EQU	0xD700		; COLBUF(〜0xD6B0)の後の空き RAM (216B 〜0xD7D8) (旧0xCB00)
 SHIP_SCRN_BASE	EQU	SCRN_15K	; ship_init の PCGMODE 書込は 15kHz を保つ
-SPRGEN		EQU	0xCBE0		; スプライト生成バッファ 8バイト (SHIPGEN後)
+SPRGEN		EQU	0xD800		; スプライト生成バッファ 8バイト (SHIPGEN後) (旧0xCBE0)
 	ENDIF
 
 ; PORT_SCRN 書込マクロ: SHIP 時は PCGMODE 付き(scrn_out)、非SHIP は従来通り
