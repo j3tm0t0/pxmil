@@ -22,10 +22,11 @@ TRIG1		EQU	0x20		; PSG port A bit5 (トリガ1, 負論理)
 ENEMY_BASE	EQU	0xB0		; [M8] Toroid PCG (0xB0..0xBF, 4フレーム x 2x2)
 JARA_BASE	EQU	0xE0		; [M8④] Jara PCG (0xE0..0xEF, 4フレーム x 2x2)
 TORKAN_BASE	EQU	0xF0		; [M8④] Torkan PCG (0xF0..0xF7, 2フレーム x 2x2)
+ZOSHI_BASE	EQU	0x04		; [敵] Zoshi PCG (0x04..0x0F, 3フレーム x 2x2)
 MAX_ENEMIES	EQU	5		; [M8④] 最大同時数(num_flying が 3→4→5 と上昇)
 DIFF_INTERVAL	EQU	1800		; [M8④] 難易度1段の経過フレーム(≒30s@60Hz)
 ENEMY_SPEED	EQU	1		; 横移動(セル/移動tick) ※敵は8pxグリッド
-EN_NTYPES	EQU	3		; [M8④] 敵タイプ数 (Toroid/Jara/Torkan)
+EN_NTYPES	EQU	4		; [敵] 敵タイプ数 (Toroid/Jara/Torkan/Zoshi)
 TOROID_STOP	EQU	16		; [M8④] Toroid が停止する画面セル列(寄って停止)
 TOROID_PAUSE	EQU	24		; 停止フレーム数(移動tick単位 ×ENEMY_MOVE)
 EXPL_BASE	EQU	0xC0		; 爆発 PCG 先頭 (0xC0..0xCB, 3フレーム x 2x2)
@@ -1894,6 +1895,10 @@ gen_enemy:
 	ld	a, TORKAN_BASE
 	ld	b, 8
 	call	gen_pcg_set
+	ld	hl, zoshi_data		; [敵] Zoshi(3コマ=12セル)
+	ld	a, ZOSHI_BASE
+	ld	b, 12
+	call	gen_pcg_set
 	ret
 ; gen_pcg_set: hl=データ先頭, a=先頭PCGコード, b=セル数。連番で定義。
 gen_pcg_set:
@@ -1939,7 +1944,7 @@ enemy_spawn:
 	; [M8④] 難易度上昇(経過): difficulty<2 の間 diff_tmr を減らし 0 で +1。
 	;   num_flying=3+difficulty(3→4→5)。型解禁: type<=difficulty のみ(他はToroid)。
 	ld	a, (difficulty)
-	cp	2
+	cp	3			; [敵] Zoshi(type3)解禁のため cap を 3 に
 	jr	nc, .dskip
 	ld	hl, (diff_tmr)
 	dec	hl
@@ -1950,8 +1955,12 @@ enemy_spawn:
 	ld	a, (difficulty)
 	inc	a
 	ld	(difficulty), a
-	add	a, 3
-	ld	(num_flying), a		; 3+difficulty
+	add	a, 3			; 3+difficulty
+	cp	MAX_ENEMIES + 1
+	jr	c, .nfok
+	ld	a, MAX_ENEMIES		; num_flying は MAX_ENEMIES でクランプ
+.nfok:
+	ld	(num_flying), a
 	ld	hl, DIFF_INTERVAL
 	ld	(diff_tmr), hl
 .dskip:
@@ -4040,13 +4049,14 @@ grob_hi:	db	0		; grobda_hit_check 専用ループ(spr_i を壊さない)
 	ENDIF
 ; [M8④] 出現タイプ列(エリア1≒Toroid主体, たまに Jara(1)/Torkan(2))。12個循環。
 SPAWN_SEQ_LEN	EQU	12
-spawn_seq:	db	0,0,0,0, 1,0,0,0, 2,0,0,1
+spawn_seq:	db	0,0,0,3, 1,0,0,0, 2,0,3,1	; [敵] 3=Zoshi(difficulty>=3 で解禁)
 ; [M8④] 敵タイプ記述子: per type = (pcg_base, nframes, traj_id)。
 ;   traj_id: 0=Toroid(直進) / 1=Jara(縦振動) / 2=Torkan(斜めダイブ)。
 entype_tab:
 	db	ENEMY_BASE,  4, 0	; type0: Toroid(円盤, 直進)
 	db	JARA_BASE,   4, 1	; type1: Jara(縦振動+左進)
 	db	TORKAN_BASE, 2, 2	; type2: Torkan(斜めダイブ, 高速)
+	db	ZOSHI_BASE,  3, 1	; type3: Zoshi(3コマ, 縦振動+左進=Jara traj 流用, 撃つ)
 ene_atmr:	ds	MAX_ENEMIES
 ene_mtmr:	ds	MAX_ENEMIES
 ene_prev:	ds	MAX_ENEMIES * 2		; 前回 top-left セル 窓1
@@ -4094,6 +4104,12 @@ rr_zero:	db	0,0,0,0,0,0,0,0	; 使わないプレーンに書く 0 データ
 ; [敵弾] スパリオ PCG(16x16=4セル=96B)。xevi_enemy_sprites.py 生成(非コミット)。
 ebullet_data:
 	INCBIN	"roms/arcade/xevious-out/enemy_ebullet.bin"
+
+; [敵] Zoshi PCG(3コマ×16x16=12セル=288B)。xevi_enemy_sprites.py 生成(非コミット)。
+zoshi_data:
+	INCBIN	"roms/arcade/xevious-out/enemy_zoshi_0.bin"
+	INCBIN	"roms/arcade/xevious-out/enemy_zoshi_1.bin"
+	INCBIN	"roms/arcade/xevious-out/enemy_zoshi_2.bin"
 
 enemy_data:
 	IFDEF	ENEMY_EXTDATA
