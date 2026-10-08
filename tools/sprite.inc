@@ -32,6 +32,7 @@ EN_NTYPES	EQU	4		; [敵] 敵タイプ数 (Toroid/Jara/Torkan/Zoshi)
 TOROID_STOP	EQU	16		; [M8④] Toroid が停止する画面セル列(寄って停止)(旧phase機械/未使用)
 TOR_SWING	EQU	24		; [32方向] Toroid swing の縦速度(0.75px/f=24)
 TOR_SWING_T	EQU	6		; swing 反転周期(tick)
+JARA_BANK	EQU	48		; [32方向] Jara バンクの縦速度(1.5px/f=48)
 TOROID_PAUSE	EQU	24		; 停止フレーム数(移動tick単位 ×ENEMY_MOVE)
 EXPL_BASE	EQU	0xC0		; 爆発 PCG 先頭 (0xC0..0xCB, 3フレーム x 2x2)
 MAX_EXPL	EQU	1		; 同時爆発数 (ピーク負荷削減)
@@ -2303,38 +2304,68 @@ enemies_move:
 	jp	z, .e_tor		; 0=Toroid
 	cp	2
 	jp	z, .e_tk		; 2=Torkan
-	; --- 1=Jara: vx=-32(左1px/f), vy=±32(ene_dir 振動, ey 4..20) ---
-	ld	hl, ene_vx
+	; --- 1=Jara: 自機狙い(ang_fast 1.5px/f)→自機Y一致で左右バンク ---
+	ld	hl, ene_phase
 	add	hl, de
-	ld	(hl), -32
+	ld	a, (hl)
+	or	a
+	jr	nz, .e_jara_fly
+	ld	hl, ang_fast_1_5px	; phase0: ang_fast で照準 → phase1
+	ld	(ene_aim_tbl), hl
+	call	ene_aim
+	ld	hl, ene_phase
+	add	hl, de
+	ld	(hl), 1
+	jp	.e_off
+.e_jara_fly:
+	cp	2
+	jr	z, .e_jara_bank
+	ld	hl, ene_ey		; phase1: 直進。自機Y一致で bank
+	add	hl, de
+	ld	a, (hl)
+	ld	b, a
+	ld	a, (ship_vy)
+	srl	a
+	srl	a
+	sub	b
+	add	a, 1
+	cp	3
+	jp	nc, .e_off
+	ld	hl, ene_phase
+	add	hl, de
+	ld	(hl), 2
+	ld	hl, ene_dir
+	add	hl, de
+	ld	(hl), 0
+	ld	hl, ene_ptmr
+	add	hl, de
+	ld	(hl), TOR_SWING_T
+	jp	.e_off
+.e_jara_bank:
+	ld	hl, ene_ptmr		; phase2: vy を ±JARA_BANK で周期反転。vx はaimed継続。
+	add	hl, de
+	dec	(hl)
+	jr	nz, .e_jara_b2
+	ld	(hl), TOR_SWING_T
+	ld	hl, ene_dir
+	add	hl, de
+	ld	a, (hl)
+	xor	1
+	ld	(hl), a
+.e_jara_b2:
 	ld	hl, ene_dir
 	add	hl, de
 	ld	a, (hl)
 	or	a
-	jr	nz, .e_jup
-	ld	hl, ene_vy		; dir=0: 下(vy=+32)
+	jr	nz, .e_jara_bn
+	ld	hl, ene_vy
 	add	hl, de
-	ld	(hl), 32
-	ld	hl, ene_ey
-	add	hl, de
-	ld	a, (hl)
-	cp	20
-	jp	c, .e_off
-	ld	hl, ene_dir
-	add	hl, de
-	ld	(hl), 1
+	ld	(hl), JARA_BANK
 	jp	.e_off
-.e_jup:	ld	hl, ene_vy		; dir=1: 上(vy=-32)
+.e_jara_bn:
+	ld	hl, ene_vy
 	add	hl, de
-	ld	(hl), -32
-	ld	hl, ene_ey
-	add	hl, de
-	ld	a, (hl)
-	cp	4
-	jp	nc, .e_off
-	ld	hl, ene_dir
-	add	hl, de
-	ld	(hl), 0
+	ld	(hl), -JARA_BANK
 	jp	.e_off
 .e_tor:	; --- 0=Toroid: 自機狙いダイブ(ang_slow 0.75px/f)→自機Y一致で左右swing ---
 	ld	hl, ene_phase
@@ -2402,23 +2433,49 @@ enemies_move:
 	add	hl, de
 	ld	(hl), -TOR_SWING
 	jp	.e_off
-.e_tk:	; --- 2=Torkan: vx=-64(左2px/f ダイブ) + vy=+32(ey<22で下) ---
-	ld	hl, ene_vx
-	add	hl, de
-	ld	(hl), -64
-	ld	hl, ene_ey
+.e_tk:	; --- 2=Torkan: ang_aimed(1.0px/f)ダイブ→自機Y一致で ang_fast(1.5px/f)反対方向へ離脱 ---
+	ld	hl, ene_phase
 	add	hl, de
 	ld	a, (hl)
-	cp	22
-	jr	c, .e_tk_dn
-	ld	hl, ene_vy		; ey>=22: 下げ止め
+	or	a
+	jr	nz, .e_tk_fly
+	ld	hl, ang_aimed_1_0px	; phase0: ang_aimed で照準(ダイブ) → phase1
+	ld	(ene_aim_tbl), hl
+	call	ene_aim
+	ld	hl, ene_phase
 	add	hl, de
-	ld	(hl), 0
+	ld	(hl), 1
 	jp	.e_off
-.e_tk_dn:
+.e_tk_fly:
+	cp	2
+	jp	z, .e_off		; phase2: 離脱中(速度固定) → そのまま飛ぶ
+	ld	hl, ene_ey		; phase1: ダイブ。自機Y一致で離脱へ
+	add	hl, de
+	ld	a, (hl)
+	ld	b, a
+	ld	a, (ship_vy)
+	srl	a
+	srl	a
+	sub	b
+	add	a, 1
+	cp	3
+	jp	nc, .e_off
+	ld	hl, ang_fast_1_5px	; 離脱: ang_fast で照準して符号反転(反対方向 1.5px/f)
+	ld	(ene_aim_tbl), hl
+	call	ene_aim
+	ld	hl, ene_vx
+	add	hl, de
+	ld	a, (hl)
+	neg
+	ld	(hl), a
 	ld	hl, ene_vy
 	add	hl, de
-	ld	(hl), 32
+	ld	a, (hl)
+	neg
+	ld	(hl), a
+	ld	hl, ene_phase
+	add	hl, de
+	ld	(hl), 2
 .e_off:
 	; [敵弾] 射撃統合: type≠0 かつ !game_over なら ftmr 減算、0 で自機狙い発射。
 	;   (de=spr_i*1。ene_fire は spr_i を使い de を破壊するので後で復帰)
