@@ -164,6 +164,9 @@ realstart:
 	;  により不要になった。実機でも書込んだ色は即反映されるのでこれが正しい挙動。)
 	IFDEF	ALLAREAS
 	call	allarea_load		; [⑦] FDC で全エリアデータを EMM へ展開
+	IFDEF	DMPMAPS
+	call	dump_all_maps		; [検証] 展開後の全16マップを OUT 0xFB で生ダンプ(ゲームは起動しない)
+	ENDIF
 	xor	a			; [⑦(2)] area1(index0)の タイルを RAM タイル表へ集約
 	call	area_switch
 	xor	a			; area1 の gobj/sol/grobda を RAM へ(以降 sprite_init の grobda_init が使う)
@@ -1339,6 +1342,19 @@ lz_ring		EQU	0xCC00		; 後方参照リング(256境界, boot中は TBUF 域で�
 lz_inbuf	EQU	0xCD00		; 圧縮入力256Bチャンク(256境界, 同上)
 RINGHI		EQU	lz_ring >> 8
 INBUFHI		EQU	lz_inbuf >> 8
+; COPYB: マッチ1バイトをコピー。src=(outcnt_lo-距離)&0xFF、ring[src]を EMM 出力+ring[E]更新+outcnt++。
+	MACRO	COPYB
+	ld	a, e			; src = (outcnt_lo - lz_dist) & 0xFF
+	ld	hl, lz_dist
+	sub	(hl)
+	ld	l, a
+	ld	h, RINGHI
+	ld	a, (hl)			; ring[src]
+	out	(c), a			; EMM 書込(BC=EMM_DT, 自動+1)
+	ld	l, e
+	ld	(hl), a			; ring[outcnt_lo] = byte
+	inc	de			; outcnt++
+	ENDM
 lz_decode_emm:
 	ld	a, (emm_a0)		; 出力ベース = emm_a0/a1/a2
 	ld	(lz_outbase + 0), a
@@ -1385,20 +1401,16 @@ lz_decode_emm:
 	call	lz_getbyte		; 距離-1
 	inc	a			; 距離
 	ld	(lz_dist), a
-	call	lz_getbyte
-	add	a, LZ_MINMATCH
-	ld	(lz_len), a		; マッチ長
+	call	lz_getbyte		; lenbyte(0..255)。L = lenbyte + MINMATCH(=3)、最大258。
+	ld	(lz_len), a		; ★ add MINMATCH で8bit化すると L>255(256..258)が溢れる(旧バグ)。
+	COPYB				;   なので MINMATCH 分(3)を無条件コピーし、残り lenbyte(0..255)をループ。
+	COPYB				; MINMATCH 2/3
+	COPYB				; MINMATCH 3/3
+	ld	a, (lz_len)
+	or	a
+	jr	z, .sym			; lenbyte==0 → L=3 で完了
 .mcl:
-	ld	a, e			; src = (outcnt_lo - 距離) & 0xFF
-	ld	hl, lz_dist
-	sub	(hl)
-	ld	l, a
-	ld	h, RINGHI
-	ld	a, (hl)			; ring[src]
-	out	(c), a			; EMM 書込
-	ld	l, e
-	ld	(hl), a			; ring[outcnt_lo] = byte
-	inc	de			; outcnt++
+	COPYB
 	ld	hl, lz_len
 	dec	(hl)
 	jr	nz, .mcl
@@ -1464,6 +1476,37 @@ lz_refill:
 	ld	hl, lz_inbuf		; HL'=入力 ptr リセット
 	exx
 	ret
+
+	IFDEF	DMPMAPS
+; dump_all_maps: 展開後の EMM_MAPS[0..15](各12800B)を順に OUT 0xFB で生ダンプし、以降停止。
+;   ホスト側(XMIL_EMMDUMP=file)で 204800B のファイルを得て area*_map.bin と cmp する。
+dump_all_maps:
+	ld	a, EMM_MAPS & 0xFF
+	ld	(dm_a0), a
+	ld	a, (EMM_MAPS >> 8) & 0xFF
+	ld	(dm_a1), a
+	ld	a, EMM_MAPS >> 16
+	ld	(dm_a2), a
+	ld	b, 16
+.area:
+	push	bc
+	ld	a,(dm_a0) : ld bc,EMM_AL : out (c),a
+	ld	a,(dm_a1) : ld bc,EMM_AM : out (c),a
+	ld	a,(dm_a2) : ld bc,EMM_AH : out (c),a
+	ld	de, MAP_BYTES
+.byte:
+	ld	bc,EMM_DT  : in  a,(c)
+	ld	bc,0x00FB  : out (c),a
+	dec	de : ld a,d : or e : jr nz,.byte
+	ld	a,(dm_a1) : add a,(MAP_BYTES >> 8) & 0xFF : ld (dm_a1),a	; addr += 0x3200
+	ld	a,(dm_a2) : adc a,MAP_BYTES >> 16 : ld (dm_a2),a
+	pop	bc
+	djnz	.area
+.halt:	jr	.halt
+dm_a0:	db	0
+dm_a1:	db	0
+dm_a2:	db	0
+	ENDIF
 
 	IFDEF	BOOTMEAS
 ; bm_rd32: HL=4byteバッファに 32bit サイクルカウンタを格納(0xFC=b0, 0xFD×3=b1..3)。

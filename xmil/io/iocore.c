@@ -271,6 +271,23 @@ void IOOUTCALL iocore_out(UINT port, REG8 dat) {
 			}
 		}
 	}
+	/* pxmil raw byte dump (only when XMIL_EMMDUMP names a file):
+	 *   OUT 0x00FB,byte -> append byte to that file. For verifying decoded
+	 *   EMM contents byte-for-byte. Port unused on X1. */
+	{
+		static int dmp_init = 0;
+		static FILE *dmp_fp = NULL;
+		if (!dmp_init) {
+			const char *fn = getenv("XMIL_EMMDUMP");
+			dmp_init = 1;
+			if (fn) dmp_fp = fopen(fn, "wb");
+		}
+		if (dmp_fp && port == 0x00fb) {
+			fputc((int)(dat & 0xff), dmp_fp);
+			fflush(dmp_fp);
+			return;
+		}
+	}
 #endif
 
 	msb = port >> 8;
