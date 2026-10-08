@@ -1239,6 +1239,7 @@ allarea_load:
 	call	lz_decode_emm
 	ld	hl,bm_t1 : call bm_rd32		; decode 後 32bit
 	ld	hl,bm_t0 : ld d,0xA0 : ld e,8 : call bm_emit	; t0=0xA0..3, t1=0xA4..7
+	call	bm_cksum			; 展開結果の16bit合計(0xAA/0xAB)で正しさ検証
 	jr	.decdn
 .decnm:
 	ENDIF
@@ -1324,134 +1325,102 @@ al_emm_addr:
 	ld	a, (al_hi)
 	jp	set_emm_dst
 
-; [③disk] map LZSS 展開: EMM_LZTEMP(圧縮入力)→ 出力EMM(emm_a0/a1/a2 で指定, 12800B)。
-;   256B窓LZSS(tools/lzmap.py)。入力は lz_inbuf へ256Bずつ補充、出力は EMM 自動+1、
-;   後方参照は lz_ring(256B CPU)。補充時のみ EMM アドレスを入力↔出力で切替。
+; [③disk] map LZSS 展開(高速版): EMM_LZTEMP(圧縮入力)→ 出力EMM(emm_a0/a1/a2, 12800B)。
+;   256B窓LZSS(tools/lzmap.py)。レジスタ常駐で高速化:
+;     BC=EMM_DT(常駐/出力ポート), DE=outcnt(E=ring index/D=上位で境界判定),
+;     H=RINGHI(ring 書込/読出のページ), 裏HL'=入力 lz_inbuf ポインタ(256境界で自動 wrap)。
+;   ring/inbuf は 256境界(0xCC00/0xCD00=TBUF域, boot 中は未使用)。
+;   補充(lz_refill)時のみ EMM アドレスを入力↔出力で切替。境界判定はシンボル単位
+;   (圧縮器はマップ境界を跨ぐマッチを出さないので outcnt は 0x3200 丁度で終わる)。
 LZ_MINMATCH	EQU	3
 MAP_BYTES	EQU	0x3200		; 12800
 EMM_LZTEMP	EQU	0x064000	; gobj(0x060000..0x064000)直後の空き
+lz_ring		EQU	0xCC00		; 後方参照リング(256境界, boot中は TBUF 域で未使用)
+lz_inbuf	EQU	0xCD00		; 圧縮入力256Bチャンク(256境界, 同上)
+RINGHI		EQU	lz_ring >> 8
+INBUFHI		EQU	lz_inbuf >> 8
 lz_decode_emm:
-	; 出力ベース保存(emm_a0/a1/a2)
-	ld	a, (emm_a0)
+	ld	a, (emm_a0)		; 出力ベース = emm_a0/a1/a2
 	ld	(lz_outbase + 0), a
 	ld	a, (emm_a1)
 	ld	(lz_outbase + 1), a
 	ld	a, (emm_a2)
 	ld	(lz_outbase + 2), a
-	; 入力 ptr = EMM_LZTEMP
-	xor	a
+	xor	a			; 入力 ptr = EMM_LZTEMP
 	ld	(lz_inptr + 0), a
 	ld	a, (EMM_LZTEMP >> 8) & 0xFF
 	ld	(lz_inptr + 1), a
 	ld	a, EMM_LZTEMP >> 16
 	ld	(lz_inptr + 2), a
-	ld	hl, 0
-	ld	(lz_outcnt), hl
-	call	lz_refill		; 最初の256Bを lz_inbuf へ(inidx=0, 出力アドレスも設定)
-.main:
-	ld	hl, (lz_outcnt)
-	ld	de, MAP_BYTES
+	ld	de, 0			; outcnt=0
+	call	lz_refill		; inbuf 充填 + 出力アドレス設定 + BC=EMM_DT/H=RINGHI/HL'=inbuf
+	xor	a
+	ld	(lz_bitcnt), a		; 最初のシンボルでフラグ再ロードさせる
+.sym:
+	ld	a, d			; 境界: outcnt(DE) >= 0x3200 で完了
+	cp	MAP_BYTES >> 8
+	ret	nc
+	ld	a, (lz_bitcnt)		; フラグビットが残っているか
 	or	a
-	sbc	hl, de
-	ret	nc			; outcnt>=12800 完了
-	call	lz_getbyte		; a=flag
+	jr	nz, .havebit
+	call	lz_getbyte		; 新しいフラグバイト
 	ld	(lz_flag), a
 	ld	a, 8
-	ld	(lz_bitcnt), a
-.bit:
-	ld	hl, (lz_outcnt)
-	ld	de, MAP_BYTES
-	or	a
-	sbc	hl, de
-	ret	nc
-	ld	a, (lz_flag)
-	rrca
-	ld	(lz_flag), a		; bit0 → carry
-	jr	c, .match
-	call	lz_getbyte		; リテラル
-	call	lz_output
-	jr	.bn
-.match:
-	call	lz_getbyte
-	ld	(lz_off), a		; 距離-1
-	call	lz_getbyte
-	add	a, LZ_MINMATCH
-	ld	(lz_len), a		; 長さ
-	ld	a, (lz_outcnt)		; outcnt 下位
-	ld	b, a
-	ld	a, (lz_off)
-	inc	a			; 距離
-	ld	c, a
-	ld	a, b
-	sub	c			; src = (outcnt_lo - 距離) & 0xFF
-	ld	(lz_src), a
-	ld	a, (lz_len)
-	ld	b, a
-.mcl:
-	ld	a, (lz_src)
-	ld	l, a
-	ld	h, 0
-	ld	de, lz_ring
-	add	hl, de
-	ld	a, (hl)			; ring[src]
-	push	bc
-	call	lz_output
-	pop	bc
-	ld	a, (lz_src)
-	inc	a
-	ld	(lz_src), a		; src++(256で wrap)
-	djnz	.mcl
-.bn:
-	ld	a, (lz_bitcnt)
+.havebit:
 	dec	a
 	ld	(lz_bitcnt), a
-	jr	nz, .bit
-	jr	.main
+	ld	a, (lz_flag)
+	rrca				; bit0 → carry
+	ld	(lz_flag), a
+	jr	c, .match
+	; --- リテラル ---
+	call	lz_getbyte
+	out	(c), a			; EMM 書込(BC=EMM_DT, 自動+1)
+	ld	h, RINGHI
+	ld	l, e
+	ld	(hl), a			; ring[outcnt_lo] = byte
+	inc	de			; outcnt++
+	jr	.sym
+.match:
+	call	lz_getbyte		; 距離-1
+	inc	a			; 距離
+	ld	(lz_dist), a
+	call	lz_getbyte
+	add	a, LZ_MINMATCH
+	ld	(lz_len), a		; マッチ長
+.mcl:
+	ld	a, e			; src = (outcnt_lo - 距離) & 0xFF
+	ld	hl, lz_dist
+	sub	(hl)
+	ld	l, a
+	ld	h, RINGHI
+	ld	a, (hl)			; ring[src]
+	out	(c), a			; EMM 書込
+	ld	l, e
+	ld	(hl), a			; ring[outcnt_lo] = byte
+	inc	de			; outcnt++
+	ld	hl, lz_len
+	dec	(hl)
+	jr	nz, .mcl
+	jr	.sym
 
-; lz_getbyte: a = 次入力バイト。lz_inbuf から。256消費で補充。
+; lz_getbyte: a = 次入力バイト(lz_inbuf から, 裏 HL'=入力ptr)。256消費で lz_refill。
+;   BC/DE/H(=RINGHI)を保持し、a と flags のみ変更。
 lz_getbyte:
-	push	hl
-	push	de
-	ld	hl, lz_inbuf
-	ld	a, (lz_inidx)
-	ld	e, a
-	ld	d, 0
-	add	hl, de
-	ld	a, (hl)
-	ld	(lz_gb), a
-	ld	a, (lz_inidx)
-	inc	a
-	ld	(lz_inidx), a
-	call	z, lz_refill		; inidx が 0 に wrap(256消費)→補充
-	ld	a, (lz_gb)
-	pop	de
-	pop	hl
-	ret
-
-; lz_output: a = 出力バイト。EMM へ(自動+1)+ ring[outcnt&0xFF] + outcnt++。
-lz_output:
-	ld	bc, EMM_DT
-	out	(c), a			; EMM 書込(自動+1)
-	push	hl
-	push	af
-	ld	hl, lz_ring
-	ld	a, (lz_outcnt)
-	ld	c, a
-	ld	b, 0
-	add	hl, bc
+	exx				; 裏: HL'=入力 ptr(INBUFHI:inidx)
+	ld	a, (hl)			; a = inbuf[inidx]
+	inc	l			; inidx++(0xFF→0x00 で Z, 256境界 wrap)
+	exx				; 表に戻る(Z フラグは保持)
+	ret	nz			; 通常: wrap なし
+	push	af			; wrap: 次チャンクを補充(a=今読んだバイトを保持)
+	call	lz_refill
 	pop	af
-	ld	(hl), a			; ring[outcnt&0xFF]
-	pop	hl
-	push	hl
-	ld	hl, (lz_outcnt)
-	inc	hl
-	ld	(lz_outcnt), hl
-	pop	hl
 	ret
 
-; lz_refill: lz_inbuf へ EMM(lz_inptr)から256B、lz_inptr+=256、出力アドレス復帰、inidx=0。
+; lz_refill: lz_inbuf へ EMM(lz_inptr)から256B、lz_inptr+=256、出力アドレス復帰、HL'=inbuf。
+;   DE(outcnt)を保持。終了時 BC=EMM_DT, H=RINGHI, HL'=lz_inbuf。
 lz_refill:
-	ld	a, (lz_inptr + 0)
+	ld	a, (lz_inptr + 0)	; EMM 読出アドレス = lz_inptr
 	ld	bc, EMM_AL
 	out	(c), a
 	ld	a, (lz_inptr + 1)
@@ -1460,39 +1429,40 @@ lz_refill:
 	ld	a, (lz_inptr + 2)
 	ld	bc, EMM_AH
 	out	(c), a
-	ld	hl, lz_inbuf
+	ld	hl, lz_inbuf		; 256B を lz_inbuf へ
 	ld	bc, EMM_DT
+	push	de			; outcnt 退避(D を 256 カウンタに使う)
 	ld	d, 0
 .rl:	in	a, (c)
 	ld	(hl), a
 	inc	hl
 	dec	d
-	jr	nz, .rl
+	jr	nz, .rl			; 256 回
+	pop	de			; outcnt 復帰
 	ld	hl, lz_inptr + 1	; lz_inptr += 256
 	inc	(hl)
 	jr	nz, .nc
 	inc	hl
 	inc	(hl)
-.nc:	; 出力 EMM アドレス = lz_outbase + lz_outcnt を復帰
-	ld	hl, (lz_outcnt)
-	ld	a, (lz_outbase + 0)
-	add	a, l
-	ld	e, a
+.nc:	ld	a, (lz_outbase + 0)	; 出力 EMM アドレス = lz_outbase + outcnt(DE) を復帰
+	add	a, e
+	ld	l, a
 	ld	a, (lz_outbase + 1)
-	adc	a, h
-	ld	d, a
+	adc	a, d
+	ld	h, a
 	ld	a, (lz_outbase + 2)
 	adc	a, 0
-	push	af
 	ld	bc, EMM_AL
-	out	(c), e
+	out	(c), l
 	ld	bc, EMM_AM
-	out	(c), d
-	pop	af
+	out	(c), h
 	ld	bc, EMM_AH
 	out	(c), a
-	xor	a
-	ld	(lz_inidx), a
+	ld	bc, EMM_DT		; ホットループ用レジスタ復帰
+	ld	h, RINGHI
+	exx
+	ld	hl, lz_inbuf		; HL'=入力 ptr リセット
+	exx
 	ret
 
 	IFDEF	BOOTMEAS
@@ -1510,6 +1480,20 @@ bm_emit:
 	ld	bc,0x00FE : out (c),a
 	ld	bc,0x00FF : out (c),d
 	inc	hl : inc d : dec e : jr nz,.el
+	ret
+; bm_cksum: lz_mapdst の 12800B を EMM から読み戻し 16bit 合計を PROBE(0xAA=lo,0xAB=hi)。
+bm_cksum:
+	ld	a,(lz_mapdst+0) : ld bc,EMM_AL : out (c),a
+	ld	a,(lz_mapdst+1) : ld bc,EMM_AM : out (c),a
+	ld	a,(lz_mapdst+2) : ld bc,EMM_AH : out (c),a
+	ld	hl,0
+	ld	de,MAP_BYTES
+	ld	bc,EMM_DT
+.cl:	in	a,(c)
+	add	a,l : ld l,a : jr nc,.nc4 : inc h
+.nc4:	dec	de : ld a,d : or e : jr nz,.cl
+	ld	a,l : ld bc,0x00FE : out (c),a : ld bc,0x00FF : ld a,0xAA : out (c),a
+	ld	a,h : ld bc,0x00FE : out (c),a : ld bc,0x00FF : ld a,0xAB : out (c),a
 	ret
 	ENDIF
 
@@ -2304,19 +2288,13 @@ fly_rec:	ds	FLY_REC_MAX * 4	; パース済 (T,kind,num,off)×
 ffreq_rec:	ds	FFREQ_REC_MAX * 3	; [③] パース済 (T,mask_id,mask)× (program 節約で高位メモリへ)
 turret_list:	ds	MAX_TURRETS * TURREC	; [③(A)] 地上砲台 (col2,row,mask_id,timer)×
 used_buf:	ds	1024		; 共通index列(program 節約で高位メモリへ, 最大 n=431→862B)
-	; [③disk] map LZSS 展開の作業領域(boot のみ使用)
-lz_inbuf:	ds	256		; 圧縮入力の256Bチャンク(EMM temp から補充)
-lz_ring:	ds	256		; 後方参照リング(直近256B出力)
-lz_outcnt:	dw	0		; 出力済バイト数(0..12800)
+	; [③disk] map LZSS 展開の状態(boot のみ使用)。ring/inbuf は EQU で TBUF 域(0xCC00/0xCD00)。
 lz_inptr:	ds	3		; 入力 EMM アドレス(24bit, EMM_LZTEMP から)
 lz_outbase:	ds	3		; 出力 EMM ベースアドレス(24bit)
-lz_inidx:	db	0		; lz_inbuf 内の次読み位置(0..255, 0で補充)
 lz_flag:	db	0		; 現フラグバイト(回転)
 lz_bitcnt:	db	0		; 残ビット数(0..8)
-lz_off:		db	0		; マッチ距離-1
+lz_dist:	db	0		; マッチ距離(1..256)
 lz_len:		db	0		; マッチ長
-lz_src:		db	0		; マッチ元リング index
-lz_gb:		db	0		; lz_getbyte の戻り一時
 	ASSERT	$ <= 0xE800
 	ENDIF
 
