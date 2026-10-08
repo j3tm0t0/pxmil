@@ -49,6 +49,10 @@ ROWS		EQU	25
 OFF1024		EQU	1024
 W_CELLS		EQU	256
 TILEBYTES	EQU	48		; 6プレーン x 8ラスタ
+; [空き] ALLAREAS のタイル表バッファ(TILEBASE)が必要とする総スロット数 = 全エリア used
+;   最大(DMC_SLOT0=431)+ Domogram crater(DMC_KMAX*4=76)= 507。DMC_* は domogram.inc
+;   (後方 INCLUDE)で定義されるので DS サイズ用にここで同値を固定し、INCLUDE 後に ASSERT で照合する。
+TILEBUF_SLOTS	EQU	507
 IDBYTES		EQU	2
 COLIDS		EQU	ROWS * IDBYTES	; 50
 TILEBASE	EQU	0x0103
@@ -129,8 +133,14 @@ SPRGEN		EQU	0xD800		; スプライト生成バッファ 8バイト (SHIPGEN後) 
 start:				; exec=0x0100
 	jp	realstart
 tiletbl:			; 0x0103
-	; -DGOBJ_TILEMAP で地上物を焼き込んだタイル表/マップ(xevi の roms/ データ)を
-	;   使う。データは gitignore の roms/ 配下(当方は ID を読んで展開するのみ)。
+	; -DGOBJ_TILEMAP で地上物を焼き込んだタイル表/マップ(xevi の roms/ データ)を使う。
+	; [空き] ALLAREAS では area_switch が EMM から TILEBASE へタイルを書く(埋込 INCBIN の中身は
+	;   上書きされ未使用)。埋込をやめ、タイル表バッファ(crater 終端スロットまで=TILEBUF_SLOTS)を
+	;   DS で確保 → ディスク/boot 軽量化 + xmapdata 域の末尾(~5.4KB)を program 空きに解放。
+	;   単一エリアは INCBIN(fill_emm_map が xmapdata を EMM へ転送する)のまま。
+	IFDEF	ALLAREAS
+	DS	TILEBUF_SLOTS * TILEBYTES	; = 507*48 = 24336(INCLUDE 後の ASSERT で DMC_* と照合)
+	ELSE
 	IFDEF	GOBJ_TILEMAP
 	incbin	"roms/arcade/xevious-out/xtiles64_obj.bin"
 	ELSE
@@ -141,6 +151,7 @@ xmapdata:
 	incbin	"roms/arcade/xevious-out/xtilemap64_obj.bin"
 	ELSE
 	incbin	"roms/xtilemap64.bin"
+	ENDIF
 	ENDIF
 xpaldata:
 	; GOBJ_TILEMAP(焼込地上物/Sol)時は地上物の赤/灰を含む 22色拡張パレット。
@@ -1217,7 +1228,8 @@ build_tables:
 	ret
 
 ;=====================================================================
-; タイルID列を EMM addr 0 へ転送。
+; タイルID列を EMM addr 0 へ転送(単一エリア専用。ALLAREAS は map が EMM 常駐で xmapdata も無い)。
+	IFNDEF	ALLAREAS
 fill_emm_map:
 	xor	a
 	ld	(emm_a0), a
@@ -1235,6 +1247,7 @@ fill_emm_map:
 	or	e
 	jr	nz, .l
 	ret
+	ENDIF
 
 	IFDEF	ALLAREAS
 
@@ -2464,6 +2477,9 @@ dmc_pp:		dw	0			; 合成中パターン ptr
 dmc_mp:		dw	0			; 合成中マスク ptr
 	; 合成スロット(タイル index DMC_SLOT0..+KMAX*4)がタイル表領域(〜realstart)に収まること
 	ASSERT	TILEBASE + (DMC_SLOT0 + DMC_KMAX * 4) * TILEBYTES <= realstart
+	; [空き] ALLAREAS の tiletbl DS サイズ(TILEBUF_SLOTS)が crater 終端スロットと一致すること。
+	;   ずれたら DS を調整する(大きすぎ=空き損, 小さすぎ=バッファ不足)。
+	ASSERT	TILEBUF_SLOTS == DMC_SLOT0 + DMC_KMAX * 4
 	ENDIF
 	ASSERT	$ <= 0xE800
 	ENDIF
