@@ -103,7 +103,10 @@ SE_LIST = [                                  # snd_play_se の id 順(0..)
     ("teleport",     "tone",  0x9),
     ("oneup",        "tone",  0x4),
     ("bonus",        "tone",  0xD),
-    ("bacura",       "tone",  0xA),
+    ("bacura",       "tone",  0xA),   # カンカン: shot が Bacura 命中(MAIN 0x19A2 bacura_hit_snd@0xA00A=1,
+                                       #   弾は state=3 で消滅=貫通せず, Bacura 不滅)。tune A=2ch(ch21/22)
+                                       #   波形1=矩形, C5→C#5, tempo6, vmode2/attack4(鋭アタック), sub_214 ワンショット
+                                       #   (飛行中BGM=tune E アルペジオの ch を一時奪取)。X1版は ch0 のみ(ch21列 C5,C#5)。
     ("exp_aerial",   "noise", "exp_aerial"),
     ("exp_ground",   "noise", "exp_ground"),
     ("exp_solvalou", "noise", "exp_solvalou"),
