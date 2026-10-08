@@ -3741,10 +3741,11 @@ bacura_erase_prev:
 	ret
 
 bacura_update:
-	; 回転コマ = (framecnt>>2)&7 → frametab 行ポインタ(全 Bacura 共通, PCG書換ゼロ)
-	ld	a, (framecnt)
-	and	0x1C			; bits2-4 = frame<<2
-	add	a, a			; frame*8 = frametab 行オフセット
+	; 回転コマ = 進んだ距離(coarse スクロールセル)&7 → ROMどおり距離連動(スクロール停止で停止)。
+	;   全 Bacura 共通。coarse 1セル進むごとに1コマ(一周8セル)。PCG書換ゼロ。
+	ld	a, (coarse)
+	and	7
+	add	a, a			; コマ*8 = frametab 行オフセット
 	ld	e, a
 	ld	d, 0
 	ld	hl, bacura_frametab
