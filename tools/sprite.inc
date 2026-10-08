@@ -71,7 +71,7 @@ ENEMY_MOVE	EQU	8		; 移動間隔(フレーム) 8=1セル/8frame≒1px/frame平�
 EXPL_ANIM	EQU	8		; 1コマの表示フレーム数
 	ELSE
 BULLET_SPEED	EQU	4		; 前進/呼出 (2px単位; 4=8px)
-FIRE_DELAY	EQU	6		; 連射間隔(呼出)
+FIRE_DELAY	EQU	20		; [ROM準拠] 連射間隔20f(押し始めはfire_tmr=0で即発)。既定ビルドはこちら
 ENEMY_ANIM	EQU	6		; アニメ更新間隔(呼出)
 ENEMY_SPAWN	EQU	48		; 出現間隔(呼出)
 ENEMY_MOVE	EQU	4		; 移動間隔(呼出)
@@ -1708,27 +1708,36 @@ bacura_shot_check:
 	ld	(spr_i), a
 	jp	.bl
 
-; トリガ(bit5,負論理)で、連射間隔ごとに空きスロットへ弾を発射。
+; [ROM準拠 handle_shooting] 非押下で fire_tmr=1(離すと即発可=連打で速い)。押下中は
+;   毎フレーム -1、0 で発射+fire_tmr=FIRE_DELAY(保持時は20f周期)。最大3発は spawn_bullet
+;   の空きslot判定で担保。(xevi-re ROM 0x1772 準拠)
 fire_check:
-	ld	a, (fire_tmr)
-	or	a
-	jr	z, .rdy
-	dec	a
+	call	read_joy		; a = PSG port A (負論理, bit5=トリガ1)
+	bit	5, a
+	jr	z, .pressed		; 0 = 押下
+	; 非押下: fire_tmr=1(次に押した最初のフレームで dec→0 で即発)
+	ld	a, 1
 	ld	(fire_tmr), a
 	ret
-.rdy:
-	call	read_joy		; a = PSG port A (負論理)
-	bit	5, a			; トリガ1
-	ret	nz			; 押されていない(bit=1)
-	; [ROM準拠] 1トリガ=1オブジェクト(上下2ドットは1スプライト)。自機中央から1発。
+.pressed:
+	ld	a, (fire_tmr)
+	dec	a
+	ld	(fire_tmr), a
+	ret	nz			; まだ0でない → 撃たない(保持中は20f周期)
+	; 発射: 自機中央から1オブジェクト(空きslot無しなら spawn_bullet は何もしない=最大3)
 	ld	a, (ship_vy)
 	add	a, 6			; 中央
 	call	spawn_bullet
+	IFDEF	BULCOUNT
+	ld	hl, (fire_cnt)		; [検証] 累積発射試行数
+	inc	hl
+	ld	(fire_cnt), hl
+	ENDIF
 	IFDEF	SOUND
 	ld	hl, se_zapper		; [SND] ザッパー発射音
 	call	snd_play_se
 	ENDIF
-	ld	a, FIRE_DELAY
+	ld	a, FIRE_DELAY		; 20 に再設定(保持時の周期)
 	ld	(fire_tmr), a
 	ret
 
@@ -5073,6 +5082,9 @@ spr_code:	db	0
 spr_i:		db	0		; ループ index (レジスタ c は clr/put_cell で壊れるため)
 spr_cell:	dw	0		; 描画先セル一時
 fire_tmr:	db	0
+	IFDEF	BULCOUNT
+fire_cnt:	dw	0		; [検証] 累積発射試行数(連打レート確認用)
+	ENDIF
 bul_spawn_vy:	db	0		; spawn_bullet の発射 vy 一時
 bul_active:	ds	MAX_BULLETS
 bul_hx:		ds	MAX_BULLETS		; 横 2px単位

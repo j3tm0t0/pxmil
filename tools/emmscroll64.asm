@@ -651,6 +651,18 @@ SOL_FRAME	EQU	1280		; coarse≈79 → Sol は画面 col≈23 に表示
 	; フレーム区切りセンチネル 0xDEAD(Python で整列)
 	ld	a,0xAD : ld bc,0x00FE : out (c),a : ld a,0xDE : ld bc,0x00FF : out (c),a
 	ELSE
+	IFDEF	BULCOUNT
+	; [検証] 自機弾の active 数を PROBE(0xBC<count>)。連打レート/最大3発の確認用。
+	push	hl : push de : push bc
+	ld	hl, bul_active
+	ld	b, MAX_BULLETS
+	ld	c, 0
+.bcl:	ld	a, (hl) : or a : jr z, .bcn : inc c
+.bcn:	inc hl : djnz .bcl
+	ld	a, c : ld bc,0x00FE : out (c),a : ld bc,0x00FF : ld a,0xBC : out (c),a
+	ld	a,(fire_cnt) : ld bc,0x00FE : out (c),a : ld bc,0x00FF : ld a,0xBD : out (c),a
+	pop	bc : pop de : pop hl
+	ENDIF
 	; dropped = vbl_seen - framecnt (= 跨いだ余分な VBLANK 数)
 	ld	de, (vbl_seen)
 	ex	de, hl
