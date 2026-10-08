@@ -621,6 +621,11 @@ SOL_FRAME	EQU	1280		; coarse≈79 → Sol は画面 col≈23 に表示
 	out	(c), l
 	ld	bc, 0x00FF
 	out	(c), h
+	ld	hl, (meas_bac)		; [MEAS] Bacura 描画 T 数(6番目)
+	ld	bc, 0x00FE
+	out	(c), l
+	ld	bc, 0x00FF
+	out	(c), h
 	ELSE
 	; dropped = vbl_seen - framecnt (= 跨いだ余分な VBLANK 数)
 	ld	de, (vbl_seen)
@@ -642,6 +647,7 @@ meas_ship:	dw	0
 meas_spr:	dw	0
 meas_chunk:	dw	0
 meas_sr:	dw	0
+meas_bac:	dw	0
 	ENDIF
 
 ;=====================================================================

@@ -77,6 +77,17 @@
 	xor	a
 	out	(c), a
 	ENDM
+	; [perf] PUTCELL_ANK: ANK(コード)のみ書く。ATR は書かない版。回転だけのフレーム
+	;   (位置不変)は ATR が既に正しいので ANK だけで足り、1セルあたり OUT 1回分を削減。
+	MACRO	PUTCELL_ANK
+	ld	e, a
+	ld	a, h
+	and	0x07
+	or	(TVRAM >> 8)
+	ld	b, a
+	ld	c, l
+	out	(c), e
+	ENDM
 
 SHIP_BASE	EQU	0x10		; 自機 PCG コード先頭 (0x10..0x9F, 144セル)
 SHIP_VSTRIDE	EQU	9		; 1 版 = 3列x3行 = 9セル

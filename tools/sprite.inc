@@ -1443,7 +1443,11 @@ sprite_update:
 .ebnt:
 	ENDIF
 	call	ebul_update		; [敵弾] 移動+消去+描画(1パス)
+	IFDEF	MEAS
+	MEASCALL bacura_update, meas_bac	; [MEAS] Bacura 描画の T 数(実コスト = 値 - meas_base)
+	ELSE
 	call	bacura_update		; [敵] Bacura スクロール+衝突+描画
+	ENDIF
 	call	expls_draw
 	call	reticle_draw
 	ret
@@ -2909,29 +2913,59 @@ bac_offs:
 	dw	2 * COLS, 2 * COLS + 1
 	dw	3 * COLS, 3 * COLS + 1
 
-; bac_put2x4: hl=TL, de=frametab 行(8コード)。16x32 の 8セルを配置(frametab 駆動)。
-bac_put2x4:
-	ld	(bp_tl), hl
-	ld	(bp_ptr), de
-	ld	hl, bac_offs
-	ld	(bp_offp), hl
-	ld	b, 8
-.l:	push	bc
-	ld	hl, (bp_offp)		; セルオフセット
-	ld	e, (hl)
-	inc	hl
-	ld	d, (hl)
-	inc	hl
-	ld	(bp_offp), hl
+; [perf] 1セル配置マクロ(アンロール用)。bp_tl + 即値オフセット = pos、bp_ptr から
+;   コードを1つ読み進める。テーブル参照(bac_offs)とループ(djnz)を除去。
+	MACRO	BPCELL	off
 	ld	hl, (bp_tl)
-	add	hl, de			; pos = TL + offs
-	ld	de, (bp_ptr)		; コード
+	IF (off) != 0
+	ld	de, off
+	add	hl, de
+	ENDIF
+	ld	de, (bp_ptr)
 	ld	a, (de)
 	inc	de
 	ld	(bp_ptr), de
-	PUTCELL				; a=code, hl=pos
-	pop	bc
-	djnz	.l
+	PUTCELL
+	ENDM
+	MACRO	BPCELLA	off
+	ld	hl, (bp_tl)
+	IF (off) != 0
+	ld	de, off
+	add	hl, de
+	ENDIF
+	ld	de, (bp_ptr)
+	ld	a, (de)
+	inc	de
+	ld	(bp_ptr), de
+	PUTCELL_ANK
+	ENDM
+
+; bac_put2x4: hl=TL, de=frametab 行(8コード)。16x32 の 8セルを配置(frametab 駆動)。
+;   [perf] アンロール。bac_ankonly=1(回転のみ=位置不変)なら ANK だけ書き ATR を省く。
+bac_put2x4:
+	ld	(bp_tl), hl
+	ld	(bp_ptr), de
+	ld	a, (bac_ankonly)
+	or	a
+	jp	nz, .bp_ank
+	BPCELL	0
+	BPCELL	1
+	BPCELL	COLS
+	BPCELL	COLS + 1
+	BPCELL	2 * COLS
+	BPCELL	2 * COLS + 1
+	BPCELL	3 * COLS
+	BPCELL	3 * COLS + 1
+	ret
+.bp_ank:
+	BPCELLA	0
+	BPCELLA	1
+	BPCELLA	COLS
+	BPCELLA	COLS + 1
+	BPCELLA	2 * COLS
+	BPCELLA	2 * COLS + 1
+	BPCELLA	3 * COLS
+	BPCELLA	3 * COLS + 1
 	ret
 
 ; ene_clr2x4: hl=TL。Bacura 8セルを消去。
@@ -4688,6 +4722,7 @@ bac_ftptr:	dw	0		; 現回転コマの frametab 行ポインタ(bacura_update 冒
 bp_tl:		dw	0		; bac_put2x4/ene_clr2x4 作業: TL
 bp_ptr:		dw	0		; 〃 frametab コードポインタ
 bp_offp:	dw	0		; 〃 bac_offs ポインタ
+bac_ankonly:	db	0		; [perf] 1=位置不変(回転のみ)で ANK だけ書く。0=full(ANK+ATR)。
 ; [敵32方向] get_index_for_angle 作業
 gia_dx:		db	0		; 符号付セル差(ship-self)
 gia_dy:		db	0
