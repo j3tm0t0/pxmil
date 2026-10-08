@@ -29,7 +29,9 @@ MAX_ENEMIES	EQU	5		; [M8④] 最大同時数(num_flying が 3→4→5 と上昇)
 DIFF_INTERVAL	EQU	1800		; [M8④] 難易度1段の経過フレーム(≒30s@60Hz)
 ENEMY_SPEED	EQU	1		; 横移動(セル/移動tick) ※敵は8pxグリッド
 EN_NTYPES	EQU	4		; [敵] 敵タイプ数 (Toroid/Jara/Torkan/Zoshi)
-TOROID_STOP	EQU	16		; [M8④] Toroid が停止する画面セル列(寄って停止)
+TOROID_STOP	EQU	16		; [M8④] Toroid が停止する画面セル列(寄って停止)(旧phase機械/未使用)
+TOR_SWING	EQU	24		; [32方向] Toroid swing の縦速度(0.75px/f=24)
+TOR_SWING_T	EQU	6		; swing 反転周期(tick)
 TOROID_PAUSE	EQU	24		; 停止フレーム数(移動tick単位 ×ENEMY_MOVE)
 EXPL_BASE	EQU	0xC0		; 爆発 PCG 先頭 (0xC0..0xCB, 3フレーム x 2x2)
 MAX_EXPL	EQU	1		; 同時爆発数 (ピーク負荷削減)
@@ -2334,51 +2336,71 @@ enemies_move:
 	add	hl, de
 	ld	(hl), 0
 	jp	.e_off
-.e_tor:	; --- 0=Toroid: phase machine(0=approach/1=pause/2=retreat) ---
+.e_tor:	; --- 0=Toroid: 自機狙いダイブ(ang_slow 0.75px/f)→自機Y一致で左右swing ---
 	ld	hl, ene_phase
 	add	hl, de
 	ld	a, (hl)
 	or	a
-	jr	nz, .e_tor12
-	ld	hl, ene_vx		; phase0 approach: vx=-32(左)
-	add	hl, de
-	ld	(hl), -32
-	ld	hl, ene_vy
-	add	hl, de
-	ld	(hl), 0
-	ld	hl, ene_ex
-	add	hl, de
-	ld	a, (hl)
-	cp	TOROID_STOP + 1
-	jp	nc, .e_off		; まだ手前 → 継続
-	ld	hl, ene_phase		; STOP 到達 → pause
+	jr	nz, .e_tor_fly
+	; phase0: 自機へ一度照準 → phase1
+	ld	hl, ang_slow_0_75px
+	ld	(ene_aim_tbl), hl
+	call	ene_aim
+	ld	hl, ene_phase
 	add	hl, de
 	ld	(hl), 1
-	ld	hl, ene_vx		; 停止(vx=0)
+	jp	.e_off
+.e_tor_fly:
+	cp	2
+	jr	z, .e_tor_swing
+	; phase1: 直進(aimed)。自機Y一致(|ey-ship_row|<=1)で swing へ
+	ld	hl, ene_ey
+	add	hl, de
+	ld	a, (hl)
+	ld	b, a
+	ld	a, (ship_vy)
+	srl	a
+	srl	a
+	sub	b			; ship_row - ey
+	add	a, 1
+	cp	3			; -1..1 → 整列
+	jp	nc, .e_off
+	ld	hl, ene_phase
+	add	hl, de
+	ld	(hl), 2			; → swing
+	ld	hl, ene_dir
 	add	hl, de
 	ld	(hl), 0
 	ld	hl, ene_ptmr
 	add	hl, de
-	ld	(hl), TOROID_PAUSE
+	ld	(hl), TOR_SWING_T
 	jp	.e_off
-.e_tor12:
-	cp	2
-	jr	z, .e_tor_ret
-	ld	hl, ene_ptmr		; phase1 pause: タイマー
+.e_tor_swing:
+	; phase2: vy を ±TOR_SWING で周期反転(弧)。vx はaimedのまま継続。
+	ld	hl, ene_ptmr
 	add	hl, de
 	dec	(hl)
-	jp	nz, .e_off
-	ld	hl, ene_phase
+	jr	nz, .e_tor_sw2
+	ld	(hl), TOR_SWING_T
+	ld	hl, ene_dir
 	add	hl, de
-	ld	(hl), 2			; → retreat
-	ld	hl, ene_vx		; retreat 右(vx=+32)
+	ld	a, (hl)
+	xor	1
+	ld	(hl), a
+.e_tor_sw2:
+	ld	hl, ene_dir
 	add	hl, de
-	ld	(hl), 32
+	ld	a, (hl)
+	or	a
+	jr	nz, .e_tor_swn
+	ld	hl, ene_vy
+	add	hl, de
+	ld	(hl), TOR_SWING
 	jp	.e_off
-.e_tor_ret:				; phase2 retreat: vx=+32(右)
-	ld	hl, ene_vx
+.e_tor_swn:
+	ld	hl, ene_vy
 	add	hl, de
-	ld	(hl), 32
+	ld	(hl), -TOR_SWING
 	jp	.e_off
 .e_tk:	; --- 2=Torkan: vx=-64(左2px/f ダイブ) + vy=+32(ey<22で下) ---
 	ld	hl, ene_vx
@@ -2520,6 +2542,50 @@ ene_integrate:
 	add	hl, de
 	ld	(hl), 1
 	ret
+
+;=====================================================================
+; [敵32方向] ene_aim: 自機方向へ照準し ene_vx/vy を速度表(ene_aim_tbl)の値に設定。
+;   de=slot。呼出前に ene_aim_tbl=速度表(ang_aimed/fast/slow/sheo) を設定。spawn/再照準時のみ。
+;   dx=(ship_hx>>2)-ene_ex, dy=(ship_vy>>2)-ene_ey (セル差) → get_index_for_angle → (dY,dX)。
+ene_aim:
+	ld	a, (ship_hx)
+	srl	a
+	srl	a			; ship_col
+	ld	b, a
+	ld	hl, ene_ex
+	add	hl, de
+	ld	a, b
+	sub	(hl)			; dx = ship_col - ex
+	ld	(gia_dx), a
+	ld	a, (ship_vy)
+	srl	a
+	srl	a			; ship_row
+	ld	b, a
+	ld	hl, ene_ey
+	add	hl, de
+	ld	a, b
+	sub	(hl)			; dy = ship_row - ey
+	ld	(gia_dy), a
+	push	de
+	call	get_index_for_angle	; a=idx(de破壊)
+	pop	de
+	add	a, a			; idx*2
+	ld	l, a
+	ld	h, 0
+	ld	bc, (ene_aim_tbl)
+	add	hl, bc			; &tbl[idx*2]
+	ld	a, (hl)			; dY
+	ld	b, a
+	inc	hl
+	ld	c, (hl)			; dX
+	ld	hl, ene_vx		; ene_vx = dX
+	add	hl, de
+	ld	(hl), c
+	ld	hl, ene_vy		; ene_vy = dY
+	add	hl, de
+	ld	(hl), b
+	ret
+ene_aim_tbl:	dw	0		; ene_aim が引く速度表(呼出側が設定)
 
 ;=====================================================================
 ; [敵32方向] get_index_for_angle: 自機への32方向index(0..31)。
