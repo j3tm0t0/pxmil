@@ -50,6 +50,27 @@ BYTE joymng_getstat(void) {
 	int i;
 	UINT8 ret = 0xff;
 
+	/* pxmil: XMIL_AUTOFIRE=<hexbase> -> auto-tap trigger1 (bit5) every other
+	 * frame (press 1f / release 1f) on top of <hexbase>. Lets perf tests drive
+	 * sustained rapid fire without the 64-entry JOYSCRIPT limit.
+	 * e.g. XMIL_AUTOFIRE=FF (zapper tap only), =BF (zapper tap + blaster held). */
+	{
+		static int af_init = 0;
+		static int af_on = 0;
+		static unsigned af_base = 0xff;
+		if (!af_init) {
+			const char *s = getenv("XMIL_AUTOFIRE");
+			af_init = 1;
+			if (s) { af_on = 1; af_base = (unsigned)strtoul(s, NULL, 16); }
+		}
+		if (af_on) {
+			UINT8 v = (UINT8)af_base;
+			if (pxmil_frame & 1) v |= 0x20;		/* release (bit5=1) */
+			else v = (UINT8)(v & ~0x20);		/* press   (bit5=0) */
+			return v;
+		}
+	}
+
 	if (!js_init) {
 		js_parse();
 	}
