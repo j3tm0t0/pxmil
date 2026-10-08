@@ -35,6 +35,7 @@ SPR = [
     ("zakato",      0x11, 7, 180),
     ("bragzakato",  0x12, 7, 180),
     ("garuzakato",  0x13, 7, 180),
+    ("domogram",    0x3C, 7, 180),  # [Phase1] 移動砲台(静止1コマ。回転0x3D-0x3Fは射撃演出=後回し)
     ("warp_spark0", 0x0C, 0x24, 180),
     ("warp_spark1", 0x83, 0x24, 180),
 ]
