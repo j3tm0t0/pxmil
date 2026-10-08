@@ -1322,12 +1322,29 @@ area_switch:
 	ld	ix, used_buf
 	ld	hl, TILEBASE
 	ld	(as_dst), hl
+	IFDEF	SOUND
+	ld	a, AS_TICK_EVERY
+	ld	(as_tick), a
+	ENDIF
 .tl:	ld	hl, (as_cnt)
 	ld	a, h
 	or	l
 	ret	z			; 全タイル完了
 	dec	hl
 	ld	(as_cnt), hl
+	IFDEF	SOUND
+	; [⑦(4)] 切替中も BGM 継続: AS_TICK_EVERY タイル毎に snd_tick(実機 ~0.12s の集約中)
+	ld	a, (as_tick)
+	dec	a
+	ld	(as_tick), a
+	jr	nz, .notick
+	ld	a, AS_TICK_EVERY
+	ld	(as_tick), a
+	push	ix
+	call	snd_tick
+	pop	ix
+.notick:
+	ENDIF
 	; EMM src = EMM_TILES + idx*48 (16bit, <0xC000)
 	ld	l, (ix + 0)
 	ld	h, (ix + 1)		; hl = idx
@@ -1550,9 +1567,11 @@ gobj_load:
 	jp	nz, .sol_rd
 	ret
 
+AS_TICK_EVERY	EQU	44		; 切替タイル集約中 snd_tick 間隔(~353/8)
 as_n:		dw	0
 as_cnt:		dw	0
 as_dst:		dw	0
+as_tick:	db	0		; snd_tick カウンタ
 amb_lo16:	dw	0		; [⑦(3)] area_map_base(EMM_MAPS+area*0x3200) 低16
 amb_hi8:	db	0		; 高8
 pal_buf:	ds	320		; [⑦(3)] common_pal(64×5B)
