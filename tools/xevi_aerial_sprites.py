@@ -38,6 +38,11 @@ SPR = [
     ("domogram",    0x3C, 7, 180),  # [Phase1] 移動砲台(静止1コマ。回転0x3D-0x3Fは射撃演出=後回し)
     ("warp_spark0", 0x0C, 0x24, 180),
     ("warp_spark1", 0x83, 0x24, 180),
+    # crater(破壊痕): ROM tile 0xA6/0xA7 の2コマ(1x1=16x16, colour0x0D)。
+    #   bomb_explosion_finished が被弾地上物を 0xA6↔0xA7(4f毎トグル)に変えスクロール存続。
+    #   Domogram 等の移動体破壊時に spawn する crater スプライト用。ほぼ対称なので rot は任意。
+    ("crater0",     0xA6, 0x0D, 180),
+    ("crater1",     0xA7, 0x0D, 180),
 ]
 GIDDO = [0x100, 0x101, 0x102, 0x103]
 
