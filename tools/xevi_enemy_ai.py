@@ -144,6 +144,15 @@ def main_dump():
         f.write("; Zoshi  ang_slow 自機方向(射撃時 top/bot=再照準, rnd=ランダム変針)\n")
         f.write("; Giddo  ang_sheo 自機狙いダイブ / Kapi ang_aimed 射撃 / Terrazi ang_fast 射撃\n")
         f.write("; 弾 type6=ang_aimed 自機狙い直進 / Brag Spario=加速ホーミング / 拡散=ang_fast 扇\n")
+        # 角度算出(ROM get_index_for_angle, atan2 不要の octant 法)
+        f.write("\n; --- 自機への角度 -> 32方向index (ROM get_index_for_angle@0x0EB2 と同一) ---\n")
+        f.write("; dx=ship_x-self_x, dy=ship_y-self_y (符号付, 同一/8単位)\n")
+        f.write("; ax=|dx|,ay=|dy|; ay<=ax: big=ax,small=ay,steep=0 / else big=ay,small=ax,steep=1\n")
+        f.write("; ratio=(small*32)/big (0..32); ang=octant_angle_tbl[ratio]\n")
+        f.write("; steep: ang=0x41-ang / dx<0: ang=0x81-ang / dy<0: ang=-ang (8bit角)\n")
+        f.write("; idx=(ang>>3)&0x1F; (dY,dX)=speed_table[idx]\n")
+        f.write("octant_angle_tbl:\n\tdb\t%s\n" %
+                ",".join("0x%02X" % main[0x0EE7 + i] for i in range(33)))
     print("\n焼き込み inc: roms/arcade/xevious-out/enemy_ai.inc")
 
 
