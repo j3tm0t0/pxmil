@@ -73,6 +73,8 @@ sprite_init:
 	call	gen_bullet
 	call	gen_enemy
 	call	gen_expl
+	call	gen_ebullet		; [敵弾] スパリオ PCG
+	call	ebul_init
 	call	gen_reticle
 	call	gen_reticle_red		; [M8-3] ロック点滅用の赤版照準 PCG
 	call	gen_blaster
@@ -1411,6 +1413,24 @@ sprite_update:
 	IFDEF	GROBDA_EXTDATA
 	call	grobda_draw		; [M8⑥]
 	ENDIF
+	IFDEF	EBUL_SELFTEST
+	; 決定論テスト: 30フレーム毎に col20,row2 から右下へ弾を発射
+	ld	a, (eb_test_tmr)
+	dec	a
+	ld	(eb_test_tmr), a
+	jr	nz, .ebnt
+	ld	a, 30
+	ld	(eb_test_tmr), a
+	ld	hl, 0x1400		; x = col20<<8
+	ld	de, 0x0200		; y = row2<<8
+	ld	bc, 0x0040
+	ld	(ebul_svx), bc		; vx = +0.25 cell/f
+	ld	bc, 0x0080
+	ld	(ebul_svy), bc		; vy = +0.5 cell/f
+	call	ebul_spawn
+.ebnt:
+	ENDIF
+	call	ebul_update		; [敵弾] 移動+消去+描画(1パス)
 	call	expls_draw
 	call	reticle_draw
 	ret
@@ -2958,6 +2978,286 @@ ene_clr2x2:
 	ret
 
 ;=====================================================================
+; [敵弾] スパリオ: EBULLET_BASE(0x00..0x03, 16x16=2x2セル)。位置は 16bit 固定小数
+;   (セル<<8 | frac)、画面セル座標。速度 ebul_vx/vy(dw 符号付, frac/frame)。
+;   enemies 同様テキスト面の 2 窓(cur_pos / cur_pos^page)へ 2x2 描画。
+EBULLET_BASE	EQU	0x00
+MAX_EBUL	EQU	6
+
+gen_ebullet:
+	ld	a, EBULLET_BASE
+	ld	b, 4
+	ld	hl, ebullet_data
+	jp	gen_pcg_set
+
+ebul_init:
+	ld	hl, ebul_active
+	ld	b, MAX_EBUL
+	xor	a
+.il:	ld	(hl), a
+	inc	hl
+	djnz	.il
+	ret
+
+; ebul_spawn: HL=x(cell<<8|frac), DE=y, (ebul_svx)/(ebul_svy)=速度。空き slot へ。
+ebul_spawn:
+	ld	(eb_sx), hl
+	ld	(eb_sy), de
+	ld	c, 0			; index
+	ld	hl, ebul_active
+.fl:	ld	a, (hl)
+	or	a
+	jr	z, .found
+	inc	hl
+	inc	c
+	ld	a, c
+	cp	MAX_EBUL
+	jr	nz, .fl
+	ret				; 空き無し
+.found:
+	ld	(hl), 1			; active
+	; e = index*2 (dw 配列)
+	ld	a, c
+	add	a, a
+	ld	e, a
+	ld	d, 0
+	ld	hl, ebul_x
+	add	hl, de
+	ld	bc, (eb_sx)
+	ld	(hl), c
+	inc	hl
+	ld	(hl), b			; x
+	ld	hl, ebul_y
+	add	hl, de
+	ld	bc, (eb_sy)
+	ld	(hl), c
+	inc	hl
+	ld	(hl), b			; y
+	ld	hl, ebul_vx
+	add	hl, de
+	ld	bc, (ebul_svx)
+	ld	(hl), c
+	inc	hl
+	ld	(hl), b
+	ld	hl, ebul_vy
+	add	hl, de
+	ld	bc, (ebul_svy)
+	ld	(hl), c
+	inc	hl
+	ld	(hl), b
+	; prev 無効(0xFFFF)
+	ld	hl, ebul_prev1
+	add	hl, de
+	ld	(hl), 0xFF
+	inc	hl
+	ld	(hl), 0xFF
+	ld	hl, ebul_prev2
+	add	hl, de
+	ld	(hl), 0xFF
+	inc	hl
+	ld	(hl), 0xFF
+	ret
+
+; ebul_update: 毎フレーム。各弾を消去→移動→画面外cull→2窓描画。
+ebul_update:
+	xor	a
+	ld	(eb_i), a
+.ul:	ld	a, (eb_i)
+	cp	MAX_EBUL
+	ret	z
+	ld	e, a
+	ld	d, 0
+	ld	hl, ebul_active
+	add	hl, de
+	ld	a, (hl)
+	or	a
+	jp	z, .next
+	; de = index*2
+	ld	a, (eb_i)
+	add	a, a
+	ld	e, a
+	ld	d, 0
+	; --- 消去: prev1/prev2 が有効なら ene_clr2x2 ---
+	ld	hl, ebul_prev1
+	add	hl, de
+	ld	a, (hl)
+	inc	hl
+	ld	h, (hl)
+	ld	l, a
+	ld	a, h
+	and	l
+	inc	a			; 0xFFFF → 0x0000
+	jr	z, .noerase
+	ld	a, (eb_i)
+	add	a, a
+	ld	e, a
+	ld	d, 0
+	ld	hl, ebul_prev1
+	add	hl, de
+	ld	a, (hl)
+	inc	hl
+	ld	h, (hl)
+	ld	l, a
+	call	ene_clr2x2
+	ld	a, (eb_i)
+	add	a, a
+	ld	e, a
+	ld	d, 0
+	ld	hl, ebul_prev2
+	add	hl, de
+	ld	a, (hl)
+	inc	hl
+	ld	h, (hl)
+	ld	l, a
+	call	ene_clr2x2
+.noerase:
+	; --- 移動: x += vx, y += vy ---
+	ld	a, (eb_i)
+	add	a, a
+	ld	e, a
+	ld	d, 0
+	ld	hl, ebul_x
+	add	hl, de
+	ld	c, (hl)
+	inc	hl
+	ld	b, (hl)			; bc = x
+	push	hl
+	ld	hl, ebul_vx
+	add	hl, de
+	ld	a, (hl)
+	inc	hl
+	ld	h, (hl)
+	ld	l, a			; hl = vx
+	add	hl, bc			; x + vx
+	pop	de			; de -> ebul_x[i]+1 (high)
+	ld	a, l
+	ld	(ebul_xtmp), a
+	ld	a, h
+	ld	(ebul_xtmp + 1), a
+	; 書き戻し
+	ld	a, (eb_i)
+	add	a, a
+	ld	e, a
+	ld	d, 0
+	ld	hl, ebul_x
+	add	hl, de
+	ld	a, (ebul_xtmp)
+	ld	(hl), a
+	inc	hl
+	ld	a, (ebul_xtmp + 1)
+	ld	(hl), a			; x 保存。high=col
+	; y += vy
+	ld	hl, ebul_y
+	add	hl, de
+	ld	c, (hl)
+	inc	hl
+	ld	b, (hl)
+	push	hl
+	ld	hl, ebul_vy
+	add	hl, de
+	ld	a, (hl)
+	inc	hl
+	ld	h, (hl)
+	ld	l, a
+	add	hl, bc
+	pop	bc
+	ld	a, l
+	ld	(ebul_ytmp), a
+	ld	a, h
+	ld	(ebul_ytmp + 1), a
+	ld	a, (eb_i)
+	add	a, a
+	ld	e, a
+	ld	d, 0
+	ld	hl, ebul_y
+	add	hl, de
+	ld	a, (ebul_ytmp)
+	ld	(hl), a
+	inc	hl
+	ld	a, (ebul_ytmp + 1)
+	ld	(hl), a
+	; --- cull: col=xtmp hi, row=ytmp hi。>=COLS/ROWS(左右/上下はみ出し)で消去 ---
+	ld	a, (ebul_xtmp + 1)	; col
+	cp	COLS
+	jr	nc, .kill
+	ld	a, (ebul_ytmp + 1)	; row
+	cp	ROWS
+	jr	nc, .kill
+	; --- 描画: soff = row*40 + col ---
+	ld	a, (ebul_ytmp + 1)
+	ld	l, a
+	ld	h, 0
+	add	hl, hl
+	add	hl, hl
+	add	hl, hl			; *8
+	ld	d, h
+	ld	e, l
+	add	hl, hl
+	add	hl, hl			; *32
+	add	hl, de			; *40
+	ld	a, (ebul_xtmp + 1)
+	ld	e, a
+	ld	d, 0
+	add	hl, de			; soff
+	ld	(eb_soff), hl
+	; 窓1: cell=(soff+cur_pos)&0x7FF
+	ld	de, (cur_pos)
+	add	hl, de
+	ld	a, h
+	and	0x07
+	ld	h, a
+	push	hl			; cell1
+	ld	a, EBULLET_BASE
+	call	ene_put2x2
+	; prev1 保存
+	ld	a, (eb_i)
+	add	a, a
+	ld	e, a
+	ld	d, 0
+	ld	hl, ebul_prev1
+	add	hl, de
+	pop	bc			; bc = cell1
+	ld	(hl), c
+	inc	hl
+	ld	(hl), b
+	; 窓2: cell=(soff + (cur_pos^0x0400))&0x7FF
+	ld	hl, (cur_pos)
+	ld	a, h
+	xor	0x04
+	ld	h, a
+	ld	de, (eb_soff)
+	add	hl, de
+	ld	a, h
+	and	0x07
+	ld	h, a
+	push	hl
+	ld	a, EBULLET_BASE
+	call	ene_put2x2
+	ld	a, (eb_i)
+	add	a, a
+	ld	e, a
+	ld	d, 0
+	ld	hl, ebul_prev2
+	add	hl, de
+	pop	bc
+	ld	(hl), c
+	inc	hl
+	ld	(hl), b
+	jp	.next
+.kill:
+	ld	a, (eb_i)
+	ld	e, a
+	ld	d, 0
+	ld	hl, ebul_active
+	add	hl, de
+	ld	(hl), 0			; 非アクティブ(消去は上で実施済)
+.next:
+	ld	a, (eb_i)
+	inc	a
+	ld	(eb_i), a
+	jp	.ul
+
+;=====================================================================
 ; 爆発 PCG 生成: expl_data(3フレーム×96B = 12セル×24B)を EXPL_BASE から定義。
 gen_expl:
 	ld	hl, expl_data
@@ -3361,6 +3661,23 @@ ene_type:	ds	MAX_ENEMIES		; [M8] 敵タイプ index (0..EN_NTYPES-1)
 ene_dir:	ds	MAX_ENEMIES		; [M8④] Jara 振動方向(0=下/1=上)
 ene_phase:	ds	MAX_ENEMIES		; [M8④] Toroid フェーズ(0=approach/1=pause/2=retreat)
 ene_ptmr:	ds	MAX_ENEMIES		; [M8④] Toroid pause タイマー
+; [敵弾] スパリオ
+ebul_active:	ds	MAX_EBUL
+ebul_x:		ds	MAX_EBUL * 2		; cell<<8|frac
+ebul_y:		ds	MAX_EBUL * 2
+ebul_vx:	ds	MAX_EBUL * 2		; 符号付 frac/frame
+ebul_vy:	ds	MAX_EBUL * 2
+ebul_prev1:	ds	MAX_EBUL * 2		; 窓1 前回セル(0xFFFF=無効)
+ebul_prev2:	ds	MAX_EBUL * 2		; 窓2 前回セル
+ebul_svx:	dw	0			; spawn 速度(呼出側が設定)
+ebul_svy:	dw	0
+eb_sx:		dw	0
+eb_sy:		dw	0
+eb_i:		db	0
+eb_soff:	dw	0
+ebul_xtmp:	dw	0
+ebul_ytmp:	dw	0
+eb_test_tmr:	db	1		; EBUL_SELFTEST スポーンタイマー
 spawn_type:	db	0		; (旧)未使用
 spawn_idx:	db	0		; [M8④] spawn_seq のインデックス
 num_flying:	db	3		; [M8④] 現在の同時出現上限(3→4→5)
@@ -3436,6 +3753,10 @@ rr_zero:	db	0,0,0,0,0,0,0,0	; 使わないプレーンに書く 0 データ
 ;   未指定(既定)は下のオリジナル円盤(灰色の八角形↔菱形 + 赤コア)を使う。
 ;   色(公式Dスロット): ボディ=R のみ→tc2→slot2(明灰), 中心=B+G→tc5→slot5(赤)。
 ;   per-pixel tc=スロット, ATR=0x27。形はオリジナル(著名キャラは不使用)。
+; [敵弾] スパリオ PCG(16x16=4セル=96B)。xevi_enemy_sprites.py 生成(非コミット)。
+ebullet_data:
+	INCBIN	"roms/arcade/xevious-out/enemy_ebullet.bin"
+
 enemy_data:
 	IFDEF	ENEMY_EXTDATA
 	INCLUDE	"roms/enemy_ext.inc"	; 外部提供 384B db (gitignore)
