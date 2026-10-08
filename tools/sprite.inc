@@ -3985,8 +3985,8 @@ ebul_update:
 ; [敵] Bacura: 破壊不可の板(回転は MVP 省略)。world列固定でスクロール(scroll_moved で sx--)。
 ;   ショット貫通(弾衝突なし)・接触死(自機3x3 と重なりで ship_hit)。BAC_SPAWN_INTERVAL 毎に
 ;   1体増殖(最大 MAX_BACURA)。area 切替で bacura_init でクリア。
-MAX_BACURA	EQU	1		; [perf暫定] 2体同時はスクロールフレームで予算超過(zapper 4.82%)。
-					;   1体=1.22%。描画コスト削減後に 2 へ戻す予定。
+MAX_BACURA	EQU	2		; 全スプライトアンロール後、MAX=2 でも zapper 0.89%(≤1.2%)に収まるため2体に復帰。
+					;   both 5.48% はクレーター掘削(GRAM)律速で Bacura 数に非依存(最終調整で別途)。
 BAC_SPAWN_INTERVAL	EQU	60
 
 bacura_init:
