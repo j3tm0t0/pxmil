@@ -3983,11 +3983,11 @@ bacura_erase_prev:
 	ret
 
 bacura_update:
-	; 回転コマ = 進んだ距離(coarse スクロールセル)&7 → ROMどおり距離連動(スクロール停止で停止)。
-	;   全 Bacura 共通。coarse 1セル進むごとに1コマ(一周8セル)。PCG書換ゼロ。
-	ld	a, (coarse)
-	and	7
-	add	a, a			; コマ*8 = frametab 行オフセット
+	; 回転コマ = (framecnt>>2)&7。Bacura は自travel 1px/f で進むので travel>>2 = framecnt>>2
+	;   = 4px(4フレーム)ごと1コマ(ROMどおり、一周8コマ=32フレーム)。全 Bacura 共通。PCG書換ゼロ。
+	ld	a, (framecnt)
+	and	0x1C			; (framecnt>>2 &7)<<2 = コマ<<2
+	add	a, a			; コマ<<3 = コマ*8 = frametab 行オフセット(8コード/コマ)
 	ld	e, a
 	ld	d, 0
 	ld	hl, bacura_frametab
@@ -4013,10 +4013,10 @@ bacura_update:
 	ld	a, (hl)
 	or	a
 	jp	z, .bnext
-	; scroll_moved なら sx--
-	ld	a, (scroll_moved)
-	or	a
-	jr	z, .bnosc
+	; [自走] 8フレーム毎に sx-- = 1px/f(地面0.5px/fより速く画面を進む)
+	ld	a, (framecnt)
+	and	7
+	jr	nz, .bnosc
 	ld	hl, bac_sx
 	add	hl, de
 	dec	(hl)
@@ -4080,10 +4080,14 @@ bacura_update:
 	jr	nc, .bnohit
 	call	ship_hit		; 接触死(無敵中は無視)
 .bnohit:
-	; idle-skip: scroll_moved でなく prev1 有効なら再描画省略(静止)
+	; idle-skip: コマ変化(framecnt&3==0, 4フレーム毎)・スクロール・自走(8f毎)のどれも無く
+	;   prev1 有効なら再描画省略。コマは4フレーム毎に変わるので実質4フレームに1回は再描画。
+	ld	a, (framecnt)
+	and	3
+	jr	z, .bdraw		; コマ変化フレーム → 再描画
 	ld	a, (scroll_moved)
 	or	a
-	jr	nz, .bdraw
+	jr	nz, .bdraw		; スクロール(cur_pos変化) → 再描画
 	ld	a, (bac_i)
 	add	a, a
 	ld	e, a
@@ -4096,8 +4100,16 @@ bacura_update:
 	inc	a			; 0xFF→0x00
 	jp	nz, .bnext		; prev 有効(hi≠0xFF)かつ非スクロール → スキップ
 .bdraw:
-	; 描画: soff=row*40+sx, 2窓(erase prev + put)
+	; 描画: 位置変化(自走8f毎 or scroll)時のみ旧位置を消去。コマのみ変化は8セル上書きで足りる。
+	ld	a, (framecnt)
+	and	7
+	jr	z, .bera
+	ld	a, (scroll_moved)
+	or	a
+	jr	z, .bnoera
+.bera:
 	call	bacura_erase_prev
+.bnoera:
 	ld	a, (bac_i)
 	ld	e, a
 	ld	d, 0
