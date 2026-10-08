@@ -1319,6 +1319,16 @@ gobj_find:
 	xor	a
 	ld	(gc_i), a
 .l:	push	bc
+	; [perf] 粗 X 事前チェック(size/dead を読まず早期打切り)。窓は size 補正後 tcol in
+	;   [col-1,col+2] に収まるので、gc_col-col が [-1,+2] 外なら即スキップ。reticle ロックは
+	;   毎フレーム全 gobj を走査するので、遠い gobj(大多数)で dead(+40T)/size(+40T)読みを省く。
+	ld	a, (hl)			; col lo (offset0)
+	ld	e, a
+	ld	a, (gc_col)
+	sub	e			; gc_col - col
+	add	a, 1
+	cp	4
+	jr	nc, .nx			; 粗外れ(tcol-col < -1 or > +2)→ 次へ
 	; 破壊済み?
 	ld	a, (gc_i)
 	ld	e, a
