@@ -1389,6 +1389,7 @@ sprite_update:
 	call	bullets_move
 	call	blaster_move		; 前進+着弾(expl_spawn)
 	call	enemies_move
+	call	ene_fire_check		; [敵弾] 射撃AI(type≠0 が自機狙いで発射)
 	IFDEF	GROBDA_EXTDATA
 	call	grobda_move		; [M8⑥] Grobda 移動(道vy + スクロール追従)
 	ENDIF
@@ -2056,6 +2057,13 @@ enemy_spawn:
 	and	ENEMY_MOVE - 1
 	inc	a
 	ld	hl, ene_mtmr
+	add	hl, de
+	ld	(hl), a
+	; [敵弾] 射撃タイマ初期化(slot で位相ずらし, type≠0 のみ ene_fire_check で使用)
+	ld	a, (spr_i)
+	add	a, a
+	add	a, 60
+	ld	hl, ene_ftmr
 	add	hl, de
 	ld	(hl), a
 	ld	hl, ene_prev
@@ -3058,6 +3066,154 @@ ebul_spawn:
 	ld	(hl), 0xFF
 	ret
 
+; ene_fire_check: 各敵(type≠0)の射撃タイマを更新、0 で自機狙いの弾を発射。
+ENE_FIRE_SPEED	EQU	0x60		; 直進速度(frac/frame, 0.375セル)
+ENE_FIRE_DIAG	EQU	0x44		; 斜め速度(≈0.375*0.707)
+ene_fire_check:
+	xor	a
+	ld	(spr_i), a
+.fcl:	ld	a, (spr_i)
+	cp	MAX_ENEMIES
+	ret	z
+	ld	e, a
+	ld	d, 0
+	ld	hl, ene_active
+	add	hl, de
+	ld	a, (hl)
+	or	a
+	jp	z, .fcn
+	ld	hl, ene_type
+	add	hl, de
+	ld	a, (hl)
+	or	a
+	jr	z, .fcn			; Toroid(0) は撃たない
+	ld	hl, ene_ftmr
+	add	hl, de
+	dec	(hl)
+	jr	nz, .fcn
+	call	ene_fire		; spr_i の敵が発射
+	; タイマ再設定 = ((framecnt&7)+1)*8
+	ld	a, (framecnt)
+	and	7
+	inc	a
+	add	a, a
+	add	a, a
+	add	a, a
+	ld	c, a
+	ld	a, (spr_i)
+	ld	e, a
+	ld	d, 0
+	ld	hl, ene_ftmr
+	add	hl, de
+	ld	(hl), c
+.fcn:	ld	a, (spr_i)
+	inc	a
+	ld	(spr_i), a
+	jp	.fcl
+
+; ene_fire: spr_i の敵から自機狙いの弾を1発。8方向近似。
+ene_fire:
+	ld	a, (spr_i)
+	ld	e, a
+	ld	d, 0
+	ld	hl, ene_ex
+	add	hl, de
+	ld	a, (hl)
+	ld	(ef_ex), a
+	ld	hl, ene_ey
+	add	hl, de
+	ld	a, (hl)
+	ld	(ef_ey), a
+	; dx = (ship_hx>>2) - ef_ex
+	ld	a, (ship_hx)
+	srl	a
+	srl	a
+	ld	hl, ef_ex
+	sub	(hl)
+	ld	(ef_dx), a
+	; dy = (ship_vy>>2) - ef_ey
+	ld	a, (ship_vy)
+	srl	a
+	srl	a
+	ld	hl, ef_ey
+	sub	(hl)
+	ld	(ef_dy), a
+	; adx = |dx|
+	ld	a, (ef_dx)
+	bit	7, a
+	jr	z, .padx
+	neg
+.padx:	ld	(ef_adx), a
+	; ady = |dy|
+	ld	a, (ef_dy)
+	bit	7, a
+	jr	z, .pady
+	neg
+.pady:	ld	(ef_ady), a
+	; 方向: adx >= 2*ady → 横 / ady >= 2*adx → 縦 / else 斜め
+	ld	a, (ef_ady)
+	add	a, a
+	ld	b, a			; 2*ady
+	ld	a, (ef_adx)
+	cp	b
+	jr	nc, .horiz
+	ld	a, (ef_adx)
+	add	a, a
+	ld	b, a			; 2*adx
+	ld	a, (ef_ady)
+	cp	b
+	jr	nc, .vert
+	; 斜め
+	ld	a, ENE_FIRE_DIAG
+	ld	(ef_vmx), a
+	ld	(ef_vmy), a
+	jr	.applysign
+.horiz:	ld	a, ENE_FIRE_SPEED
+	ld	(ef_vmx), a
+	xor	a
+	ld	(ef_vmy), a
+	jr	.applysign
+.vert:	xor	a
+	ld	(ef_vmx), a
+	ld	a, ENE_FIRE_SPEED
+	ld	(ef_vmy), a
+.applysign:
+	; vx = sign(dx) 適用
+	ld	a, (ef_vmx)
+	ld	e, a
+	ld	d, 0
+	ld	a, (ef_dx)
+	bit	7, a
+	jr	z, .vxp
+	ld	hl, 0
+	or	a
+	sbc	hl, de
+	ld	(ebul_svx), hl
+	jr	.vydo
+.vxp:	ld	(ebul_svx), de
+.vydo:	ld	a, (ef_vmy)
+	ld	e, a
+	ld	d, 0
+	ld	a, (ef_dy)
+	bit	7, a
+	jr	z, .vyp
+	ld	hl, 0
+	or	a
+	sbc	hl, de
+	ld	(ebul_svy), hl
+	jr	.spawn
+.vyp:	ld	(ebul_svy), de
+.spawn:
+	; x = ef_ex<<8, y = ef_ey<<8
+	ld	a, (ef_ex)
+	ld	h, a
+	ld	l, 0
+	ld	a, (ef_ey)
+	ld	d, a
+	ld	e, 0
+	call	ebul_spawn
+	ret
+
 ; ebul_update: 毎フレーム。各弾を消去→移動→画面外cull→2窓描画。
 ebul_update:
 	xor	a
@@ -3661,6 +3817,7 @@ ene_type:	ds	MAX_ENEMIES		; [M8] 敵タイプ index (0..EN_NTYPES-1)
 ene_dir:	ds	MAX_ENEMIES		; [M8④] Jara 振動方向(0=下/1=上)
 ene_phase:	ds	MAX_ENEMIES		; [M8④] Toroid フェーズ(0=approach/1=pause/2=retreat)
 ene_ptmr:	ds	MAX_ENEMIES		; [M8④] Toroid pause タイマー
+ene_ftmr:	ds	MAX_ENEMIES		; [敵弾] 射撃タイマ(0 で発射)
 ; [敵弾] スパリオ
 ebul_active:	ds	MAX_EBUL
 ebul_x:		ds	MAX_EBUL * 2		; cell<<8|frac
@@ -3678,6 +3835,14 @@ eb_soff:	dw	0
 ebul_xtmp:	dw	0
 ebul_ytmp:	dw	0
 eb_test_tmr:	db	1		; EBUL_SELFTEST スポーンタイマー
+ef_ex:		db	0		; ene_fire 作業
+ef_ey:		db	0
+ef_dx:		db	0
+ef_dy:		db	0
+ef_adx:		db	0
+ef_ady:		db	0
+ef_vmx:		db	0
+ef_vmy:		db	0
 spawn_type:	db	0		; (旧)未使用
 spawn_idx:	db	0		; [M8④] spawn_seq のインデックス
 num_flying:	db	3		; [M8④] 現在の同時出現上限(3→4→5)
