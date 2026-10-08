@@ -457,9 +457,8 @@ fire_blaster:
 	ld	hl, bla_hx
 	add	hl, de
 	ld	(hl), a
-	ld	a, (ship_hx)		; 着弾 x = 機首 + RETICLE_DIST
-	add	a, 2 * 4
-	add	a, RETICLE_DIST
+	ld	a, (ship_hx)		; 着弾 x = ship_hx + RETICLE_DIST (照準 reticle_soff と同基準)
+	add	a, RETICLE_DIST		; ※機首オフセット(+2*4)は付けない。付けると着弾が照準より2セル先になる
 	ld	hl, bla_tx
 	add	hl, de
 	ld	(hl), a
