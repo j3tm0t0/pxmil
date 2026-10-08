@@ -81,6 +81,8 @@ TBUF		EQU	0xCC00		; CG_IDBUF 200B (〜0xCCC8) (旧0xC400)
 IDBUFA		EQU	0xCD00		; 50B (旧0xC500)
 IDBUFB		EQU	0xCD60		; 50B (旧0xC560)
 COLBUF		EQU	0xD200		; 25タイル x 48B = 1200B (〜0xD6B0) (旧0xC600)
+WORKBUF_BASE	EQU	0xCC00		; 作業バッファ最下位(=TBUF)。program 終端はここ未満であること(末尾ASSERT)
+WORKBUF_TOP	EQU	0xD808		; 作業バッファ最上位(=SPRGEN+8)。スタック(0xF000)まで余裕
 
 ; === 自機(M6) ship.inc 用の設定 (IFDEF SHIP。64色デフォルトビルドは不変) ===
 	IFDEF	SHIP
@@ -1920,5 +1922,10 @@ bgm_phase:	db	0
 	IFDEF	ALLAREAS
 	INCLUDE	"tools/fdcload.inc"	; [⑦] FDC→EMM ローダ(fdc_init/fdc_load/fdc_read0_ram/set_emm_dst)
 	ENDIF
+
+	; [再発防止] program 終端が作業バッファ(0xCC00〜)と衝突しないこと(衝突するとスクロール書込が
+	;   コードを破壊しハング)。肥大したらビルドエラーになる。バッファ上限がスタックに迫らないことも。
+	ASSERT	$ <= WORKBUF_BASE
+	ASSERT	WORKBUF_TOP <= 0xE800
 
 	END
