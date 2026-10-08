@@ -805,13 +805,18 @@ crater_write_obj:
 	inc	hl			; -> row
 	ld	a, (hl)
 	ld	(gc_row), a
-	inc	hl
-	inc	hl			; -> crater_base (type をスキップ)
+	inc	hl			; -> +3 size
+	ld	a, (hl)
+	ld	(gc_size), a
+	inc	hl			; -> crater_base
 	ld	e, (hl)
 	inc	hl
 	ld	d, (hl)			; de = crater_base
 	ld	(gc_cbase), de
-	; TL (col, row) = base
+	ld	a, (gc_size)
+	cp	2
+	jp	z, crater_write_4x4	; size=2 → 4x4
+	; size=1: TL (col, row) = base
 	ld	a, (gc_col)
 	ld	c, a
 	ld	a, (gc_row)
@@ -847,6 +852,50 @@ crater_write_obj:
 	ld	a, (gc_row)
 	inc	a
 	call	crater_write_cell
+	ret
+
+;=====================================================================
+; crater_write_4x4: size=2 の 4x4 クレーター。cell k(0..15)=base+k*48、
+;   位置=(gc_col+k%4, gc_row+k/4)。row>=ROWS(画面外)はスキップ(addr は進める)。
+;   ※新形式の 16addr が base+k*48 連続でない稀なケースは近似(base 導出)。
+crater_write_4x4:
+	ld	de, (gc_cbase)		; 現 addr(cell毎 +48)
+	xor	a
+	ld	(cwo_r), a
+.c4_r:
+	xor	a
+	ld	(cwo_c), a
+.c4_c:
+	; row = gc_row + cwo_r
+	ld	a, (gc_row)
+	ld	hl, cwo_r
+	add	a, (hl)
+	cp	ROWS
+	jr	nc, .c4_skip		; 画面外 row → cell スキップ
+	ld	(cwo_row), a
+	; col = gc_col + cwo_c
+	ld	a, (gc_col)
+	ld	hl, cwo_c
+	add	a, (hl)
+	ld	c, a			; c = col
+	ld	a, (cwo_row)		; a = row
+	push	de
+	call	crater_write_cell	; de = cell addr
+	pop	de
+.c4_skip:
+	ld	hl, TILEBYTES
+	add	hl, de
+	ex	de, hl			; addr += 48
+	ld	a, (cwo_c)
+	inc	a
+	ld	(cwo_c), a
+	cp	4
+	jr	nz, .c4_c
+	ld	a, (cwo_r)
+	inc	a
+	ld	(cwo_r), a
+	cp	4
+	jr	nz, .c4_r
 	ret
 
 ;=====================================================================
@@ -1078,7 +1127,7 @@ SOL_STEP	EQU	8		; アニメ 1コマあたりフレーム数(せり上がり速�
 sol_bases:	dw	0x4033, 0x40F3, 0x41B3, 0x4273	; f0,f1,f2,f3 の crater_base
 sol_entry:	dw	SOL_COL		; crater_write_obj が読む 6B エントリ
 		db	SOL_ROW
-		db	0		; type(未使用)
+		db	1		; +3=size(Sol は 2x2=size1)
 		dw	0		; crater_base(コマ毎に設定)
 
 ; sol_hit_check: 命中(hit_tcol,col_ey)が Sol 位置かつ未発動なら発動。
@@ -3263,6 +3312,10 @@ cg_page:	db	0
 cg_k:		db	0
 cg_rr:		db	0
 gc_cbase:	dw	0		; crater_write_obj: crater_base 一時保持
+gc_size:	db	1		; crater_write_obj: 1=2x2, 2=4x4
+cwo_r:		db	0		; crater_write_4x4 行カウンタ
+cwo_c:		db	0		; crater_write_4x4 列カウンタ
+cwo_row:	db	0		; crater_write_4x4 現 row 一時
 pc_active:	db	0		; [#2] 保留クレーター有効
 pc_prog:	db	0		; 進捗 0..5 (2ページ×3列)
 pc_row:		db	0		; 保留クレーターの row(R)

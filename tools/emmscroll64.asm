@@ -1483,7 +1483,8 @@ gobj_load:
 	cp	0xFF
 	jp	z, .gl			; 両 FF → スキップ
 .dowrite:
-	; 6B 書込: col_lo, col_hi, row, type, crater_lo, crater_hi
+	; 6B 書込: col_lo, col_hi, row, size(+3=未使用typeの位置), crater_lo, crater_hi
+	;   (type は未使用なので +3 に size を格納。crater_write_obj が 2x2/4x4 を判定)
 	ld	a, (gl_buf + 0)
 	ld	(de), a
 	inc	de
@@ -1493,7 +1494,7 @@ gobj_load:
 	ld	a, (gl_buf + 2)
 	ld	(de), a
 	inc	de
-	ld	a, (gl_buf + 3)
+	ld	a, (gl_buf + 4)		; size(1 or 2)
 	ld	(de), a
 	inc	de
 	ld	a, (gl_buf + 5)
