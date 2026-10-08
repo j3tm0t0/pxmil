@@ -75,6 +75,11 @@ sprite_init:
 	call	gen_expl
 	call	gen_ebullet		; [敵弾] スパリオ PCG
 	call	ebul_init
+	ld	a, 3			; [敵弾] 残機初期化
+	ld	(lives), a
+	xor	a
+	ld	(ship_inv), a
+	ld	(game_over), a
 	call	gen_reticle
 	call	gen_reticle_red		; [M8-3] ロック点滅用の赤版照準 PCG
 	call	gen_blaster
@@ -1367,9 +1372,10 @@ gobj_check:
 ; 毎フレーム(vblank 中, ship_update の後)。発射/移動/消去/描画。
 ;   順序: 発射判定 → 全弾消去 → 移動/寿命 → 全弾描画 (重なり対策で分離)。
 sprite_update:
+	call	ship_tick		; [敵弾] 無敵タイマ減算
 	call	fire_check		; トリガ1でザッパー発射
 	call	fire_blaster		; トリガ2でブラスター発射
-	call	enemy_spawn		; 一定間隔で右端から出現
+	call	enemy_spawn		; 一定間隔で右端から出現(game_over 中は内部で抑止)
 	; scroll_moved = (cur_pos != prev_cur_pos) : cur_pos は SPEED フレームごとにしか
 	;   変わらない。変わらないフレームは動いていない敵の描き直しを省略(idle-skip)。
 	ld	hl, (cur_pos)
@@ -1585,7 +1591,8 @@ collision_check:
 	ld	hl, ene_dirty		; 消滅 → dirty
 	add	hl, de
 	ld	(hl), 1
-	call	expl_spawn		; (col_ex,col_ey)
+	call	expl_spawn		; 敵爆発 (col_ex,col_ey)
+	call	ship_hit		; [敵弾] 自機も被弾(無敵中は無視)
 .vn:	ld	a, (spr_j)
 	inc	a
 	ld	(spr_j), a
@@ -1927,6 +1934,9 @@ enemy_spawn:
 	IFDEF	NO_ENEMY
 	ret				; 検証用: 敵を出さない(弾/爆発のゴースト切り分け)
 	ENDIF
+	ld	a, (game_over)
+	or	a
+	ret	nz			; ゲームオーバー中は出現しない
 	; [M8④] 難易度上昇(経過): difficulty<2 の間 diff_tmr を減らし 0 で +1。
 	;   num_flying=3+difficulty(3→4→5)。型解禁: type<=difficulty のみ(他はToroid)。
 	ld	a, (difficulty)
@@ -3070,6 +3080,9 @@ ebul_spawn:
 ENE_FIRE_SPEED	EQU	0x60		; 直進速度(frac/frame, 0.375セル)
 ENE_FIRE_DIAG	EQU	0x44		; 斜め速度(≈0.375*0.707)
 ene_fire_check:
+	ld	a, (game_over)
+	or	a
+	ret	nz			; ゲームオーバー中は発射しない
 	xor	a
 	ld	(spr_i), a
 .fcl:	ld	a, (spr_i)
@@ -3214,6 +3227,52 @@ ene_fire:
 	call	ebul_spawn
 	ret
 
+; ship_hit: 自機被弾。無敵/ゲームオーバー中は無視。爆発+残機-1。残機0でゲームオーバー。
+;   敵弾はクリアしない(無敵 64 フレームで保護、弾は通常 cull)。
+SHIP_INV_FRAMES	EQU	64
+ship_hit:
+	ld	a, (game_over)
+	or	a
+	ret	nz
+	ld	a, (ship_inv)
+	or	a
+	ret	nz			; 無敵中
+	; 爆発を自機セルへ
+	ld	a, (ship_hx)
+	srl	a
+	srl	a
+	ld	(col_ex), a
+	ld	a, (ship_vy)
+	srl	a
+	srl	a
+	ld	(col_ey), a
+	call	expl_spawn
+	IFDEF	SOUND
+	ld	hl, se_exp_aerial	; [SND] 自機爆発音
+	call	snd_play_se
+	ENDIF
+	; 残機
+	ld	a, (lives)
+	dec	a
+	ld	(lives), a
+	jr	z, .shgo
+	ld	a, SHIP_INV_FRAMES
+	ld	(ship_inv), a		; 復活無敵
+	ret
+.shgo:
+	ld	a, 1
+	ld	(game_over), a
+	ret
+
+; ship_tick: 毎フレーム。無敵タイマ減算。
+ship_tick:
+	ld	a, (ship_inv)
+	or	a
+	ret	z
+	dec	a
+	ld	(ship_inv), a
+	ret
+
 ; ebul_update: 毎フレーム。各弾を消去→移動→画面外cull→2窓描画。
 ebul_update:
 	xor	a
@@ -3335,10 +3394,32 @@ ebul_update:
 	; --- cull: col=xtmp hi, row=ytmp hi。>=COLS/ROWS(左右/上下はみ出し)で消去 ---
 	ld	a, (ebul_xtmp + 1)	; col
 	cp	COLS
-	jr	nc, .kill
+	jp	nc, .kill
 	ld	a, (ebul_ytmp + 1)	; row
 	cp	ROWS
-	jr	nc, .kill
+	jp	nc, .kill
+	; --- 自機衝突: 弾2x2 と 自機3x3 の重なり(col in [sc-1,sc+2], row in [sr-1,sr+2]) ---
+	ld	a, (ship_hx)
+	srl	a
+	srl	a
+	ld	c, a			; sc
+	ld	a, (ebul_xtmp + 1)
+	sub	c
+	add	a, 1			; col - sc + 1
+	cp	4
+	jr	nc, .noship
+	ld	a, (ship_vy)
+	srl	a
+	srl	a
+	ld	c, a			; sr
+	ld	a, (ebul_ytmp + 1)
+	sub	c
+	add	a, 1
+	cp	4
+	jr	nc, .noship
+	call	ship_hit
+	jp	.kill			; 被弾した弾は消滅(消去は .kill で active=0, 描画せず)
+.noship:
 	; --- 描画: soff = row*40 + col ---
 	ld	a, (ebul_ytmp + 1)
 	ld	l, a
@@ -3843,6 +3924,9 @@ ef_adx:		db	0
 ef_ady:		db	0
 ef_vmx:		db	0
 ef_vmy:		db	0
+lives:		db	3		; [敵弾] 残機(0 でゲームオーバー)
+ship_inv:	db	0		; 復活無敵フレーム
+game_over:	db	0		; 1=ゲームオーバー
 spawn_type:	db	0		; (旧)未使用
 spawn_idx:	db	0		; [M8④] spawn_seq のインデックス
 num_flying:	db	3		; [M8④] 現在の同時出現上限(3→4→5)
