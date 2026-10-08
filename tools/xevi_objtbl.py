@@ -25,11 +25,37 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ROMDIR = os.path.join(ROOT, "roms", "arcade", "xevious")
 
 GROUND_TYPES = {
+    0x1B: "Derota",
     0x1D: "Sol",       0x1E: "Barra",      0x1F: "Zolbak",
     0x20: "GndObj20",  0x21: "GaruDerota", 0x25: "GndObj25",
     0x26: "Logram",    0x2C: "Grobda(stat)", 0x2D: "BozaLogram",
     0x38: "Grobda(stop)", 0x3A: "Grobda(dart)",
 }
+
+# SUB area stream のコマンド→fn remap(loc_6AA, type-1 で index)と各 fn の entry 長。
+# fn_15 domogram のみ可変(5+2*num)。extract_ground の 1 グループ制約を解消する正規版。
+_REMAP = 0x06AA
+_FNLEN = {0:3,1:4,2:3,3:2,4:2,5:2,6:3,7:2,8:3,9:3,10:3,11:3,12:3,13:3,
+          14:5,15:None,16:3,17:3,18:2,19:2,20:2,21:2,22:3,23:2}
+
+
+def extract_ground_full(rom, start, end):
+    """SUB area command stream を正規に walk し、**全ての** fn_1 地上物エントリ
+    (trig, type, off, spriteY)を返す。extract_ground(ヒューリスティック, 先頭1グループ
+    ≤14件のみ)の上位互換=既存位置を保持しつつ見逃し分を補完する superset。"""
+    def fn_of(t):
+        return rom[_REMAP + (t - 1)] if 1 <= t <= 0x80 else -1
+    objs = []
+    p = start
+    while p < end - 1:
+        fn = fn_of(rom[p + 1])
+        L = (5 + 2 * rom[p + 4]) if fn == 15 else _FNLEN.get(fn)
+        if not L or L < 2 or p + L > end:
+            break
+        if fn == 1 and rom[p + 1] in GROUND_TYPES:
+            objs.append((rom[p], rom[p + 1], rom[p + 2], rom[p + 3]))
+        p += L
+    return objs
 
 def load_subrom():
     lo = open(os.path.join(ROMDIR, "xvi_5.3f"), "rb").read()

@@ -43,9 +43,10 @@ import xevi_objtbl as O
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT = os.path.join(ROOT, "roms", "arcade", "xevious-out", "allareas")
 TB = 0x0103                               # ローカル RAM タイルベース
-GS = {0x1E: 0x17, 0x1F: 0x1F, 0x26: 0x2C, 0x20: 0x17, 0x2D: 0x2C}   # 焼込 16x16 -> tile
+GS = {0x1E: 0x17, 0x1F: 0x1F, 0x26: 0x2C, 0x20: 0x17, 0x2D: 0x2C,
+      0x1B: 0x27}   # 焼込 16x16 -> tile。0x1B Derota=code0x27(handle_1B, 単独砲台=目視確認済)
 GS32 = {0x21: 0x24}                                    # 焼込 32x32(2x2 sprite base tile)
-TID = {0x1E: 1, 0x1F: 2, 0x26: 3, 0x20: 1, 0x2D: 3, 0x21: 6}
+TID = {0x1E: 1, 0x1F: 2, 0x26: 3, 0x20: 1, 0x2D: 3, 0x21: 6, 0x1B: 7}
 GROB = {0x2C, 0x38, 0x3A}   # 動く地上物 Grobda(stationary/stops/darts)。焼込まず位置のみ出力
 # 射撃砲台の ffreq mask_id(= SUB fn index, ffreq レコードと同じ番号)。非射撃=0。
 #   Derota(0x1B)/GaruDerota(0x21)=derota 0x08, Logram(0x26)=logram 0x09, BozaLogram(0x2D)=boza 0x10。
@@ -140,7 +141,9 @@ def main():
                 lmap[col][row] = local_idx(XB.rgb_to_pattern(
                     XB.terrain_cell_rgb(ex, g2, rgb, bg_pen, code, color, fx, fy), ucmap, uorder))
 
-        objs = O.extract_ground(rom, ptrs[a-1], ptrs[a] if a < 16 else 0x2000)
+        # 正規 walker で全地上物を捕捉(旧 extract_ground は先頭1グループ≤14件のみで
+        # 大半の砲台=Derota含む を取りこぼしていた。位置は保持しつつ補完する superset)。
+        objs = O.extract_ground_full(rom, ptrs[a-1], ptrs[a] if a < 16 else 0x1E52)
         col_of = lambda t: (t + 0xFD) & 0xFF
         row_of = lambda y: (y >> 3) - 2
 
