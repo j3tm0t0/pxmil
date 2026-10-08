@@ -23,7 +23,8 @@ ENEMY_BASE	EQU	0xB0		; [M8] Toroid PCG (0xB0..0xBF, 4フレーム x 2x2)
 JARA_BASE	EQU	0xE0		; [M8④] Jara PCG (0xE0..0xEF, 4フレーム x 2x2)
 TORKAN_BASE	EQU	0xF0		; [M8④] Torkan PCG (0xF0..0xF7, 2フレーム x 2x2)
 ZOSHI_BASE	EQU	0x04		; [敵] Zoshi PCG (0x04..0x0B, 2フレーム x 2x2)
-BACURA_BASE	EQU	0x0C		; [敵] Bacura PCG (0x0C..0x0F, 1フレーム x 2x2)
+BACURA_RES_BASE	EQU	0x67		; [敵] Bacura 回転8コマ常駐先頭(自機dedupで空いた0x67..0x9F)
+BACURA_RES_N	EQU	43		; 8コマ重複除去後のユニークセル数(0x67..0x91)
 MAX_ENEMIES	EQU	5		; [M8④] 最大同時数(num_flying が 3→4→5 と上昇)
 DIFF_INTERVAL	EQU	1800		; [M8④] 難易度1段の経過フレーム(≒30s@60Hz)
 ENEMY_SPEED	EQU	1		; 横移動(セル/移動tick) ※敵は8pxグリッド
@@ -1901,9 +1902,9 @@ gen_enemy:
 	ld	a, ZOSHI_BASE
 	ld	b, 8
 	call	gen_pcg_set
-	ld	hl, bacura_data		; [敵] Bacura(1コマ=4セル)
-	ld	a, BACURA_BASE
-	ld	b, 4
+	ld	hl, bacura_cells	; [敵] Bacura 回転8コマの重複除去済み43セルを常駐
+	ld	a, BACURA_RES_BASE
+	ld	b, BACURA_RES_N
 	call	gen_pcg_set
 	ret
 ; gen_pcg_set: hl=データ先頭, a=先頭PCGコード, b=セル数。連番で定義。
@@ -2560,6 +2561,58 @@ ene_put2x2:
 	ld	a, (ene_bc)
 	add	a, 3
 	PUTCELL				; BR
+	ret
+
+; bac_offs: Bacura 2幅×4高の8セル描画オフセット(TL からのセル相対, draw順 r0L,r0R,…,r3R)。
+bac_offs:
+	dw	0, 1
+	dw	COLS, COLS + 1
+	dw	2 * COLS, 2 * COLS + 1
+	dw	3 * COLS, 3 * COLS + 1
+
+; bac_put2x4: hl=TL, de=frametab 行(8コード)。16x32 の 8セルを配置(frametab 駆動)。
+bac_put2x4:
+	ld	(bp_tl), hl
+	ld	(bp_ptr), de
+	ld	hl, bac_offs
+	ld	(bp_offp), hl
+	ld	b, 8
+.l:	push	bc
+	ld	hl, (bp_offp)		; セルオフセット
+	ld	e, (hl)
+	inc	hl
+	ld	d, (hl)
+	inc	hl
+	ld	(bp_offp), hl
+	ld	hl, (bp_tl)
+	add	hl, de			; pos = TL + offs
+	ld	de, (bp_ptr)		; コード
+	ld	a, (de)
+	inc	de
+	ld	(bp_ptr), de
+	PUTCELL				; a=code, hl=pos
+	pop	bc
+	djnz	.l
+	ret
+
+; ene_clr2x4: hl=TL。Bacura 8セルを消去。
+ene_clr2x4:
+	ld	(bp_tl), hl
+	ld	hl, bac_offs
+	ld	(bp_offp), hl
+	ld	b, 8
+.l:	push	bc
+	ld	hl, (bp_offp)
+	ld	e, (hl)
+	inc	hl
+	ld	d, (hl)
+	inc	hl
+	ld	(bp_offp), hl
+	ld	hl, (bp_tl)
+	add	hl, de
+	CLRCELL
+	pop	bc
+	djnz	.l
 	ret
 
 	IFDEF	GROBDA_EXTDATA
@@ -3673,7 +3726,7 @@ bacura_erase_prev:
 	and	l
 	inc	a
 	ret	z
-	call	ene_clr2x2
+	call	ene_clr2x4
 	ld	a, (bac_i)
 	add	a, a
 	ld	e, a
@@ -3684,10 +3737,19 @@ bacura_erase_prev:
 	inc	hl
 	ld	h, (hl)
 	ld	l, a
-	call	ene_clr2x2
+	call	ene_clr2x4
 	ret
 
 bacura_update:
+	; 回転コマ = (framecnt>>2)&7 → frametab 行ポインタ(全 Bacura 共通, PCG書換ゼロ)
+	ld	a, (framecnt)
+	and	0x1C			; bits2-4 = frame<<2
+	add	a, a			; frame*8 = frametab 行オフセット
+	ld	e, a
+	ld	d, 0
+	ld	hl, bacura_frametab
+	add	hl, de
+	ld	(bac_ftptr), hl
 	ld	a, (bac_spawn_tmr)
 	dec	a
 	ld	(bac_spawn_tmr), a
@@ -3770,8 +3832,8 @@ bacura_update:
 	ld	c, a
 	ld	a, b
 	sub	c
-	add	a, 1
-	cp	4
+	add	a, 2			; Bacura 高さ4セル vs 自機3セル → 重なり窓6
+	cp	6
 	jr	nc, .bnohit
 	call	ship_hit		; 接触死(無敵中は無視)
 .bnohit:
@@ -3820,8 +3882,8 @@ bacura_update:
 	and	0x07
 	ld	h, a
 	push	hl
-	ld	a, BACURA_BASE
-	call	ene_put2x2
+	ld	de, (bac_ftptr)		; 現コマの frametab 行(8コード)
+	call	bac_put2x4
 	ld	a, (bac_i)
 	add	a, a
 	ld	e, a
@@ -3842,8 +3904,8 @@ bacura_update:
 	and	0x07
 	ld	h, a
 	push	hl
-	ld	a, BACURA_BASE
-	call	ene_put2x2
+	ld	de, (bac_ftptr)		; 現コマの frametab 行(8コード)
+	call	bac_put2x4
 	ld	a, (bac_i)
 	add	a, a
 	ld	e, a
@@ -4305,6 +4367,10 @@ bac_spawn_tmr:	db	0
 bac_i:		db	0
 bac_soff:	dw	0
 bac_cursx:	db	0
+bac_ftptr:	dw	0		; 現回転コマの frametab 行ポインタ(bacura_update 冒頭で算出)
+bp_tl:		dw	0		; bac_put2x4/ene_clr2x4 作業: TL
+bp_ptr:		dw	0		; 〃 frametab コードポインタ
+bp_offp:	dw	0		; 〃 bac_offs ポインタ
 spawn_type:	db	0		; (旧)未使用
 spawn_idx:	db	0		; [M8④] spawn_seq のインデックス
 num_flying:	db	3		; [M8④] 現在の同時出現上限(3→4→5)
@@ -4389,9 +4455,12 @@ ebullet_data:
 zoshi_data:
 	INCBIN	"roms/arcade/xevious-out/enemy_zoshi_0.bin"
 	INCBIN	"roms/arcade/xevious-out/enemy_zoshi_1.bin"
-; [敵] Bacura PCG(1コマ×16x16=4セル=96B, 平板)。回転は MVP で省略。
-bacura_data:
-	INCBIN	"roms/arcade/xevious-out/enemy_bacura_flat.bin"
+; [敵] Bacura 回転8コマ(16x32=2幅×4高)の重複除去済み43セル(各24B)。rot180適用。
+;   tools/gen_bac_res.py が bacura_rot0..7.bin から生成(非コミット)。
+bacura_cells:
+	INCBIN	"roms/arcade/xevious-out/bacura_cells.bin"
+; bacura_frametab: 8コマ×8セル(draw順)→実PCGコード。
+	INCLUDE	"roms/arcade/xevious-out/bacura_frametab.inc"
 
 enemy_data:
 	IFDEF	ENEMY_EXTDATA
