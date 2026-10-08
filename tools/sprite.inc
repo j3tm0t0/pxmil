@@ -933,6 +933,9 @@ CG_IDBUF	EQU	TBUF		; 0xC400: 4*50=200B (W-1..W+2 のタイルID)
 
 ; crater_enqueue: EMM 更新後に GRAM クレーターを保留登録。保留中なら先に flush。
 crater_enqueue:
+	IFDEF	NOCRATER
+	ret				; [perf isolate] クレーター登録も無効化(pump と対)
+	ENDIF
 	ld	a, (pc_active)
 	or	a
 	call	nz, crater_flush	; 重複ヒット: 前回を先に完了
@@ -977,6 +980,9 @@ crater_enqueue:
 
 ; crater_pump: 毎フレーム1回。保留クレーターがあれば1ユニットを描く。
 crater_pump:
+	IFDEF	NOCRATER
+	ret				; [perf isolate] クレーター分散描画を無効化
+	ENDIF
 	ld	a, (pc_active)
 	or	a
 	ret	z
@@ -1405,13 +1411,21 @@ sprite_update:
 	; 移動/アニメ(消去より先。敵は ene_dirty を立てる)
 	call	bullets_move
 	call	blaster_move		; 前進+着弾(expl_spawn)
+	IFDEF	MEAS
+	MEASCALL enemies_move, meas_enm
+	ELSE
 	call	enemies_move		; [敵弾] 射撃AI(type≠0 自機狙い)は enemies_move に統合済
+	ENDIF
 	IFDEF	GROBDA_EXTDATA
 	call	grobda_move		; [M8⑥] Grobda 移動(道vy + スクロール追従)
 	ENDIF
 	call	expls_anim
 	; 衝突判定(弾vs敵, 敵vs自機) → 当たった弾/敵を非アクティブ化 + 爆発発生
+	IFDEF	MEAS
+	MEASCALL collision_check, meas_col
+	ELSE
 	call	collision_check
+	ENDIF
 	call	bacura_shot_check	; [敵] ザッパー vs Bacura(弾消滅+カンカン, Bacura不滅)
 	; [M8-3] 照準ロック判定(地上物上なら赤点滅) → ret_code 決定
 	call	reticle_lock_update
@@ -1449,9 +1463,17 @@ sprite_update:
 .ebnt:
 	ENDIF
 	IFDEF	ENEMY_EXTDATA
+	IFDEF	MEAS
+	MEASCALL turret_fire, meas_tur
+	ELSE
 	call	turret_fire		; [③(A)] 地上砲台の射撃(ebul へ spawn → ebul_update で処理)
 	ENDIF
+	ENDIF
+	IFDEF	MEAS
+	MEASCALL ebul_update, meas_ebul
+	ELSE
 	call	ebul_update		; [敵弾] 移動+消去+描画(1パス)
+	ENDIF
 	IFDEF	MEAS
 	MEASCALL bacura_update, meas_bac	; [MEAS] Bacura 描画の T 数(実コスト = 値 - meas_base)
 	ELSE
@@ -4016,6 +4038,9 @@ rnd_step:
 ;   gnd_stop_fire=ffreq_reg[0x0A-8=2]、mask=ffreq_reg[mask_id-8]。xevi-re ROM 確定。
 ;   (奥で撃ち自機を過ぎると停止。rot180 の符号はこの写像=実機で最終確認)
 turret_fire:
+	IFDEF	NOTURFIRE
+	ret				; [perf isolate] 地上砲台の射撃(walker+砲台弾spawn)を無効化
+	ENDIF
 	ld	a, (game_over)
 	or	a
 	ret	nz
@@ -4155,6 +4180,9 @@ ef_aim_spawn:
 ;   敵弾はクリアしない(無敵 64 フレームで保護、弾は通常 cull)。
 SHIP_INV_FRAMES	EQU	64
 ship_hit:
+	IFDEF	PERF_NODEATH
+	ret				; [perf] worst-case 計測: 自機を死なせない(爆発/game_over を回避)
+	ENDIF
 	ld	a, (game_over)
 	or	a
 	ret	nz
@@ -4235,6 +4263,9 @@ ebul_erase_prev:
 
 ; ebul_update: 毎フレーム。各弾を 移動→cull/被弾→idle-skip描画(セル不変なら省略)。
 ebul_update:
+	IFDEF	NOEBUL
+	ret				; [perf isolate] 敵弾+砲台弾の移動/描画を無効化
+	ENDIF
 	ld	a, (ebul_cnt)
 	or	a
 	ret	z			; アクティブ弾なし → early-out

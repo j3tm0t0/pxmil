@@ -335,7 +335,11 @@ mainloop:
 	call	wait_vblank
 	IFDEF	SOUND
 	call	snd_bgm_mgr		; [SND] BGM 終了検出→次曲(fanfare→本BGM→ループ)
+	IFDEF	MEAS
+	MEASCALL snd_tick, meas_snd
+	ELSE
 	call	snd_tick		; [SND] 毎フレーム更新(VBLANK 直後, 最悪~4048T)
+	ENDIF
 	ENDIF
 	; adv = framecnt >> SPEED
 .adv_recalc:				; [⑦(4)] エリア切替後の adv 再計算入口
@@ -547,7 +551,11 @@ mainloop:
 	IFDEF	GOBJ_TILEMAP
 	call	sol_update		; [#3] Sol せり上がりアニメ(発動中のみ)
 	ENDIF
+	IFDEF	MEAS
+	MEASCALL crater_pump, meas_crp
+	ELSE
 	call	crater_pump		; [#2] 保留クレーターを1ユニット/フレームで分散描画
+	ENDIF
 	ENDIF
 	; framecnt++
 	ld	hl, (framecnt)
@@ -631,6 +639,15 @@ SOL_FRAME	EQU	1280		; coarse≈79 → Sol は画面 col≈23 に表示
 	out	(c), l
 	ld	bc, 0x00FF
 	out	(c), h
+	; [MEAS] 追加 6: snd, crp, enm, col, tur, ebul
+	ld	hl, (meas_snd)  : ld bc,0x00FE : out (c),l : ld bc,0x00FF : out (c),h
+	ld	hl, (meas_crp)  : ld bc,0x00FE : out (c),l : ld bc,0x00FF : out (c),h
+	ld	hl, (meas_enm)  : ld bc,0x00FE : out (c),l : ld bc,0x00FF : out (c),h
+	ld	hl, (meas_col)  : ld bc,0x00FE : out (c),l : ld bc,0x00FF : out (c),h
+	ld	hl, (meas_tur)  : ld bc,0x00FE : out (c),l : ld bc,0x00FF : out (c),h
+	ld	hl, (meas_ebul) : ld bc,0x00FE : out (c),l : ld bc,0x00FF : out (c),h
+	; フレーム区切りセンチネル 0xDEAD(Python で整列)
+	ld	a,0xAD : ld bc,0x00FE : out (c),a : ld a,0xDE : ld bc,0x00FF : out (c),a
 	ELSE
 	; dropped = vbl_seen - framecnt (= 跨いだ余分な VBLANK 数)
 	ld	de, (vbl_seen)
@@ -653,6 +670,12 @@ meas_spr:	dw	0
 meas_chunk:	dw	0
 meas_sr:	dw	0
 meas_bac:	dw	0
+meas_snd:	dw	0		; [MEAS] snd_tick(BGM+SFX)
+meas_crp:	dw	0		; [MEAS] crater_pump
+meas_enm:	dw	0		; [MEAS] enemies_move(敵移動+射撃AI)
+meas_col:	dw	0		; [MEAS] collision_check
+meas_tur:	dw	0		; [MEAS] turret_fire(地上砲台 walker+spawn)
+meas_ebul:	dw	0		; [MEAS] ebul_update(敵+砲台弾)
 	ENDIF
 
 ;=====================================================================
