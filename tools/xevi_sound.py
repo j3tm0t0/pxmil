@@ -86,7 +86,16 @@ def psg_period(hz):
     return max(1, min(4095, p))
 
 # ---- tune / SFX 定義 ----
-BGM_SND = {"fanfare": 0, "bgm": 1}           # BGM系(複数ch)
+# ゲーム中 BGM の正体(サウンドCPU sub2.lst 解析で確定):
+#   opening(tune1=main_theme_snd@0xA001): MAIN が **エリア開始時に1回** set(0x0590)。
+#     sub2 loc_1E2 が鳴らし、曲末で自己 0 クリア(=1回だけ。ループしない)。メロディ。
+#   arpeggio(tune E=solvalou_sound@0xA00E): MAIN handle_solvalou が **毎フレーム** set
+#     (0x14F4, 自機生存中)。sub2 loc_101 が鳴らし続ける=**飛行中ずっとループ**。
+#     音型 C6 C5 B6 C5 E5 C5 B6 C5 ... の分散和音(エンジン/飛行音)。死亡で停止。
+#   → 正しい鳴らし方: エリア開始で opening を1回 → 飛行中 arpeggio をループ。
+#     (現 X1 は fanfare/bgm をループ=オープニングが繰り返す誤り。)
+#   tune0=fanfare(ゲーム開始ジングル), tune2/3/4=ハイスコア/1UP ジングル(BGMでない)。
+BGM_SND = {"fanfare": 0, "opening": 1, "arpeggio": 0x0E}   # BGM系(複数ch)
 SE_LIST = [                                  # snd_play_se の id 順(0..)
     ("zapper",       "tone",  0xB),
     ("blaster",      "tone",  0xC),
