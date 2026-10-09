@@ -5744,7 +5744,11 @@ enemy_data:
 ;   未指定は Toroid を流用(汎用円盤)。
 	IFDEF	JARA_EXTDATA
 jara_data:
+	IFDEF	ROT180
+	INCLUDE	"roms/jara_rot180.inc"	; [180°] Jara の元データは rot0=180°ズレ(xevi-re 監査)。
+	ELSE				;   回転ビルドは xevi_sprite_flip180.py の反転版を参照(元は不上書き)。
 	INCLUDE	"roms/jara_ext.inc"
+	ENDIF
 	ELSE
 jara_data	EQU	enemy_data
 	ENDIF
