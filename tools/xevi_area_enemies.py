@@ -40,7 +40,16 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ROMDIR = os.path.join(ROOT, "roms", "arcade", "xevious")
-OUT = os.path.join(ROOT, "roms", "arcade", "xevious-out", "enemies")
+# XEVI_ROT180=1 で X1 の回転座標系に合わせる(allareas/domogram と同じ col'=255-col 変換+
+# イベントを col' 昇順に再ソート。X1 の coarse は増加なので発火順が逆転するため)。
+ROT180 = bool(int(os.environ.get("XEVI_ROT180", "0")))
+OUT = os.path.join(ROOT, "roms", "arcade", "xevious-out",
+                   "enemies_rot180" if ROT180 else "enemies")
+W1 = 256  # allareas と同じ(1列=点トリガなので col'=(W1-1-col)=255-col)
+
+
+def rot_col(col):
+    return (W1 - 1 - col) & 0xFF if ROT180 else col
 
 
 def rd(n):
@@ -111,46 +120,53 @@ def main_dump():
     for a in range(16):
         start = ptrs[a]; end = ptrs[a+1] if a+1 < 16 else 0x1E52
         ents = walk(start, end)
-        flys = []; ffqs = []
+        flys = []; ffqs = []; specials = []
         for (p, trig, typ, fn, L) in ents:
-            col = (trig + 0xFD) & 0xFF
+            col0 = (trig + 0xFD) & 0xFF     # 非回転 col(地上物と共通式)
+            col = rot_col(col0)             # X1 列(ROT180 なら 255-col0)
             if fn == 2:
                 idx = sub[p+2]; num = sub[OFT+idx*2]; off = sub[OFT+idx*2+1]
-                flys.append((col, 2, num, off, [main[FET+off+k] for k in range(num)]))
+                flys.append((col, trig, 2, num, off, [main[FET+off+k] for k in range(num)]))
             elif fn == 3:
-                flys.append((col, 3, 0, 0, []))   # rank += d, then offset_tbl[rank]
+                flys.append((col, trig, 3, 0, 0, []))   # rank += d, then offset_tbl[rank]
             elif fn == 5:
-                flys.append((col, 5, 0, 0, []))   # reset: num_flying=0 (stop spawning)
+                flys.append((col, trig, 5, 0, 0, []))   # reset: num_flying=0 (stop spawning)
             elif fn in FFREQ_FNS:
-                ffqs.append((col, fn, sub[p+2]))
+                ffqs.append((col, trig, fn, sub[p+2]))
+            elif fn in (18, 19, 20, 21):                # Sheonite / Andor Genesis start/end
+                specials.append((col, trig, fn))
+        if ROT180:   # X1 の coarse は増加 → 発火を col 昇順に並べ替え
+            flys.sort(key=lambda e: e[0]); ffqs.sort(key=lambda e: e[0])
+            specials.sort(key=lambda e: e[0])
         # write areaNN_fly.bin
         buf = bytearray([len(flys)])
-        for (col, kind, num, off, tys) in flys:
+        for (col, trig, kind, num, off, tys) in flys:
             buf += struct.pack("<H", col) + bytes([kind, num, off]) + bytes(tys)
         buf += bytes([len(ffqs)])
-        for (col, fn, mask) in ffqs:
+        for (col, trig, fn, mask) in ffqs:
             buf += struct.pack("<H", col) + bytes([fn, mask])
         open(os.path.join(OUT, "area%02d_fly.bin" % (a+1)), "wb").write(buf)
         # report
-        rep.append("=== AREA %d (0x%04X, %d entries) ===" % (a+1, start, len(ents)))
-        for (col, kind, num, off, tys) in flys:
+        rep.append("=== AREA %d (0x%04X, %d entries%s) ===" %
+                   (a+1, start, len(ents), " ROT180" if ROT180 else ""))
+        for (col, trig, kind, num, off, tys) in flys:
             if kind == 2:
                 rep.append("  col=%3d(trig0x%02X) POP=set x%d off0x%02X: %s" %
-                           (col, (col-0xFD) & 0xFF, num, off,
-                            ", ".join(etypes(off, num))))
+                           (col, trig, num, off, ", ".join(etypes(off, num))))
             elif kind == 3:
                 rep.append("  col=%3d(trig0x%02X) POP=rank+=d then offset_tbl[rank] (実行時)" %
-                           (col, (col-0xFD) & 0xFF))
+                           (col, trig))
             else:
-                rep.append("  col=%3d(trig0x%02X) POP=stop (num_flying=0)" %
-                           (col, (col-0xFD) & 0xFF))
-        for (col, fn, mask) in ffqs:
-            rep.append("  col=%3d ffreq %-14s = 0x%02X" % (col, FN_NAME[fn], mask))
+                rep.append("  col=%3d(trig0x%02X) POP=stop (num_flying=0)" % (col, trig))
+        for (col, trig, fn, mask) in ffqs:
+            rep.append("  col=%3d(trig0x%02X) ffreq %-14s = 0x%02X" % (col, trig, FN_NAME[fn], mask))
+        for (col, trig, fn) in specials:
+            rep.append("  col=%3d(trig0x%02X) ** %s **" % (col, trig, FN_NAME[fn]))
     txt = "\n".join(rep)
     open(os.path.join(OUT, "area_enemies.txt"), "w").write(txt + "\n")
     print(txt)
-    print("\n出力: roms/arcade/xevious-out/enemies/ (area_enemies.txt, areaNN_fly.bin, "
-          "fly_type_tbl.bin, fly_offset_tbl.bin)")
+    print("\n出力: %s (area_enemies.txt, areaNN_fly.bin, fly_type_tbl.bin, fly_offset_tbl.bin)"
+          % OUT)
 
 
 if __name__ == "__main__":
