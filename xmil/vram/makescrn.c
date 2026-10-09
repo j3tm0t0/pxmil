@@ -59,7 +59,7 @@ static void flashupdatetmp(void) {
 			udt = udtbase;
 			if (!y2) {
 				if (atr & (TRAMATR_Yx2 << 8)) {
-					udt |= (UPDATE_TRAM | 1) << 8;		// ¶’×‚êc”{Šp
+					udt |= (UPDATE_TRAM | 1) << 8;		// ï¿½ï¿½ï¿½×‚ï¿½cï¿½{ï¿½p
 				}
 				else {
 					y2 = TRUE;
@@ -67,16 +67,16 @@ static void flashupdatetmp(void) {
 			}
 			if (!y2) {
 				if (atr & (TRAMATR_Yx2 << 0)) {
-					udt |= (UPDATE_TRAM | 1) << 0;		// ‰E’×‚êc”{Šp
+					udt |= (UPDATE_TRAM | 1) << 0;		// ï¿½Eï¿½×‚ï¿½cï¿½{ï¿½p
 				}
 				else {
 					y2 = TRUE;
 				}
 			}
-			if (atr & (TRAMATR_Xx2 << 8)) {				// ¶‘¤”{Šp?
+			if (atr & (TRAMATR_Xx2 << 8)) {				// ï¿½ï¿½ï¿½ï¿½ï¿½{ï¿½p?
 				udt |= 0x0812;
 			}
-			if (atr & (TRAMATR_Xx2 << 0)) {				// ‰E‘¤”{Šp?
+			if (atr & (TRAMATR_Xx2 << 0)) {				// ï¿½Eï¿½ï¿½ï¿½{ï¿½p?
 				udt |= 0x0008;
 			}
 			if ((TRAMUPDATE(posl) ^ (udt >> 8)) & 0x1f) {
@@ -191,8 +191,8 @@ static void changemodes(void) {
 
 #if defined(SUPPORT_TURBOZ)
 	if (dispmode & SCRN64_ENABLE) {
-		/* 64F/4096F‚Í 2 ƒoƒ“ƒN(6 ƒvƒŒ[ƒ“)‚ğ“¯g—pB
-		   disp1=bank0, disp2=bank1 ŒÅ’èA—¼ VRAM ‚ÌXV‚ğŠÄ‹‚·‚éB */
+		/* 64ï¿½F/4096ï¿½Fï¿½ï¿½ 2 ï¿½oï¿½ï¿½ï¿½N(6 ï¿½vï¿½ï¿½ï¿½[ï¿½ï¿½)ï¿½ğ“¯ï¿½ï¿½gï¿½pï¿½B
+		   disp1=bank0, disp2=bank1 ï¿½Å’ï¿½Aï¿½ï¿½ VRAM ï¿½ÌXï¿½Vï¿½ï¿½ï¿½Äï¿½ï¿½ï¿½ï¿½ï¿½B */
 		makescrn.disp1 = gram + GRAM_BANK0;
 		makescrn.disp2 = gram + GRAM_BANK1;
 		makescrn.dispflag = UPDATE_TRAM + UPDATE_VRAM0 + UPDATE_VRAM1;
@@ -266,9 +266,9 @@ static void changecrtc(void) {
 	}
 
 	surfsy = charcy * surfcy * 2;
-	// ƒnƒCƒhƒ‰ƒCƒh‚R‚Å‰æ–Ê‚ªÁ‚¦‚È‚¢‚Ì‚ÅƒƒWƒbƒN‚ğC³‚·‚×‚µ
+	// ï¿½nï¿½Cï¿½hï¿½ï¿½ï¿½Cï¿½hï¿½Rï¿½Å‰ï¿½Ê‚ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½È‚ï¿½ï¿½Ì‚Åƒï¿½ï¿½Wï¿½bï¿½Nï¿½ï¿½ï¿½Cï¿½ï¿½ï¿½ï¿½ï¿½×‚ï¿½
 	x = min(scrnxmax, makescrn.surfcx);
-	if (surfcx < x) {								// ¬‚³‚­‚È‚Á‚½
+	if (surfcx < x) {								// ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½È‚ï¿½ï¿½ï¿½
 		x = (x - surfcx) * 8;
 		p = screenmap + (surfcx * 8);
 		y = surfsy;
@@ -348,7 +348,12 @@ void scrnupdate(void) {
 	}
 	if (crtc.e.palandply) {
 		crtc.e.palandply = 0;
-		flag |= SCRNUPD_PALANDPLY;
+		/* A palette change affects the whole screen at once on real HW. Recompose */
+		/* and re-blit every row with the new palette (same full-refresh path as a  */
+		/* mode change), not just the rows a VRAM write dirtied, so a mid-game       */
+		/* blackpal (or its restore) shows across the whole screen in one frame.     */
+		/* pal_update() below runs before screenmake(), so the new palette is used.  */
+		flag |= SCRNUPD_PALANDPLY | SCRNUPD_ALLFLASH;
 	}
 
 	if (makescrn.dispmode != crtc.e.dispmode) {
