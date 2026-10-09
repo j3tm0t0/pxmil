@@ -421,16 +421,23 @@ mainloop:
 	ld	a, (ship_st)
 	or	a
 	jr	nz, .no_area_adv
-	; [⑦(4)] coarsen >= W_CELLS-COLS+1(=217) でエリア境界 → 切替
-	ld	a, h
+	; [③] シームレス境界: edge=(coarsen+39)&0xFF が 0 へ wrap する点 = coarsen&0xFF==217。
+	;   coarse はリセットせず継続し、area_advance_seamless で area/tiles/map/gobj だけ切替。
+	;   新エリアの列は通常の列展開(start_redraw/chunk)で edge=0,1,.. と流れ込む(prefill 無し)。
+	;   1境界で adv が2ステップ(coarsen 217 が2回)来るので seam_done でガード。
+	ld	a, l			; coarsen & 0xFF
+	cp	W_CELLS - COLS + 1	; 217
+	jr	nz, .seam_clear
+	ld	a, (seam_done)
 	or	a
-	jr	nz, .area_adv
-	ld	a, l
-	cp	W_CELLS - COLS + 1
-	jr	c, .no_area_adv
-.area_adv:
-	call	area_advance		; 暗転+タイル/マップ/gobj切替+adv_off reset+prefill+トランジェント取消
-	jp	.adv_recalc		; 新 adv_off(=0 相対)で coarse/coarsen 再計算
+	jr	nz, .no_area_adv
+	ld	a, 1
+	ld	(seam_done), a
+	call	area_advance_seamless
+	jr	.no_area_adv
+.seam_clear:
+	xor	a
+	ld	(seam_done), a
 .no_area_adv:
 	ENDIF
 	; 表示: SCRN=15kHz(DISPVRAM0,ACCESS0)
@@ -1402,6 +1409,60 @@ area_switch:
 	jr	.tl
 
 ;=====================================================================
+	IFDEF	ALLAREAS
+; [③] area_advance_seamless: mainloop の通常エリア境界用。coarse を継続し prefill 無しで
+;   新エリアの列を通常の列展開(chunk)で流し込む=シームレス。area_cur++ + タイル/map/
+;   gobj/fly/domo 切替のみ。adv_off リセット・prefill・transient-cancel・blackpal は行わない
+;   (約3.85秒フリーズの主因 prefill 3.59s を削る)。respawn(②)は area_reload(jump+prefill)。
+;   境界検出は edge=(coarsen+39)&0xFF が 0 へ wrap する点(= coarsen&0xFF==217)で mainloop 側。
+area_advance_seamless:
+	IFDEF	RELMEAS
+	ld	hl,rel_buf		; [RELMEAS] 開始の 32bit サイクル
+	ld	bc,0x00FC : in a,(c) : ld (hl),a : inc hl
+	ld	bc,0x00FD : in a,(c) : ld (hl),a : inc hl : in a,(c) : ld (hl),a : inc hl : in a,(c) : ld (hl),a
+	ENDIF
+	ld	a, (area_cur)		; next = (area_cur==15)?6:area_cur+1 (16→7ループ)
+	cp	15
+	jr	nz, .sa_inc
+	ld	a, 5
+.sa_inc:
+	inc	a
+	ld	(area_cur), a
+	xor	a			; 飛行ブラスターを消す(新 gobj で誤爆防止)
+	ld	(bla_active), a
+	ld	a, (area_cur)
+	call	area_switch		; タイル表 + map base(amb)切替
+	IFDEF	ALLAREAS_DBG
+	ld	a, 0xFF			; PROBE 0xA5FF: seamless 境界切替
+	ld	e, a
+	ld	bc, 0x00FE
+	out	(c), e
+	ld	a, 0xA5
+	ld	bc, 0x00FF
+	out	(c), a
+	ENDIF
+	ld	a, (area_cur)
+	call	gobj_load		; 新エリアの地上物(※旧エリア分は消える=要マージ, follow-up)
+	IFDEF	ENEMY_EXTDATA
+	call	fly_load
+	ENDIF
+	call	domo_emm_copy
+	call	domo_load
+	IFDEF	RELMEAS
+	ld	hl,rel_buf+4		; [RELMEAS] 終了の 32bit サイクル → t0/t1 を PROBE(marker 0xB0-0xB7)
+	ld	bc,0x00FC : in a,(c) : ld (hl),a : inc hl
+	ld	bc,0x00FD : in a,(c) : ld (hl),a : inc hl : in a,(c) : ld (hl),a : inc hl : in a,(c) : ld (hl),a
+	ld	hl,rel_buf
+	ld	d,0xB0
+	ld	e,8
+.sam:	ld	a,(hl)
+	ld	bc,0x00FE : out (c),a
+	ld	bc,0x00FF : out (c),d
+	inc	hl : inc d : dec e : jr nz,.sam
+	ENDIF
+	ret
+	ENDIF
+
 ; [⑦(4)] area_advance: 次エリアへ切替(暗転→タイル/マップ/gobj→adv_off reset→prefill→取消)。
 area_advance:
 	; next = (area_cur==15) ? 6 : area_cur+1  (エリア16→7ループ)
@@ -1732,6 +1793,7 @@ bm_first:	db	1		; [BOOTMEAS] 最初の1マップ decode のみ計測するフラ
 ; [⑦(4)] エリア進行
 area_cur:	db	0		; 現在エリア(0-based, 0=area1)
 adv_off:	dw	0		; adv のエリア先頭オフセット(= framecnt>>3 at switch)
+seam_done:	db	0		; [③] 1境界で area_advance_seamless を1回だけ発火するガード
 blank_ctr:	db	0		; 切替暗転の残フレーム
 blackpal:	ds	320		; 黒パレット(pal_buf の色を 0 に。boot で生成)
 gl_cnt:		db	0		; gobj_load: 残エントリ
