@@ -25,8 +25,10 @@ cd "$(dirname "$0")/.."
 export PATH="$HOME/.local/bin:$PATH"
 
 W="${1:-$(mktemp -d)}"; mkdir -p "$W"
-AA=roms/arcade/xevious-out/allareas
-EN=roms/arcade/xevious-out/enemies
+# [ROT180既定] 地形 180° が本番既定なので、perf も回転版データ(allareas_rot180/ enemies_rot180/)で測る。
+#   engine は既定で回転(wcy 反転)。非回転を測るなら AA/EN を非 rot180 に戻し DEF に --define NOROT180 を足す。
+AA=roms/arcade/xevious-out/allareas_rot180
+EN=roms/arcade/xevious-out/enemies_rot180
 AREAS=(01 02 03 04 05 06 07 08 09 10 11 12 13 14 15 16)
 NFRAMES=56000
 TAIL_START=6000
@@ -35,8 +37,8 @@ WIN=1000
 echo "[perf_cases] workdir=$W  NFRAMES=$NFRAMES"
 
 # --- Domogram データ(bake+combine, 速い。roms/ の enemies/ に出力)---
-python3 -I tools/xevi_domogram_bake.py    >/dev/null
-python3 -I tools/xevi_domogram_combine.py >/dev/null
+XEVI_ROT180=1 python3 -I tools/xevi_domogram_bake.py    >/dev/null
+XEVI_ROT180=1 python3 -I tools/xevi_domogram_combine.py >/dev/null
 
 # --- map を LZSS 圧縮(workdir へ)---
 for n in $AREAS; do
