@@ -160,11 +160,15 @@ domo_spawn:
 .sl:	ld	a, (dm_pn) : ld c, a : ld a, (dm_pidx) : cp c : ret nc	; 全て処理済
 	ld	l, a : ld h, 0 : add hl, hl : ld d, h : ld e, l : add hl, hl : add hl, de	; *6
 	ld	de, dm_pend : add hl, de : push hl : pop iy
-	ld	l, (iy + 0) : ld h, 0			; col(u8)
-	ld	de, (coarse) : or a : sbc hl, de		; scol = col - coarse
-	jr	c, .next				; scol<0 = 見逃し → 捨てる
-	ld	a, h : or a : ret nz			; まだ遠い(以降はさらに遠い)
-	ld	a, l : cp COLS : ret nc			; まだ画面右外
+	; [③] seamless: scol=(col-coarse_lo)&0xFF。昇順 pending なので scol<COLS=画面内→出現、
+	;   scol>=128=後方(見逃し)→捨てる(dm_pidx++)、[COLS,128)=前方遠い→停止(以降さらに遠い)。
+	ld	a, (coarse) : ld e, a			; coarse_lo
+	ld	a, (iy + 0)				; col(u8, エリア相対)
+	sub	e					; scol
+	cp	COLS : jr c, .spawn164			; 画面内
+	cp	0x80 : jr nc, .next			; 後方(見逃し)→捨てる
+	ret						; 前方遠い→停止
+.spawn164:
 	call	domo_find_free : ret nz			; 空き無し → 次フレーム再試行
 	ld	(ix + DM_ACT), 1
 	ld	(ix + DM_FTMR), 1			; 初弾は前方帯到達直後
@@ -285,11 +289,15 @@ domo_draw:
 	ld	b, MAX_DOMOGRAM / 2
 .dl:	push	bc
 	bit	0, (ix + DM_ACT) : jp z, .dn
-	ld	l, (ix + DM_WCXH) : ld h, 0		; col
-	ld	de, (coarse) : or a : sbc hl, de		; scol
-	jp	c, .offleft				; scol<0 → 左に消えた
-	ld	a, h : or a : jp nz, .dn			; scol>=256 → 右遠く(未出現)
-	ld	a, l : cp COLS - 1 : jp nc, .dn		; scol>=COLS-1 → 右外(まだ)
+	; [③] seamless: scol=(col-coarse_lo)&0xFF。scol<COLS-1=画面内、scol>=128=後方(左へ消失)、
+	;   [COLS-1,128)=前方(未出現)。
+	ld	a, (coarse) : ld e, a			; coarse_lo
+	ld	a, (ix + DM_WCXH)			; col
+	sub	e					; scol
+	cp	COLS - 1 : jr c, .draw289		; 画面内
+	cp	0x80 : jp nc, .offleft			; 後方(左に消えた)
+	jp	.dn					; 前方(未出現)→次
+.draw289:
 	ld	c, a					; c=ex(scol)
 	ld	a, (ix + DM_WCYH)			; ey(row)
 	cp	ROWS - 1 : jr nc, .vhide		; 2x2 が画面下(row>=24)/負行にはみ出す→非表示
@@ -368,11 +376,12 @@ domo_fire:
 	ld	a, (framecnt) : and 7 : cp 1 : ret nz
 	ld	ix, dm_slots + 7
 .one:	bit	0, (ix + DM_ACT) : ret z
-	ld	l, (ix + DM_WCXH) : ld h, 0		; col
-	ld	de, (coarse) : or a : sbc hl, de		; scol
-	ret	c					; 後方(自機過ぎ)→停止
-	ld	a, h : or a : ret nz			; 前方遠すぎ
-	ld	a, l : cp COLS : ret nc			; 画面右外
+	; [③] seamless: scol=(col-coarse_lo)&0xFF。full coarse だと area 2+ で scol<0 になり
+	;   Domogram が撃たなくなるため coarse_lo(8bit)で計算(前方/後方とも scol>=COLS で撃たない)。
+	ld	a, (coarse) : ld e, a			; coarse_lo
+	ld	a, (ix + DM_WCXH)			; col(エリア相対)
+	sub	e
+	cp	COLS : ret nc				; scol>=COLS → 画面外(前方 or 後方)→撃たない
 	ld	c, a					; c=scol
 	ld	a, (ix + DM_WCYH) : cp ROWS : ret nc	; 画面外の行からは撃たない
 	ld	a, (ffreq_reg + 2) : ld e, a		; gnd_stop_fire
@@ -535,12 +544,12 @@ dmc_step:
 	ret
 .fin:	; 4象限完了: 表示中なら GRAM へ(crater_pump が数フレームで描く)。入り切っていない
 	;   右端側は以後のスクロールが map から描くので不要。左端(scol<1)は消えるだけなので省略。
-	ld	l, (iy + 1) : ld h, 0
-	ld	de, (coarse) : or a : sbc hl, de	; scol
-	jr	c, .drop
-	ld	a, h : or a : jr nz, .drop
-	ld	a, l : or a : jr z, .drop
-	cp	COLS - 1 : jr nc, .drop
+	; [③] seamless: scol=(col-coarse_lo)&0xFF(full coarse は area 2+ で破綻)。
+	ld	a, (coarse) : ld e, a
+	ld	a, (iy + 1)
+	sub	e
+	or	a : jr z, .drop				; scol==0 → 省略(左端)
+	cp	COLS - 1 : jr nc, .drop			; 画面外(前方/後方)→省略
 	ld	(col_ex), a
 	IFDEF	DMCPROBE
 	ld	bc, 0x00FE : out (c), a			; [検証] PROBE 0x83<scol>: crater GRAM 登録
