@@ -40,6 +40,24 @@ VSIZE	EQU 10
 
 ; ---- PSG レジスタ書き込み: D=reg, E=値 ----
 psg_set:
+	IFDEF	SFXTRACE
+	; [SFXTRACE] R7(ミキサ) を shadow 保存、R10(vol C)書込を計数
+	push	af
+	ld	a, d
+	cp	7
+	jr	nz, .nps7
+	ld	a, e
+	ld	(r7_shadow), a
+.nps7:	ld	a, d
+	cp	10
+	jr	nz, .nps10
+	push	hl
+	ld	hl, (psgc_cnt)
+	inc	hl
+	ld	(psgc_cnt), hl
+	pop	hl
+.nps10:	pop	af
+	ENDIF
 	ld	bc, PSG_REG
 	out	(c), d
 	ld	bc, PSG_DAT
@@ -275,6 +293,13 @@ spb_nx:
 
 ; ---- SE 開始(HL=SEデータ先頭)----
 snd_play_se:
+	IFDEF	SFXTRACE
+	push	hl
+	ld	hl, (sps_cnt)		; [SFXTRACE] snd_play_se 呼出回数
+	inc	hl
+	ld	(sps_cnt), hl
+	pop	hl
+	ENDIF
 	ld	a, (hl)
 	inc	hl
 	or	a
@@ -291,6 +316,13 @@ snd_play_se:
 	ld	(sfx_v+V_ACT), a
 	ld	a, 2
 	ld	(cur_pch), a		; PSG C
+	; [SFX修正] tone SFX 開始時に tone C を有効化(R7=0x38)。sps_noise は R7=0x1C
+	;   (tone C off/noise C on)に設定するので、直前が noise SFX だと tone C が無効の
+	;   まま残り tone SFX(kankan/zapper/blaster)が無音になる。noise の R7 設定と対称に
+	;   tone 側も開始時に設定する(終了時の復帰と合わせて全 SFX が鳴り続ける)。
+	ld	d, 7
+	ld	e, 0x38
+	call	psg_set
 	ld	iy, sfx_v
 	call	voice_load
 	ld	a, (sfx_v+V_ACT)
@@ -378,6 +410,7 @@ st_sfx:
 	ld	a, (sfx_v+V_ACT)
 	or	a
 	ret	nz
+	IFNDEF	OLDSFXEND
 	; [③修正] 終了時に R7(ミキサ)と vol C を復帰(noise SFX と同じ)。これを
 	;   怠ると tone SFX(kankan)の残留状態で後続の kankan が鳴らなくなる。
 	ld	d, 7
@@ -386,6 +419,7 @@ st_sfx:
 	ld	d, 10
 	ld	e, 0
 	call	psg_set
+	ENDIF
 	xor	a			; SFX終了
 	ld	(sfx_type), a
 	ret
@@ -460,3 +494,8 @@ cur_mute:	db 0
 sp_hdr:		dw 0
 sp_cnt:		db 0
 sp_i:		db 0
+	IFDEF	SFXTRACE
+sps_cnt:	dw 0			; [SFXTRACE] snd_play_se 呼出累計
+psgc_cnt:	dw 0			; [SFXTRACE] R10(vol C)書込累計
+r7_shadow:	db 0x38			; [SFXTRACE] 最後に書いた R7(ミキサ)
+	ENDIF

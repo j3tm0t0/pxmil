@@ -697,6 +697,26 @@ SOL_FRAME	EQU	1280		; coarse≈79 → Sol は画面 col≈23 に表示
 	ld	bc, 0x00FF
 	out	(c), h
 	ENDIF
+	IFDEF	SFXTRACE
+	; [SFXTRACE] 512 フレームごとに sps_cnt/psgc_cnt/r7_shadow/sfx_type/framecnt を出力。
+	;   snd_play_se 呼出(sps)は増えるのに PSG C 書込(psgc)が止まる/ R7 で C がミュート、
+	;   の瞬間を探す。
+	ld	a, (framecnt)
+	and	0x7F
+	jr	nz, .sfxt_skip
+	ld	hl, (sps_cnt)
+	ld	a, l : ld bc,0x00FE : out (c),a : ld a,0xF0 : ld bc,0x00FF : out (c),a
+	ld	a, h : ld bc,0x00FE : out (c),a : ld a,0xF1 : ld bc,0x00FF : out (c),a
+	ld	hl, (psgc_cnt)
+	ld	a, l : ld bc,0x00FE : out (c),a : ld a,0xF2 : ld bc,0x00FF : out (c),a
+	ld	a, h : ld bc,0x00FE : out (c),a : ld a,0xF3 : ld bc,0x00FF : out (c),a
+	ld	a,(r7_shadow) : ld bc,0x00FE : out (c),a : ld a,0xF4 : ld bc,0x00FF : out (c),a
+	ld	a,(sfx_type) : ld bc,0x00FE : out (c),a : ld a,0xF5 : ld bc,0x00FF : out (c),a
+	ld	hl,(framecnt)
+	ld	a, l : ld bc,0x00FE : out (c),a : ld a,0xF6 : ld bc,0x00FF : out (c),a
+	ld	a, h : ld bc,0x00FE : out (c),a : ld a,0xF7 : ld bc,0x00FF : out (c),a
+.sfxt_skip:
+	ENDIF
 	jp	mainloop
 
 	IFDEF	MEAS
