@@ -9,6 +9,12 @@
 	DEVICE	NONE
 	ORG	0x0100
 
+	IFDEF	SEFAST
+SE_INTERVAL	EQU	3		; [検証] SE を 3f 間隔で連打=env が高いうちに SFX を中断
+	ELSE				;   (R7 固着・2ch PSG B ドローン等の中断バグ検出用)
+SE_INTERVAL	EQU	90
+	ENDIF
+
 start:
 	di
 	ld	sp, 0xF000
@@ -18,7 +24,7 @@ start:
 	call	start_bgm
 	xor	a
 	ld	(se_id), a
-	ld	a, 90
+	ld	a, SE_INTERVAL
 	ld	(se_timer), a
 .loop:
 	call	frame_delay
@@ -44,7 +50,7 @@ start:
 	dec	a
 	ld	(se_timer), a
 	jr	nz, .nose
-	ld	a, 90
+	ld	a, SE_INTERVAL
 	ld	(se_timer), a
 	ld	a, (se_id)		; id -> SEデータポインタ
 	add	a, a
@@ -109,7 +115,11 @@ probe16:
 se_table:
 	dw	se00, se01, se02, se03, se04, se05, se06, se07, se08, se09
 
+	IFDEF	ARPBGM
+bgm_data:	incbin	"roms/arcade/xevious-out/sound/xevi_arpeggio.bin"	; [検証] 1ch BGM=飛行中。2ch SFX 中断で PSG B 取り残しを検出
+	ELSE
 bgm_data:	incbin	"roms/arcade/xevious-out/sound/xevi_bgm.bin"
+	ENDIF
 se00:	incbin	"roms/arcade/xevious-out/sound/se_00_zapper.bin"
 se01:	incbin	"roms/arcade/xevious-out/sound/se_01_blaster.bin"
 se02:	incbin	"roms/arcade/xevious-out/sound/se_02_flyhit.bin"

@@ -314,6 +314,15 @@ sps_entry:
 	or	a
 	ret	nz			; 高優先 SFX 再生中 + 低優先新規 → 無視
 sps_accept:
+	IFDEF	SFX2CH
+	ld	a, (sfx_type)		; 2ch SFX を中断するなら先に PSG B を解放
+	cp	3			;   (sfx_v2 が取り残されて C#7 がドローンするのを防ぐ)
+	jr	nz, .nob
+	push	hl
+	call	sfx_release_b
+	pop	hl
+.nob:
+	ENDIF
 	ld	a, (sfx_prio_req)
 	ld	(sfx_prio), a
 	IFDEF	SFX2CH
@@ -611,13 +620,19 @@ sfx_end_restore2:
 	jr	z, .coff
 	call	voice_wperiod
 	call	voice_wvol
-	jr	.bchk
+	jr	sfx_release_b
 .coff:
 	ld	d, 10
 	ld	e, 0
 	call	psg_set
-.bchk:
-	; PSG B (bgm_v1)
+	; fall through → PSG B 解放
+; ---- PSG B を解放(2ch SFX の終了・中断共通)。bgm_v1(PSG B)が BGM なら
+;   period/vol を復帰、でなければ vol B=0。sfx_v2 を無効化(残留ドローン防止)。
+;   ※2ch SFX が別 SFX に中断されると sfx_v2 が V_ACT=1 のまま取り残され、
+;     R9/R2/R3 がカンカンの最後の音(C#7)を鳴らし続けるため、中断時も必ず呼ぶ。
+sfx_release_b:
+	xor	a
+	ld	(sfx_v2+V_ACT), a
 	ld	a, (bgm_nch)
 	cp	2
 	jr	c, .boff
