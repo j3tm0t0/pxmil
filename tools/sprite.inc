@@ -4309,8 +4309,21 @@ ship_hit:
 	ld	a, (game_over)
 	or	a
 	ret	nz
-	; [70%チェックポイント用] 死亡時のエリア進捗(coarsen 下位)を捕捉
-	ld	a, (coarsen)
+	; [70%チェックポイント用] 死亡時のエリア相対進捗を捕捉。
+	;   [③] seamless(coarse 継続)では coarsen&0xFF はエリア頭で 217 から始まり 0 ではない。
+	;   edge=(coarsen+39)&0xFF がエリア相対(0=新エリア頭)。画面左端の進捗 = edge-39(<39 は 0)。
+	;   これは旧 reset 版の coarsen(0..216)と一致し、CHECKPOINT_COL=151(70%)判定が正しく働く。
+	ld	hl, (coarsen)
+	ld	de, COLS - 1		; +39
+	add	hl, de
+	ld	a, l			; edge = (coarsen+39)&0xFF
+	cp	COLS - 1		; edge < 39?(エリア頭付近)
+	jr	nc, .dc_ok
+	xor	a			; → 進捗 0
+	jr	.dc_set
+.dc_ok:
+	sub	COLS - 1		; edge - 39 = 画面左端のエリア相対進捗
+.dc_set:
 	ld	(death_col), a
 	; 爆発を自機セルへ
 	ld	a, (ship_hx)
