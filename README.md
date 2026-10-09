@@ -5,6 +5,12 @@ SHARP X1 エミュレータ **X millennium** の PSP 移植です。
 PSP 用のフロントエンド（`psp/`）を追加しています。
 上流のソースツリーは `xmil/` 以下にあります。
 
+> **ゲーム本体 (縦持ちゼビウス) は別リポジトリ `zxevious` へ移動しました。**
+> 以前 `tools/` 配下で開発していた X1 turboZ 用デモ (emmscroll64.asm / sprite.inc /
+> ship.inc / xevi_*.py など) は、`git filter-repo` で履歴ごと `zxevious` に切り出しました
+> (隣接配置: `../zxevious`)。このリポジトリにはエミュレータ本体と汎用テストツール
+> (`tools/tz*.asm`, `tools/ppsspp-run.sh`, `tools/mkx1disk.py`, `tools/device-test.sh`) のみ残しています。
+
 ![icon](assets/icon0.png)
 
 ## 特徴
