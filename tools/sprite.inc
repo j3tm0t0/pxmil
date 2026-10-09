@@ -4160,20 +4160,17 @@ turret_fire:
 	ld	a, (ix + 3)		; mask_id(0=空き/破壊)
 	or	a
 	jp	z, .tfn
-	; scol = tile_col(16bit) - coarse
-	ld	l, (ix + 0)
-	ld	h, (ix + 1)
-	ld	de, (coarse)
-	or	a
-	sbc	hl, de
-	jp	c, .tfn			; scol<0(自機を過ぎ後方)→停止
-	ld	a, h
-	or	a
-	jp	nz, .tfn		; scol>=256(前方遠すぎ=未出現)
-	ld	a, l			; scol(0..)
+	; [③] scol = (col_lo - coarse_lo) & 0xFF。seamless(coarse 継続)では full coarse だと
+	;   area 2+ で scol<0 になり全砲台が停止するため、gobj_find 同様 coarse_lo(8bit)で計算。
+	;   scol<COLS で画面内、それ以外(前方 or 後方)はこのフレームは撃たない。col_hi は
+	;   マージのセンチネルなので col は col_lo のみ。
+	ld	a, (coarse)		; coarse_lo
+	ld	e, a
+	ld	a, (ix + 0)		; col_lo(砲台のエリア相対列)
+	sub	e
 	cp	COLS
-	jp	nc, .tfn		; scol>=COLS(画面右外=前方まだ)
-	ld	c, a			; c=scol
+	jp	nc, .tfn		; scol>=COLS → 画面外
+	ld	c, a			; c=scol(0..COLS-1)
 	; 前方帯しきい値 = COLS-1 - gnd_stop_fire (負はクランプ0)
 	ld	a, (ffreq_reg + 2)	; gnd_stop_fire
 	ld	e, a
