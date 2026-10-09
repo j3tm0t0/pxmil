@@ -5744,11 +5744,10 @@ enemy_data:
 ;   未指定は Toroid を流用(汎用円盤)。
 	IFDEF	JARA_EXTDATA
 jara_data:
-	IFDEF	ROT180
-	INCLUDE	"roms/jara_rot180.inc"	; [180°] Jara の元データは rot0=180°ズレ(xevi-re 監査)。
-	ELSE				;   回転ビルドは xevi_sprite_flip180.py の反転版を参照(元は不上書き)。
-	INCLUDE	"roms/jara_ext.inc"
-	ENDIF
+	; [向き修正] 元 roms/jara_ext.inc は rot0=プレイヤー視点で 180°ズレ(xevi-re 監査)。
+	;   スプライトは画面(自機)基準なので地図回転と無関係に逆さまになるバグ。非回転/回転とも
+	;   反転版(xevi_sprite_flip180.py 生成、元は不上書き)を無条件で参照する。
+	INCLUDE	"roms/jara_rot180.inc"
 	ELSE
 jara_data	EQU	enemy_data
 	ENDIF
