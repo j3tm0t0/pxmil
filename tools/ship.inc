@@ -132,6 +132,9 @@ ship_update:
 	ld	a, (ship_st)
 	or	a
 	jr	nz, .nomove		; ALIVE 以外は移動しない(overlay_ship が隠蔽)
+	ld	a, (scroll_only)	; [scroll-only] 自機は start 位置固定(移動も描画もしない)
+	or	a
+	jr	nz, .nomove
 	call	move_ship
 .nomove:
 	call	overlay_ship
@@ -544,6 +547,9 @@ move_ship:
 ;   初めて erase+draw される。sprite は TVRAM 層で terrain(GRAM/chunk)と別レイヤ
 ;   なので、非表示ページに残した stale sprite は chunk に壊されない。描画コスト半減。
 overlay_ship:
+	ld	a, (scroll_only)	; [scroll-only] モード中は自機を表示しない
+	or	a
+	jp	nz, .hide_sp
 	ld	a, (ship_st)		; [②] ALIVE 以外(DYING/READY_HOLD/GAMEOVER)は自機を消して描かない
 	or	a
 	jp	nz, .hide_sp

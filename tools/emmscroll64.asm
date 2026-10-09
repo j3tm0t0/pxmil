@@ -2103,6 +2103,9 @@ snd_bgm_mgr:
 	ld	a, (game_over)
 	or	a
 	jr	nz, .silent
+	ld	a, (scroll_only)	; [scroll-only] モード中は無音(トリガーで opening 開始)
+	or	a
+	jr	nz, .silent
 	; --- BGM を鳴らすべき状態 ---
 	ld	a, (bgm_silent)
 	or	a

@@ -103,6 +103,10 @@ sprite_init:
 	ld	(death_col), a
 	ld	a, READY_FRAMES		; 開始時も READY 猶予(敵抑止。ROM の display_player_start_msgs 相当)
 	ld	(ready_tmr), a
+	ld	a, 1			; [scroll-only] 起動時はスクロールオンリーモード(明示初期化=db頼みにしない)
+	ld	(scroll_only), a
+	xor	a
+	ld	(trig_prev), a		; [scroll-only] トリガーエッジ検出の前回状態(0=押下扱い→release後の押下で開始)
 	call	gen_reticle
 	call	gen_reticle_red		; [M8-3] ロック点滅用の赤版照準 PCG
 	call	gen_blaster
@@ -371,6 +375,9 @@ reticle_erase:
 	ret
 
 reticle_draw:
+	ld	a, (scroll_only)	; [scroll-only] モード中は照準を出さない
+	or	a
+	ret	nz
 	ld	a, (ship_st)		; [②] ALIVE 以外は照準を描かない(READY 画面を汚さない)
 	or	a
 	ret	nz
@@ -434,6 +441,9 @@ gen_blaster:
 	ret
 
 fire_blaster:
+	ld	a, (scroll_only)	; [scroll-only] モード中は発射しない
+	or	a
+	ret	nz
 	ld	a, (ship_st)		; [②] ALIVE 以外(DYING/READY_HOLD/GAMEOVER)は発射/照準描画しない
 	or	a
 	ret	nz
@@ -1444,6 +1454,7 @@ sprite_update:
 	ENDIF
 	call	ship_tick		; [敵弾] 無敵タイマ減算
 	call	death_tick		; [死亡演出] DYING/game_over タイマ → respawn/restart
+	call	scroll_only_tick	; [scroll-only] トリガー押下でゲーム開始(モード中のみ有効)
 	call	fire_check		; トリガ1でザッパー発射
 	call	fire_blaster		; トリガ2でブラスター発射
 	call	enemy_spawn		; 一定間隔で右端から出現(game_over 中は内部で抑止)
@@ -1577,6 +1588,9 @@ sprite_update:
 ; 衝突判定(セル空間)。弾セルが敵2x2矩形内 → 両方消滅 + 爆発。
 ;   敵2x2が自機3x3矩形と重なる → 敵消滅 + 爆発(自機は当面無傷)。
 collision_check:
+	ld	a, (scroll_only)	; [scroll-only] 衝突判定全体をスキップ(弾vs敵は弾が無く no-op、
+	or	a			;   敵vs自機は不可視自機で敵を消さないため)
+	ret	nz
 	; --- 弾 vs 敵 ---
 	xor	a
 	ld	(spr_i), a		; 弾 index
@@ -1810,10 +1824,46 @@ bacura_shot_check:
 	ld	(spr_i), a
 	jp	.bl
 
+; [scroll-only] 起動後のスクロールオンリー中、トリガー(ザッパー TRIG1 / ブラスター TRIG2)
+;   押下を検出したらゲーム開始。押した瞬間(最初に押されたフレーム)で開始し、保持された
+;   トリガーで開始直後に射撃しないよう fire_tmr/bfire_tmr に遅延を入れる。sprite_update
+;   先頭から毎フレーム呼ぶ。scroll_only=0(通常プレイ)中は即 return。
+scroll_only_tick:
+	ld	a, (scroll_only)
+	or	a
+	ret	z			; 通常プレイ: 何もしない
+	call	read_joy		; a = PSG port A (負論理)
+	and	TRIG1 | TRIG2		; bit5(0x20)=ザッパー, bit6(0x40)=ブラスター。0x60=両非押下
+	ld	c, a			; c = 今回のトリガ状態(マスク後)
+	ld	a, (trig_prev)
+	ld	hl, trig_prev
+	ld	(hl), c			; trig_prev = 今回(更新)
+	; エッジ検出: 前回=0x60(両非押下)かつ 今回≠0x60(いずれか押下)の瞬間だけ開始。
+	;   保持中は開始しない(押した瞬間のみ)。起動時 trig_prev=0 なので release 後の押下が必要。
+	cp	TRIG1 | TRIG2		; 前回 両非押下?
+	ret	nz			; 前回すでに押下 → エッジでない
+	ld	a, c
+	cp	TRIG1 | TRIG2		; 今回 両非押下?
+	ret	z			; 今回も非押下 → エッジでない
+	; --- トリガー押下エッジ → その場でゲーム開始(巻戻し無し) ---
+	xor	a
+	ld	(scroll_only), a
+	ld	a, 3
+	ld	(lives), a		; 新規ゲーム=残機3
+	call	ship_respawn		; 自機出現(start位置)+ READY 猶予 + opening BGM
+	ld	a, FIRE_DELAY		; 保持中のトリガーで開始直後に発射させない
+	ld	(fire_tmr), a
+	ld	a, BLASTER_DELAY
+	ld	(bfire_tmr), a
+	ret
+
 ; [ROM準拠 handle_shooting] 非押下で fire_tmr=1(離すと即発可=連打で速い)。押下中は
 ;   毎フレーム -1、0 で発射+fire_tmr=FIRE_DELAY(保持時は20f周期)。最大3発は spawn_bullet
 ;   の空きslot判定で担保。(xevi-re ROM 0x1772 準拠)
 fire_check:
+	ld	a, (scroll_only)	; [scroll-only] モード中は発射しない(トリガーは scroll_only_tick が消費)
+	or	a
+	ret	nz
 	ld	a, (ship_st)		; [②] ALIVE 以外は発射しない
 	or	a
 	ret	nz
@@ -4300,6 +4350,9 @@ ship_hit:
 	IFDEF	PERF_NODEATH
 	ret				; [perf] worst-case 計測: 自機を死なせない(爆発/game_over を回避)
 	ENDIF
+	ld	a, (scroll_only)	; [scroll-only] 自機の当り判定をしない(どの経路からも死なない)
+	or	a
+	ret	nz
 	ld	a, (ship_st)
 	or	a
 	ret	nz			; DYING/WAIT 中 → 二重死亡を無視
@@ -4515,32 +4568,18 @@ clear_ready:
 
 ; restart_game: game_over 後の自動リスタート(area1 頭・残機3・opening)。
 restart_game:
-	ld	a, 3
-	ld	(lives), a
 	xor	a
 	ld	(game_over), a		; game_over 解除
 	IFDEF	ALLAREAS
-	ld	(area_cur), a		; area1(0)
-	; [②/restart] 自動リスタートも死亡復活と同じく「黒+READY で area1 reload を隠し、
-	;   READY_HOLD の間に残スプライトを一掃」する。従来 restart は READY も clear_tvram も
-	;   無く、game_over→自動restart 経路で READY 不可視 + 白リング(Toroid/敵弾)残存だった。
-	ld	ix, blackpal
-	call	load_palette64
-	call	erase_all_sprites
-	call	clear_tvram		; [修正] reload の「前」に残セル(リング)を一掃(② と同根)
-	call	draw_ready
-	call	area_reload		; area1 の頭から
-	call	sprites_reset
-	xor	a			; blank_ctr=0: READY_HOLD 中は黒を保つ
-	ld	(blank_ctr), a
-	ld	ix, blackpal
-	call	load_palette64
-	call	clear_tvram		; 残スプライト(白リング等)を一掃
-	call	draw_ready
-	ld	a, 3
-	ld	(ship_st), a		; READY_HOLD(満了で finish_respawn→ship_respawn)
-	ld	a, READY_HOLD_FRAMES
-	ld	(death_tmr), a
+	; [scroll-only] game_over 後はタイトルでなく「スクロールオンリーモード」に戻す
+	;   (ユーザー依頼 2026-10-09)。巻戻し(area reload)はせず、死亡時の弾/爆発/敵の
+	;   残セルだけ消してシームレスにスクロールを続ける。次のトリガーで再開始(lives=3)。
+	ld	(ship_st), a		; ALIVE(=0): enemy_spawn が ship_st 依存なので敵を出すため 0 に
+	ld	a, 1
+	ld	(scroll_only), a
+	call	erase_all_sprites	; 弾/爆発/敵/照準の残セルを消去
+	call	sprites_reset		; active=0
+	call	clear_tvram		; 残 PCG(リング等)一掃
 	ret
 	ELSE
 	call	erase_all_sprites
@@ -4795,6 +4834,9 @@ ebul_update:
 	cp	ROWS
 	jp	nc, .kill
 	; --- 自機衝突: 弾2x2 と 自機3x3 の重なり(col in [sc-1,sc+2], row in [sr-1,sr+2]) ---
+	ld	a, (scroll_only)	; [scroll-only] 敵弾は自機位置を素通り(消さず描画継続)
+	or	a
+	jr	nz, .noship
 	ld	a, (ship_hx)
 	srl	a
 	srl	a
@@ -5651,6 +5693,9 @@ lives:		db	3		; [敵弾] 残機(0 でゲームオーバー)
 ship_inv:	db	0		; 復活無敵フレーム
 game_over:	db	0		; 1=ゲームオーバー(自動リスタート待ちで一時的)
 ship_st:	db	0		; 0=ALIVE 1=DYING 2=GAMEOVER_WAIT
+scroll_only:	db	1		; [scroll-only] 1=起動後のスクロールオンリー(自機非表示/非当り/無射撃/無音)。
+					;   トリガー(ザッパー/ブラスター)押下で 0=ゲーム開始。game_over 後も 1 に戻る。
+trig_prev:	db	0		; [scroll-only] トリガーエッジ検出の前回状態(マスク後。0x60=両非押下)
 death_tmr:	db	0		; DYING/GAMEOVER_WAIT の残フレーム
 ready_tmr:	db	0		; 復活/開始後の READY 猶予(>0 で敵出現/砲台発射抑止)
 death_col:	db	0		; 死亡時の coarsen 下位(70%チェックポイント判定用)
