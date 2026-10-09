@@ -4483,10 +4483,10 @@ draw_ready:
 	ld	c, e
 	ld	a, (hl)
 	out	(c), a
-	ld	a, d			; TATTR[de] = 0x07
+	ld	a, d			; TATTR[de] = 色 slot3(ROM 準拠のグレー #707070)
 	or	(TATTR >> 8)
 	ld	b, a
-	ld	a, 0x07
+	ld	a, 0x03			; [⑤] テキスト pen slot3 = tpal_a[2]=0x15 = #707070(ROM の READY 色)
 	out	(c), a
 	inc	hl
 	inc	de
