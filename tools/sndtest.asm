@@ -116,7 +116,11 @@ se02:	incbin	"roms/arcade/xevious-out/sound/se_02_flyhit.bin"
 se03:	incbin	"roms/arcade/xevious-out/sound/se_03_teleport.bin"
 se04:	incbin	"roms/arcade/xevious-out/sound/se_04_oneup.bin"
 se05:	incbin	"roms/arcade/xevious-out/sound/se_05_bonus.bin"
+	IFDEF	SFX2CH
+se06:	incbin	"roms/arcade/xevious-out/sound/se_06_bacura_2ch.bin"
+	ELSE
 se06:	incbin	"roms/arcade/xevious-out/sound/se_06_bacura.bin"
+	ENDIF
 se07:	incbin	"roms/arcade/xevious-out/sound/se_07_exp_aerial.bin"
 se08:	incbin	"roms/arcade/xevious-out/sound/se_08_exp_ground.bin"
 se09:	incbin	"roms/arcade/xevious-out/sound/se_09_exp_solvalou.bin"

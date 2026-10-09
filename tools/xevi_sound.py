@@ -146,6 +146,52 @@ def synth_channel(seq, tempo, slot):
             phase += step
     return samples
 
+def synth_psg_channel(seq, tempo, vmode, attack):
+    """X1 PSG(50%矩形)でチャンネルを合成。音程は psg_period 経由(=実機の
+       period 量子化を反映)、音量は env_vol(120Hz tick)で再現。カンカンの
+       1ch/2ch A/B 試聴用(実機 sndplay.inc と同じ発音モデル)。"""
+    samples = []; phase = 0.0
+    for (pitch, dur) in seq:
+        frames = max(1, dur * tempo)                 # 120Hz tick
+        nsamp = int(SR * frames / FPS)
+        if pitch == 0xC0:
+            hz = 0.0; rest = True
+        else:
+            per = psg_period(note_hz(pitch))
+            hz = PSG_CLK / (16.0 * per) if per > 0 else 0.0
+            rest = False
+        step = hz / SR
+        for n in range(nsamp):
+            fr = int(n * FPS / SR)
+            vol = env_vol(fr, vmode, attack, rest)
+            v = 1.0 if (phase % 1.0) < 0.5 else -1.0  # 50% 矩形
+            samples.append(v * (vol / 15.0))
+            phase += step
+    return samples
+
+def render_psg_sfx_wav(snd_no, path, nch):
+    """tune を PSG 矩形で nch(1 or 2)チャンネル合成して WAV 出力。試聴 A/B 用。"""
+    chans, wsel, tempo, base = tune_seqs(snd_no)
+    use = min(nch, 2)
+    outs = []
+    for i in range(use):
+        ci = chans[i] if i < len(chans) else chans[0]
+        ei = i if i < len(chans) else 0
+        _, vmode, attack = chan_env(base + ei)
+        outs.append(synth_psg_channel(ci, tempo, vmode, attack))
+    n = max((len(c) for c in outs), default=0)
+    mix = [0.0] * n
+    for c in outs:
+        for i, s in enumerate(c):
+            mix[i] += s
+    # 固定ゲイン(ch数で割らない)。実機 PSG は 2ch を加算するので 2ch は 1ch より
+    #   大きく・厚くなる。A/B の変数(1ch vs 2ch)を音量差込みで忠実に聴けるようにする。
+    g = 0.45                                  # 2ch 加算時もクリップしない固定ゲイン
+    pcm = b"".join(struct.pack("<h", int(max(-1, min(1, s * g)) * 32767)) for s in mix)
+    with wave.open(path, "wb") as w:
+        w.setnchannels(1); w.setsampwidth(2); w.setframerate(SR); w.writeframes(pcm)
+    return n / SR
+
 def render_tune_wav(snd_no, path):
     chans, wsel, tempo, base = tune_seqs(snd_no)
     chan_samps = [synth_channel(s, tempo, base + i) for i, s in enumerate(chans)]
@@ -194,6 +240,27 @@ def sfx_tone_bin(snd_no):
     _, vmode, attack = chan_env(base)
     return bytes([0x00, vmode, attack]) + encode_stream(chans[0], tempo)
 
+def sfx_tone2_bin(snd_no):
+    """2ch tone SFX(type=0x02)。ROM の tune が 2ch の SFX(カンカン=tune A)を
+       PSG B+C の2本で鳴らす版。arpeggio(PSG A のみ)と共存できる。
+       形式: [0x02, vm0, at0, off0:2(LE), vm1, at1, off1:2(LE)] + stream0 + stream1。
+         off は SE データ先頭からの stream オフセット。stream0=PSG C, stream1=PSG B。
+       1ch の tune(chans=1)でも stream1 に同じ列を入れユニゾンにできる(汎用化)。"""
+    chans, wsel, tempo, base = tune_seqs(snd_no)
+    c0 = chans[0]
+    c1 = chans[1] if len(chans) > 1 else chans[0]
+    e1 = 1 if len(chans) > 1 else 0
+    _, vm0, at0 = chan_env(base + 0)
+    _, vm1, at1 = chan_env(base + e1)
+    s0 = encode_stream(c0, tempo)
+    s1 = encode_stream(c1, tempo)
+    hdr_len = 9
+    off0 = hdr_len
+    off1 = hdr_len + len(s0)
+    hdr = (bytes([0x02, vm0, at0]) + struct.pack("<H", off0)
+           + bytes([vm1, at1]) + struct.pack("<H", off1))
+    return hdr + s0 + s1
+
 def sfx_noise_bin(name):
     #   [type=0x01, noise_period, dur_frames, init_vol, dstep_lo, dstep_hi]
     #   dstep = (init_vol<<8)//dur = 8.8 固定小数の毎フレーム減衰量。
@@ -208,7 +275,12 @@ def sfx_noise_bin(name):
 EXPLOSIONS = {
     "exp_aerial":   dict(nperiod=10, dur=12, vol=10),   # 空中敵(小・速)
     "exp_ground":   dict(nperiod=16, dur=20, vol=13),   # 地上物(中)
-    "exp_solvalou": dict(nperiod=22, dur=40, vol=15),   # ソルバルウ(大・長・最大)
+    # ソルバルウ(自機死亡)= 最大・最長・最低音。他2種とはっきり差別化し「死んだ」と
+    #   分かる轟音にする(ユーザー:死亡が目立たない → 大きい爆発音が欲しい)。dur は
+    #   EXPLODE_FRAMES=56(sprite.inc)内に収める(死亡→爆発56f表示→暗転+area_reload
+    #   凍結。凍結中は snd_tick がほぼ止まるので dur>56 は引き伸ばされる)。vol=15 最大。
+    #   ※54xx カスタムノイズは別MCUで抽出不可 → これらは設計値(ROM由来でない)。
+    "exp_solvalou": dict(nperiod=26, dur=50, vol=15),   # ソルバルウ(大・長・最大・低)
 }
 def gen_explosion_wav(path, nperiod, dur, vol):
     rng = random.Random(0x5EED)
@@ -256,6 +328,15 @@ def main():
             info = "noise nperiod=%d dur=%d vol=%d" % (p["nperiod"], p["dur"], p["vol"])
         open(os.path.join(OUT, "se_%02d_%s.bin" % (sid, name)), "wb").write(b)
         print("  id%2d %-13s %-30s psg=%dB" % (sid, name, info, len(b)))
+    # カンカン(tune A)2ch 版 + A/B 試聴 WAV(1ch PSG / 2ch PSG / WSG リファレンス)。
+    #   既定ビルドは 1ch(se_06_bacura.bin)のまま。2ch は SFX2CH define 時に差し替える。
+    b2 = sfx_tone2_bin(0x0A)
+    open(os.path.join(OUT, "se_06_bacura_2ch.bin"), "wb").write(b2)
+    render_psg_sfx_wav(0x0A, os.path.join(OUT, "xevi_bacura_psg1ch.wav"), 1)
+    render_psg_sfx_wav(0x0A, os.path.join(OUT, "xevi_bacura_psg2ch.wav"), 2)
+    render_tune_wav(0x0A, os.path.join(OUT, "xevi_bacura_wsgref.wav"))   # WSG 2ch リファレンス
+    print("カンカン A/B: se_06_bacura_2ch.bin(%dB) + xevi_bacura_psg{1,2}ch.wav + xevi_bacura_wsgref.wav"
+          % len(b2))
     print("出力: roms/arcade/xevious-out/sound/(xevi_*.wav 試聴, xevi_bgm/fanfare.bin, se_NN_*.bin)")
     print("※音色=PSG矩形(WSG波形は未再現)。tone SFX再生はch0のみ(多ch SFXの和声は簡略)。")
     print("※音量エンベロープ(byte_517 vmode/attack)はプレイヤ側 env_vol で毎フレーム再現。")

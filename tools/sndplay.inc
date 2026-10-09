@@ -292,7 +292,33 @@ spb_nx:
 	ret
 
 ; ---- SE 開始(HL=SEデータ先頭)----
+;   snd_play_se    : 通常優先度(低)。
+;   snd_play_se_hi : 高優先度。高優先 SFX 再生中は低優先の新規 SFX を無視する
+;                    (自機爆発=死亡音が後続の地上/空中/カンカン SFX に PSG C を
+;                     奪われて途切れないように。死亡演出を目立たせるため)。
+snd_play_se_hi:
+	ld	a, 1
+	ld	(sfx_prio_req), a
+	jr	sps_entry
 snd_play_se:
+	xor	a
+	ld	(sfx_prio_req), a
+sps_entry:
+	ld	a, (sfx_type)
+	or	a
+	jr	z, sps_accept		; 無音 → 受理
+	ld	a, (sfx_prio_req)
+	or	a
+	jr	nz, sps_accept		; 新規が高優先 → 上書き許可
+	ld	a, (sfx_prio)
+	or	a
+	ret	nz			; 高優先 SFX 再生中 + 低優先新規 → 無視
+sps_accept:
+	ld	a, (sfx_prio_req)
+	ld	(sfx_prio), a
+	IFDEF	SFX2CH
+	ld	(se_base), hl		; データ先頭(2ch offset 用)
+	ENDIF
 	IFDEF	SFXTRACE
 	push	hl
 	ld	hl, (sps_cnt)		; [SFXTRACE] snd_play_se 呼出回数
@@ -303,7 +329,15 @@ snd_play_se:
 	ld	a, (hl)
 	inc	hl
 	or	a
-	jr	nz, sps_noise		; type!=0 -> noise
+	jr	z, sps_tone		; type0 -> tone 1ch
+	cp	1
+	jr	z, sps_noise		; type1 -> noise
+	IFDEF	SFX2CH
+	cp	2
+	jp	z, sps_tone2		; type2 -> tone 2ch(PSG B+C)
+	ENDIF
+	jr	sps_noise		; 既定(未知 type)は noise 扱い
+sps_tone:
 	; tone SFX: [vmode, attack] + stream
 	ld	a, (hl)
 	ld	(sfx_v+V_VMODE), a
@@ -365,6 +399,78 @@ sps_noise:
 	ld	(sfx_type), a		; noise
 	ret
 
+	IFDEF	SFX2CH
+; ---- 2ch tone SFX 開始(type=0x02)。PSG B(sfx_v2)+ PSG C(sfx_v)----
+;   データ: [0x02, vm0, at0, off0:2, vm1, at1, off1:2] + stream0 + stream1。
+;     off は SE データ先頭(se_base)からのオフセット。HL は type の次(vm0)を指す。
+;   arpeggio(PSG A のみ)と共存可。opening(3ch)中は PSG B+C を一時奪取。
+sps_tone2:
+	; --- voice C (sfx_v) ---
+	ld	a, (hl)
+	ld	(sfx_v+V_VMODE), a
+	inc	hl
+	ld	a, (hl)
+	ld	(sfx_v+V_ATTACK), a
+	inc	hl
+	ld	e, (hl)
+	inc	hl
+	ld	d, (hl)			; DE=off0
+	inc	hl
+	push	hl
+	ld	hl, (se_base)
+	add	hl, de
+	ld	(sfx_v+V_PTRL), hl	; L->PTRL, H->PTRH
+	pop	hl
+	ld	a, 1
+	ld	(sfx_v+V_ACT), a
+	; --- voice B (sfx_v2) ---
+	ld	a, (hl)
+	ld	(sfx_v2+V_VMODE), a
+	inc	hl
+	ld	a, (hl)
+	ld	(sfx_v2+V_ATTACK), a
+	inc	hl
+	ld	e, (hl)
+	inc	hl
+	ld	d, (hl)			; DE=off1
+	ld	hl, (se_base)
+	add	hl, de
+	ld	(sfx_v2+V_PTRL), hl
+	ld	a, 1
+	ld	(sfx_v2+V_ACT), a
+	; R7 = tone ABC on
+	ld	d, 7
+	ld	e, 0x38
+	call	psg_set
+	xor	a
+	ld	(cur_mute), a
+	; voice C ロード/発音
+	ld	a, 2
+	ld	(cur_pch), a
+	ld	iy, sfx_v
+	call	voice_load
+	ld	a, (sfx_v+V_ACT)
+	or	a
+	jr	z, .skipc
+	call	voice_wperiod
+	call	voice_wvol
+.skipc:
+	; voice B ロード/発音
+	ld	a, 1
+	ld	(cur_pch), a
+	ld	iy, sfx_v2
+	call	voice_load
+	ld	a, (sfx_v2+V_ACT)
+	or	a
+	jr	z, .skipb
+	call	voice_wperiod
+	call	voice_wvol
+.skipb:
+	ld	a, 3
+	ld	(sfx_type), a		; 3 = tone 2ch
+	ret
+	ENDIF
+
 ; ---- 毎フレーム更新 ----
 snd_tick:
 	xor	a
@@ -383,7 +489,20 @@ snd_tick:
 	ld	iy, bgm_v1
 	ld	a, 1
 	ld	(cur_pch), a
+	IFDEF	SFX2CH
+	ld	a, (sfx_type)		; 2ch SFX(type3)稼働中は PSG B も mute
+	cp	3
+	jr	nz, .v1nm
+	ld	(cur_mute), a
+.v1nm:
+	ld	a, 1
+	ld	(cur_pch), a
+	ENDIF
 	call	voice_tick
+	IFDEF	SFX2CH
+	xor	a
+	ld	(cur_mute), a		; PSG C 判定のため戻す
+	ENDIF
 	ld	a, (bgm_nch)
 	cp	3
 	jr	c, st_sfx
@@ -400,6 +519,10 @@ st_sfx:
 	ld	a, (sfx_type)
 	or	a
 	ret	z
+	IFDEF	SFX2CH
+	cp	3
+	jp	z, st_tone2		; 2ch tone SFX
+	ENDIF
 	cp	2
 	jr	z, st_noise
 	; tone SFX -> PSG C(上書き)
@@ -411,21 +534,108 @@ st_sfx:
 	or	a
 	ret	nz
 	IFNDEF	OLDSFXEND
-	; [③修正] 終了時に R7(ミキサ)と vol C を復帰(noise SFX と同じ)。これを
-	;   怠ると tone SFX(kankan)の残留状態で後続の kankan が鳴らなくなる。
-	ld	d, 7
-	ld	e, 0x38
-	call	psg_set
-	ld	d, 10
-	ld	e, 0
-	call	psg_set
+	call	sfx_end_restore		; R7/vol C 復帰 + BGM period 残留防止
 	ENDIF
 	xor	a			; SFX終了
 	ld	(sfx_type), a
+	ld	(sfx_prio), a
 	ret
 st_noise:
 	call	noise_tick
 	ret
+
+; ---- SFX 終了時の PSG 復帰(PSG C)----
+;   R7(ミキサ)を 0x38 に戻す。PSG C が BGM channel(bgm_nch>=3=opening)なら
+;   その voice の period/vol を即書き戻す。これを怠ると SFX の残留 period のまま
+;   BGM の vol だけ書かれ、次の BGM ノート境界まで誤ピッチが鳴る(潜在バグ修正)。
+;   PSG C が BGM でない(arpeggio 1ch 等)なら vol C=0。
+sfx_end_restore:
+	ld	d, 7
+	ld	e, 0x38
+	call	psg_set
+	ld	a, (bgm_nch)
+	cp	3
+	jr	c, ser_coff		; bgm_nch<3 → PSG C は BGM でない
+	xor	a
+	ld	(cur_mute), a
+	ld	a, 2
+	ld	(cur_pch), a
+	ld	iy, bgm_v2
+	ld	a, (iy+V_ACT)
+	or	a
+	jr	z, ser_coff		; voice 終了 → vol C=0
+	call	voice_wperiod		; period 復帰(残留ピッチ防止)
+	jp	voice_wvol		; vol も現 env で復帰(末尾呼出)
+ser_coff:
+	ld	d, 10
+	ld	e, 0
+	jp	psg_set
+
+	IFDEF	SFX2CH
+; ---- 2ch tone SFX 更新(PSG C=sfx_v, PSG B=sfx_v2)----
+st_tone2:
+	ld	iy, sfx_v
+	ld	a, 2
+	ld	(cur_pch), a
+	call	voice_tick
+	ld	iy, sfx_v2
+	ld	a, 1
+	ld	(cur_pch), a
+	call	voice_tick
+	ld	a, (sfx_v+V_ACT)		; 両 voice 終了で SFX 終了
+	ld	hl, sfx_v2+V_ACT
+	or	(hl)
+	ret	nz
+	call	sfx_end_restore2
+	xor	a
+	ld	(sfx_type), a
+	ld	(sfx_prio), a
+	ret
+
+; ---- 2ch SFX 終了時の PSG 復帰(PSG B+C)。sfx_end_restore の 2ch 版 ----
+sfx_end_restore2:
+	ld	d, 7
+	ld	e, 0x38
+	call	psg_set
+	; PSG C (bgm_v2)
+	ld	a, (bgm_nch)
+	cp	3
+	jr	c, .coff
+	xor	a
+	ld	(cur_mute), a
+	ld	a, 2
+	ld	(cur_pch), a
+	ld	iy, bgm_v2
+	ld	a, (iy+V_ACT)
+	or	a
+	jr	z, .coff
+	call	voice_wperiod
+	call	voice_wvol
+	jr	.bchk
+.coff:
+	ld	d, 10
+	ld	e, 0
+	call	psg_set
+.bchk:
+	; PSG B (bgm_v1)
+	ld	a, (bgm_nch)
+	cp	2
+	jr	c, .boff
+	xor	a
+	ld	(cur_mute), a
+	ld	a, 1
+	ld	(cur_pch), a
+	ld	iy, bgm_v1
+	ld	a, (iy+V_ACT)
+	or	a
+	jr	z, .boff
+	call	voice_wperiod
+	jp	voice_wvol
+.boff:
+	ld	d, 9
+	ld	e, 0
+	jp	psg_set
+	ENDIF
 
 ; ---- noise SFX 更新 ----
 noise_tick:
@@ -433,15 +643,11 @@ noise_tick:
 	dec	a
 	ld	(n_dur), a
 	jr	nz, nt_cont
-	; 終了: R7 復帰, vol C off, sfx_type=0
-	ld	d, 7
-	ld	e, 0x38
-	call	psg_set
-	ld	d, 10
-	ld	e, 0
-	call	psg_set
+	; 終了: R7/vol C 復帰(BGM period 残留防止含む), sfx_type/prio=0
+	call	sfx_end_restore
 	xor	a
 	ld	(sfx_type), a
+	ld	(sfx_prio), a
 	ret
 nt_cont:
 	ld	hl, (n_vol)		; vfx(8.8)
@@ -483,8 +689,14 @@ bgm_base:	dw 0
 bgm_v0:		ds VSIZE
 bgm_v1:		ds VSIZE
 bgm_v2:		ds VSIZE
-sfx_type:	db 0			; 0=none 1=tone 2=noise
+sfx_type:	db 0			; 0=none 1=tone 2=noise 3=tone2ch(SFX2CH)
 sfx_v:		ds VSIZE
+sfx_prio:	db 0			; 現 SFX の優先度(0=通常, 1=高=死亡音)
+sfx_prio_req:	db 0			; snd_play_se 呼出の要求優先度
+	IFDEF	SFX2CH
+sfx_v2:		ds VSIZE		; 2ch SFX の 2本目(PSG B)
+se_base:	dw 0			; SE データ先頭(2ch offset 用)
+	ENDIF
 n_period:	db 0
 n_dur:		db 0
 n_vol:		dw 0			; 8.8 固定小数
