@@ -237,8 +237,9 @@ domo_move:
 	ld	a, (ix + DM_DIR) : add a, a : ld e, a : ld d, 0
 	ld	hl, domogram_vec : add hl, de : ex de, hl	; de = &vec[dir](X1 換算済 2dY, 16−2dX)
 	ld	a, (de)
-	IFDEF	ROT180
-	neg			; [180°] row 反転 → 横断 wcy は −2dY(wcx=16−2dX は不変。vec データは未変更)
+	IFNDEF	NOROT180
+	neg			; [180°既定] row 反転 → 横断 wcy は −2dY(wcx=16−2dX は不変。vec データは未変更)。
+				;   地形 180° 回転が本番既定。非回転ビルドは --define NOROT180 を明示指定。
 	ENDIF
 	call	dmm_scale					; hl = (±)2dY*n
 	ld	c, (ix + DM_WCYL) : ld b, (ix + DM_WCYH) : add hl, bc

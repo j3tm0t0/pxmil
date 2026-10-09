@@ -180,9 +180,14 @@ realstart:
 	IFDEF	DMPMAPS
 	call	dump_all_maps		; [検証] 展開後の全16マップを OUT 0xFB で生ダンプ(ゲームは起動しない)
 	ENDIF
-	xor	a			; [⑦(2)] area1(index0)の タイルを RAM タイル表へ集約
-	call	area_switch
-	xor	a			; area1 の gobj/sol/grobda を RAM へ(以降 sprite_init の grobda_init が使う)
+	IFDEF	START_AREA
+	ld	a, START_AREA - 1	; [検証] 開始エリア指定(1-based→0-based)。production には使わない
+	ELSE
+	xor	a			; [⑦(2)] area1(index0)
+	ENDIF
+	ld	(area_cur), a		; area_cur も設定(fly_load/domo_emm_copy が参照)
+	call	area_switch		; タイルを RAM タイル表へ集約
+	ld	a, (area_cur)		; gobj/sol/grobda を RAM へ(以降 sprite_init の grobda_init が使う)
 	call	gobj_load
 	IFDEF	ENEMY_EXTDATA
 	call	fly_load		; [出現②] area1 の flying 出現コマンド列をパース
