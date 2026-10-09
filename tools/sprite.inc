@@ -1461,6 +1461,15 @@ sprite_update:
 	call	ship_tick		; [敵弾] 無敵タイマ減算
 	call	death_tick		; [死亡演出] DYING/game_over タイマ → respawn/restart
 	call	scroll_only_tick	; [scroll-only] トリガー押下でゲーム開始(モード中のみ有効)
+	; [③] READY 表示中(READY_HOLD=3 / 開始READY!=4)は、敵/Bacura/Domogram/地上物/砲台/敵弾/
+	;   爆発など全 PCG の spawn+移動+描画を止め、READY! 以外を画面に出さない(実機でREADY中に
+	;   敵が見える件の修正)。READY! だけ cur_pos 相対で再描画してリターン。
+	ld	a, (ship_st)
+	cp	3
+	jr	c, .not_ready
+	call	draw_ready
+	ret
+.not_ready:
 	call	fire_check		; トリガ1でザッパー発射
 	call	fire_blaster		; トリガ2でブラスター発射
 	call	enemy_spawn		; 一定間隔で右端から出現(game_over 中は内部で抑止)
@@ -1851,13 +1860,33 @@ scroll_only_tick:
 	ld	a, c
 	cp	TRIG1 | TRIG2		; 今回 両非押下?
 	ret	z			; 今回も非押下 → エッジでない
-	; --- トリガー押下エッジ → その場でゲーム開始(巻戻し無し) ---
+	; トリガー押下エッジ → ゲーム開始(begin_ready_start)。
+	; --- begin_ready_start: opening 開始 + READY! 160f → 自機出現(ROM 0x05E4→0x05EC)。
+	;   巻戻し無し・暗転無し・reload 無し。地形はスクロールを続けたまま READY! を見せる。
+	;   scroll_only_tick(トリガー)と、テスト用フック(RDYSTART)から呼ぶ。---
+begin_ready_start:
 	xor	a
 	ld	(scroll_only), a
 	ld	a, 3
 	ld	(lives), a		; 新規ゲーム=残機3
-	call	ship_respawn		; 自機出現(start位置)+ READY 猶予 + opening BGM
-	ld	a, FIRE_DELAY		; 保持中のトリガーで開始直後に発射させない
+	IFDEF	SOUND
+	ld	a, 1			; [②] opening を鳴らし始める(snd_bgm_mgr が次フレームで再生)
+	ld	(bgm_silent), a
+	xor	a
+	ld	(bgm_phase), a
+	ENDIF
+	; [②/③] 敵/弾/爆発/地上物を一掃(READY! 中は READY! 以外を出さない)。clear_tvram は draw_ready の前。
+	call	clear_tvram
+	call	erase_all_sprites
+	call	sprites_reset
+	ld	hl, 0xFFFF		; [縦持ちREADY] ready_prev 無効化
+	ld	(ready_prev), hl
+	call	draw_ready		; READY! を表示(cur_pos 相対)
+	ld	a, 4
+	ld	(ship_st), a		; READY_START(death_tick が 160f カウント→自機出現)
+	ld	a, READY_START_FRAMES
+	ld	(death_tmr), a
+	ld	a, FIRE_DELAY		; 保持トリガーで開始直後に発射させない
 	ld	(fire_tmr), a
 	ld	a, BLASTER_DELAY
 	ld	(bfire_tmr), a
@@ -4347,7 +4376,10 @@ READY_HOLD_FRAMES EQU	60		; [②] reload 完了後に READY を見せる尾。�
 READY_FRAMES	EQU	160		; 復活後の猶予(敵抑止)。表示は省略
 GAMEOVER_FRAMES	EQU	128		; game_over → 自動リスタート
 CHECKPOINT_COL	EQU	151		; エリアの ~70%(coarsen 0..216)。超えて死んだら次エリア頭へ
-READY_CELL	EQU	3*40+18		; [②] READY 文字の先頭セル(行3・列18)
+READY_CELL	EQU	3*40+18		; [②] (旧)READY 文字の先頭セル(行3・列18)
+READY_SOFF	EQU	12*40+17	; [縦持ちREADY] 画面セルオフセット(top-left)。cur_pos 相対に 6 セル横一列。
+					;   landscape 行12・列17-22(中央)→ プレイヤー視点 中央に縦の READY!。
+READY_START_FRAMES EQU	160		; [②開始READY!] トリガー押下後 READY! を見せる長さ(ROM 準拠 160f)
 ; ship_st: 0=ALIVE 1=DYING(爆発+自機隠蔽) 2=GAMEOVER_WAIT
 ;   3=READY_HOLD([②] 画面を黒+READY 表示のまま reload 済、復活待ち)
 ; ship_hit: 自機被弾。ALIVE 以外/game_over 中は無視(無敵は無し)。被弾で DYING へ。
@@ -4441,11 +4473,23 @@ death_tick:
 	jr	z, .dying		; ship_st==1
 	cp	3
 	jr	z, .ready_hold		; ship_st==3([②] READY_HOLD)
+	cp	4
+	jr	z, .ready_start		; ship_st==4([②] 開始READY!)
 	; --- ship_st==2: GAMEOVER_WAIT ---
 	ld	hl, death_tmr
 	dec	(hl)
 	ret	nz
-	jp	restart_game		; 満了 → area1 から自動リスタート
+	jp	restart_game		; 満了 → 自動リスタート(scroll-only へ戻す)
+.ready_start:
+	; [②開始READY!] トリガー押下後 160f 表示 → 満了で自機出現。地形はスクロール継続。
+	ld	hl, death_tmr
+	dec	(hl)
+	ret	nz
+	call	clear_ready		; READY! を消す
+	call	ship_respawn		; 自機出現(start位置)+ opening は押下時に開始済
+	xor	a
+	ld	(ready_tmr), a		; [advisor] 開始READY! 期間自体が猶予=二重の160fを避ける
+	ret
 .dying:
 	ld	hl, death_tmr
 	dec	(hl)
@@ -4476,6 +4520,8 @@ death_tick:
 ;   ※自機はまだ出さない(ship_st!=0 のまま隠蔽)。
 enter_ready_reload:
 	IFDEF	ALLAREAS
+	ld	hl, 0xFFFF		; [縦持ちREADY] ready_prev 無効化(最初の draw_ready で前回消去しない)
+	ld	(ready_prev), hl
 	ld	ix, blackpal		; reload の「前」に黒(prefill の食い込みを黒で隠す)
 	call	load_palette64
 	call	clear_tvram		; [修正] reload の「前」に残 PCG/TVRAM セル(敵/地上物リング)を一掃。
@@ -4533,46 +4579,46 @@ do_checkpoint_reload:
 ;   回した向き(現状の横書き READY が左端に縦の横倒しで見えることから確定)なので、上→下に
 ;   R E A D Y ! と正立して読める。色は B+R プレーンのみ定義(G=0)で slot=B+2R+4G=3=テキスト
 ;   slot3=グレー #707070(ROM 準拠)。PCG 定義は boot で gen_ready_pcg が 1 回だけ。
+; [縦持ちREADY] draw_ready: cur_pos 相対に 6 セルを描く(scroll 補正)。前回位置(ready_prev)を
+;   消して再描画。死亡READY(cur_pos 凍結)=画面固定、開始READY!(スクロール継続)=画面固定。
+;   READY 表示中は毎フレーム呼ぶ(sprite_update の .ready_only)。色は B+R プレーン=slot3 グレー。
 draw_ready:
-	ld	de, READY_CELL
+	; --- 前回 6 セルを消去(ready_prev 有効時のみ)---
+	ld	a, (ready_prev + 1)
+	cp	0xFF
+	jr	z, .dr_draw
+	ld	de, (ready_prev)
+	ld	l, 6
+.dr_er:	ld	a, d : or (TVRAM >> 8) : ld b, a : ld c, e : xor a : out (c), a
+	ld	a, d : or (TATTR >> 8) : ld b, a : ld c, e : xor a : out (c), a
+	inc	de : dec l : jr nz, .dr_er
+.dr_draw:
+	; --- base = (cur_pos + READY_SOFF) & 0x7FF(表示ページへ)---
+	ld	hl, (cur_pos)
+	ld	de, READY_SOFF
+	add	hl, de
+	ld	a, h : and 0x07 : ld h, a
+	ld	(ready_prev), hl
+	ex	de, hl			; de = base cell
 	ld	l, READY_PCG_BASE	; l = PCG コード(0xA8..0xAD)
-.dr:
-	ld	a, d			; TVRAM[de] = コード
-	or	(TVRAM >> 8)
-	ld	b, a
-	ld	c, e
-	ld	a, l
-	out	(c), a
-	ld	a, d			; TATTR[de] = PCG + 全プレーン有効(0x27)。G=0 定義なので色= B+R= slot3 グレー
-	or	(TATTR >> 8)
-	ld	b, a
-	ld	a, 0x27
-	out	(c), a
-	inc	de
-	inc	l
-	ld	a, l
-	cp	READY_PCG_BASE + 6
-	jr	nz, .dr
+.dr_dl:	ld	a, d : or (TVRAM >> 8) : ld b, a : ld c, e : ld a, l : out (c), a	; ANK=コード
+	ld	a, d : or (TATTR >> 8) : ld b, a : ld c, e : ld a, 0x27 : out (c), a	; ATR=PCG+全プレーン=grey
+	inc	de : inc l
+	ld	a, l : cp READY_PCG_BASE + 6 : jr nz, .dr_dl
 	ret
 
-; [縦持ちREADY] clear_ready: 6 セルを透明(char0/attr0)に戻す。
+; [縦持ちREADY] clear_ready: 前回描いた 6 セルを透明に戻し ready_prev を無効化。
 clear_ready:
-	ld	de, READY_CELL
+	ld	a, (ready_prev + 1)
+	cp	0xFF
+	ret	z			; 既に無し
+	ld	de, (ready_prev)
 	ld	l, 6
-.cl:	ld	a, d			; TVRAM[de] = 0
-	or	(TVRAM >> 8)
-	ld	b, a
-	ld	c, e
-	xor	a
-	out	(c), a
-	ld	a, d			; TATTR[de] = 0
-	or	(TATTR >> 8)
-	ld	b, a
-	xor	a
-	out	(c), a
-	inc	de
-	dec	l
-	jr	nz, .cl
+.cl:	ld	a, d : or (TVRAM >> 8) : ld b, a : ld c, e : xor a : out (c), a
+	ld	a, d : or (TATTR >> 8) : ld b, a : ld c, e : xor a : out (c), a
+	inc	de : dec l : jr nz, .cl
+	ld	hl, 0xFFFF
+	ld	(ready_prev), hl
 	ret
 
 ; [縦持ちREADY] gen_ready_pcg: 6 グリフを PCG 0xA8-0xAD に定義(boot で 1 回)。グレーにする
@@ -4608,6 +4654,7 @@ gen_ready_pcg:
 	ret
 
 rg_code:	db	0
+ready_prev:	dw	0xFFFF		; [縦持ちREADY] 前回描いた 6 セルの先頭(0xFFFF=無効)
 rg_zero:	db	0,0,0,0,0,0,0,0
 ; 90°回転(CW)グリフ(8x8)。landscape 左→右 = ! Y D A E R(プレイヤー視点 上→下 = R E A D Y !)。
 ready_glyphs:

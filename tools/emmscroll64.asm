@@ -364,6 +364,20 @@ mainloop:
 	call	ship_hit
 .nofd:
 	ENDIF
+	IFDEF	RDYSTART
+	ld	a, (scroll_only)	; [テスト] framecnt==200 で開始READY!を強制(トリガー押下相当)
+	or	a
+	jr	z, .nors
+	ld	hl, (framecnt)
+	ld	a, h
+	or	a
+	jr	nz, .nors
+	ld	a, l
+	cp	200
+	jr	nz, .nors
+	call	begin_ready_start
+.nors:
+	ENDIF
 	call	wait_vblank
 	IFDEF	SOUND
 	call	snd_bgm_mgr		; [SND] BGM 終了検出→次曲(fanfare→本BGM→ループ)
