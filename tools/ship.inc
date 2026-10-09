@@ -129,7 +129,11 @@ ship_init:
 ;=====================================================================
 ; 毎フレーム (vblank 中)。ジョイスティック移動 + オーバーレイ。
 ship_update:
+	ld	a, (ship_st)
+	or	a
+	jr	nz, .nomove		; ALIVE 以外は移動しない(overlay_ship が隠蔽)
 	call	move_ship
+.nomove:
 	call	overlay_ship
 	ret
 
@@ -615,6 +619,22 @@ overlay_ship:
 	ret
 	ELSE
 overlay_ship:
+	; [死亡演出] ALIVE 以外は自機を隠す: 旧位置を一度だけ消去し prev を無効化。
+	ld	a, (ship_st)
+	or	a
+	jr	z, .alive
+	ld	hl, (ship_prev)
+	ld	a, h
+	cp	0xFF
+	ret	z			; 既に消去済 → 何もしない
+	call	erase_3x3
+	ld	hl, (ship_prev2)
+	call	erase_3x3
+	ld	hl, 0xFFFF
+	ld	(ship_prev), hl
+	ld	(ship_prev2), hl
+	ret
+.alive:
 	; 前回消去 (両窓)。自機は弾の銃口貫通で欠けるため idle-skip しない(毎フレーム描画)。
 	ld	hl, (ship_prev)
 	ld	a, h

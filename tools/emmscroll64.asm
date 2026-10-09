@@ -1387,6 +1387,11 @@ area_advance:
 	;   → 旧 bgm_silent=1 + snd_bgm_stop は削除。
 	; [blaster lock] 飛行中のブラスターは古い標的列(bla_tcol)を持つため、新エリアの
 	;   gobj リストで誤爆しないよう切替時に全消去する。
+	; [死亡巻戻し] ここから下(エリアの再ロード+coarse頭出し+暗転)は area_cur が指す
+	;   エリアを読み直す共通処理。area_advance は area_cur++ 後に流入、respawn/restart は
+	;   area_cur を設定して call する。※敵/弾クリア(sprites_reset)はここには含めず、
+	;   シームレスなエリア境界の挙動を従来どおりに保つ(respawn/restart 側で別途行う)。
+area_reload:
 	xor	a
 	ld	(bla_active), a
 	IFDEF	ALLAREAS_DBG

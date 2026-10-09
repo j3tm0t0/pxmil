@@ -96,8 +96,11 @@ sprite_init:
 	ld	a, 3			; [敵弾] 残機初期化
 	ld	(lives), a
 	xor	a
-	ld	(ship_inv), a
 	ld	(game_over), a
+	ld	(ship_st), a		; ALIVE
+	ld	(death_tmr), a
+	ld	a, SHIP_INV_START	; 開始時の無敵猶予(ROM 準拠、xevi-re 値で調整)
+	ld	(ship_inv), a
 	call	gen_reticle
 	call	gen_reticle_red		; [M8-3] ロック点滅用の赤版照準 PCG
 	call	gen_blaster
@@ -991,7 +994,15 @@ crater_enqueue:
 	; 位置を保存(以後のフレームで pump が使う)
 	ld	a, (gc_row)
 	ld	(pc_row), a
-	ld	a, (col_ex)
+	; [⑤修正] GRAM クレーターX は命中した地上物の画面列を使う。
+	;   pc_ex=col_ex(ブラスター着弾列)だと ±10px 窓で命中したとき物体とずれる。
+	;   物体の画面列 = gc_col(物体 tile 列) - coarse_lo。pump は pc_coarse+pc_ex で
+	;   tile 列を復元するので、これで EMM 側(crater_write_obj=gc_col)と一致する。
+	;   直撃時は col_ex == gc_col-coarse_lo なので従来と同値。
+	ld	a, (coarse)		; coarse_lo
+	ld	b, a
+	ld	a, (gc_col)
+	sub	b			; a = gc_col - coarse_lo = 物体の画面列
 	ld	(pc_ex), a
 	ld	hl, (coarse)		; ヒット時の coarse を固定(pump は各フレームで使う)
 	ld	(pc_coarse), hl		; 物体の GRAM リング位置はヒット時に確定・不変
@@ -1424,6 +1435,7 @@ sprite_update:
 	ld	a, 0x81 : ld bc, 0x00FF : out (c), a
 	ENDIF
 	call	ship_tick		; [敵弾] 無敵タイマ減算
+	call	death_tick		; [死亡演出] DYING/game_over タイマ → respawn/restart
 	call	fire_check		; トリガ1でザッパー発射
 	call	fire_blaster		; トリガ2でブラスター発射
 	call	enemy_spawn		; 一定間隔で右端から出現(game_over 中は内部で抑止)
@@ -4250,11 +4262,20 @@ ef_aim_spawn:
 
 ; ship_hit: 自機被弾。無敵/ゲームオーバー中は無視。爆発+残機-1。残機0でゲームオーバー。
 ;   敵弾はクリアしない(無敵 64 フレームで保護、弾は通常 cull)。
-SHIP_INV_FRAMES	EQU	64
+SHIP_INV_FRAMES	EQU	64		; 復活後の無敵フレーム(ROM 値は xevi-re 確認後に調整)
+SHIP_INV_START	EQU	64		; 開始時の無敵フレーム(同上)
+DEATH_FRAMES	EQU	32		; 被弾→再出現までの DYING 長(爆発~24f+間)
+GAMEOVER_FRAMES	EQU	150		; game_over 表示→自動リスタートまで(~2.5s)
+; ship_st: 0=ALIVE 1=DYING(爆発+自機隠蔽) 2=GAMEOVER_WAIT
+; ship_hit: 自機被弾。ALIVE 以外/無敵/game_over 中は無視。被弾で DYING へ(爆発を見せ、
+;   death_tick が満了時に respawn か game_over を決める)。opening は再出現時(ship_respawn)。
 ship_hit:
 	IFDEF	PERF_NODEATH
 	ret				; [perf] worst-case 計測: 自機を死なせない(爆発/game_over を回避)
 	ENDIF
+	ld	a, (ship_st)
+	or	a
+	ret	nz			; DYING/WAIT 中 → 二重死亡を無視
 	ld	a, (game_over)
 	or	a
 	ret	nz
@@ -4270,9 +4291,11 @@ ship_hit:
 	srl	a
 	srl	a
 	ld	(col_ey), a
+	xor	a
+	ld	(exp_active), a		; [死亡演出] 爆発スロット0を確保(地上爆発に奪われても死亡爆発を必ず出す)
 	call	expl_spawn
 	IFDEF	SOUND
-	ld	hl, se_exp_aerial	; [SND] 自機爆発音
+	ld	hl, se_exp_aerial	; [SND] 自機爆発音(opening は再出現時)
 	call	snd_play_se
 	ENDIF
 	; [出現④] 死亡 → rank -= ENEMY_AI_DEC(下限0)。ROM: 自機死亡で敵AIレベルが下がる。
@@ -4281,25 +4304,15 @@ ship_hit:
 	jr	nc, .shrk
 	xor	a
 .shrk:	ld	(rank), a
-	; 残機
+	; 残機-- (game_over 判定は DYING 終了時に death_tick が行う)
 	ld	a, (lives)
 	dec	a
 	ld	(lives), a
-	jr	z, .shgo
-	ld	a, SHIP_INV_FRAMES
-	ld	(ship_inv), a		; 復活無敵
-	IFDEF	SOUND
-	; [BGM修正] 死亡→再スタート=各ライフ開始時なので opening を頭から鳴らす
-	;   (ROM: 各ライフ開始で tune1。無敵中も鳴り続け、終わると arpeggio)。
+	; DYING へ(自機を隠し爆発を見せる)
 	ld	a, 1
-	ld	(bgm_silent), a		; mgr が次フレームで .restart_opening
-	xor	a
-	ld	(bgm_phase), a
-	ENDIF
-	ret
-.shgo:
-	ld	a, 1
-	ld	(game_over), a
+	ld	(ship_st), a
+	ld	a, DEATH_FRAMES
+	ld	(death_tmr), a
 	ret
 
 ; ship_tick: 毎フレーム。無敵タイマ減算。
@@ -4309,6 +4322,183 @@ ship_tick:
 	ret	z
 	dec	a
 	ld	(ship_inv), a
+	ret
+
+; death_tick: 毎フレーム(ship_tick の後)。DYING/GAMEOVER_WAIT のタイマを進め、
+;   満了で respawn(残機あり)/ game_over 移行 / 自動リスタート(残機0)。
+death_tick:
+	ld	a, (ship_st)
+	dec	a
+	jr	z, .dying		; ship_st==1
+	dec	a
+	ret	nz			; ship_st!=2(ALIVE 等)
+	; --- GAMEOVER_WAIT ---
+	ld	hl, death_tmr
+	dec	(hl)
+	ret	nz
+	jp	restart_game		; 満了 → area1 から自動リスタート
+.dying:
+	ld	hl, death_tmr
+	dec	(hl)
+	ret	nz
+	; DYING 満了 → 残機ありなら respawn、0 なら game_over 待ちへ
+	ld	a, (lives)
+	or	a
+	jr	z, .togo
+	jp	respawn_here
+.togo:
+	ld	a, 1
+	ld	(game_over), a		; BGM 停止 + 敵抑止
+	ld	a, 2
+	ld	(ship_st), a		; GAMEOVER_WAIT
+	ld	a, GAMEOVER_FRAMES
+	ld	(death_tmr), a
+	ret
+
+; respawn_here: 現エリアの頭へ巻き戻して自機再出現。
+;   旧スプライトは coarse ジャンプ前に現 ring 位置で消去してから area_reload する。
+respawn_here:
+	call	erase_all_sprites
+	IFDEF	ALLAREAS
+	call	area_reload		; area_cur のエリア再ロード(coarse頭出し+暗転+prefill)
+	ENDIF
+	call	sprites_reset
+	jp	ship_respawn
+
+; restart_game: game_over 後の自動リスタート(area1 頭・残機3・opening)。
+restart_game:
+	call	erase_all_sprites
+	ld	a, 3
+	ld	(lives), a
+	xor	a
+	ld	(game_over), a		; game_over 解除
+	IFDEF	ALLAREAS
+	ld	(area_cur), a		; area1(0)
+	call	area_reload
+	ENDIF
+	call	sprites_reset
+	jp	ship_respawn
+
+; ship_respawn: 自機を初期位置へ戻し無敵付与、ALIVE へ、opening を頭から。
+ship_respawn:
+	ld	a, SHIP_HX0
+	ld	(ship_hx), a
+	ld	a, SHIP_VY0
+	ld	(ship_vy), a
+	ld	hl, 0xFFFF		; 自機 prev 無効(再描画で旧消去しない)
+	ld	(ship_prev), hl
+	ld	(ship_prev2), hl
+	ld	a, SHIP_INV_FRAMES
+	ld	(ship_inv), a
+	xor	a
+	ld	(ship_st), a		; ALIVE
+	IFDEF	SOUND
+	ld	a, 1			; ライフ開始 = opening を頭から
+	ld	(bgm_silent), a
+	xor	a
+	ld	(bgm_phase), a
+	ENDIF
+	ret
+
+; erase_all_sprites: 現在表示中の全スプライトを現 coarse で消去(respawn 前)。
+;   TVRAM も 2048 ring でスクロールするため、coarse ジャンプ前に消さないと新窓に残る。
+erase_all_sprites:
+	call	reticle_erase
+	call	blaster_erase
+	call	bullets_erase
+	call	enemies_erase
+	IFDEF	GROBDA_EXTDATA
+	call	grobda_erase
+	ENDIF
+	call	expls_erase
+	; ebul 全消去
+	xor	a
+.eel:	ld	(eb_i), a
+	call	ebul_erase_prev
+	ld	a, (eb_i)
+	inc	a
+	cp	MAX_EBUL
+	jr	nz, .eel
+	; Bacura 全消去
+	xor	a
+.ebl:	ld	(bac_i), a
+	call	bacura_erase_prev
+	ld	a, (bac_i)
+	inc	a
+	cp	MAX_BACURA
+	jr	nz, .ebl
+	ret
+
+; sprites_reset: respawn/restart で敵・弾・爆発を一掃(active=0, prev=0xFFFF)。
+;   bla_active は area_reload が、Bacura は bacura_init(area_reload 内)がクリア済。
+;   ※ area_advance(シームレス境界)では呼ばない=境界挙動は従来どおり。
+sprites_reset:
+	ld	hl, ene_active		; 敵 active
+	ld	b, MAX_ENEMIES
+	xor	a
+.sr_e:	ld	(hl), a
+	inc	hl
+	djnz	.sr_e
+	ld	hl, bul_active		; 自機弾 active
+	ld	b, MAX_BULLETS
+.sr_b:	ld	(hl), 0
+	inc	hl
+	djnz	.sr_b
+	ld	hl, ebul_active		; 敵弾 active
+	ld	b, MAX_EBUL
+.sr_eb:	ld	(hl), 0
+	inc	hl
+	djnz	.sr_eb
+	ld	hl, exp_active		; 爆発 active
+	ld	b, MAX_EXPL
+.sr_x:	ld	(hl), 0
+	inc	hl
+	djnz	.sr_x
+	ld	hl, gobj_dead		; 地上物破壊フラグ
+	ld	b, MAX_GOBJ
+.sr_g:	ld	(hl), 0
+	inc	hl
+	djnz	.sr_g
+	; prev テーブルを 0xFFFF(無効)に:ene_prev/ene_prev2/bul_prev/ebul_prev1/2/exp_prev/ret
+	call	reset_prev_tables
+	ret
+
+; fill_ff: hl から bc バイトを 0xFF で埋める。
+fill_ff:
+	ld	(hl), 0xFF
+	inc	hl
+	dec	bc
+	ld	a, b
+	or	c
+	jr	nz, fill_ff
+	ret
+
+; reset_prev_tables: 全スプライトの prev を 0xFFFF(無効)に。coarse ジャンプ後に
+;   eraser が旧 ring 位置を誤消去しないようにする(隣接 prev 対はまとめて埋める)。
+reset_prev_tables:
+	ld	hl, ene_prev		; ene_prev + ene_prev2
+	ld	bc, MAX_ENEMIES * 2 * 2
+	call	fill_ff
+	ld	hl, bul_prev
+	ld	bc, MAX_BULLETS * 2
+	call	fill_ff
+	ld	hl, ebul_prev1		; ebul_prev1 + ebul_prev2
+	ld	bc, MAX_EBUL * 2 * 2
+	call	fill_ff
+	ld	hl, bac_prev1		; bac_prev1 + bac_prev2
+	ld	bc, MAX_BACURA * 2 * 2
+	call	fill_ff
+	ld	hl, exp_prev		; exp_prev + exp_prev2
+	ld	bc, MAX_EXPL * 2 * 2
+	call	fill_ff
+	ld	hl, ret_prev		; ret_prev + ret_prev2
+	ld	bc, 4
+	call	fill_ff
+	IFDEF	GROBDA_EXTDATA
+	ld	hl, grob_prev		; grob_prev + grob_prev2
+	ld	bc, MAX_GROBDA * 2 * 2
+	call	fill_ff
+	ENDIF
 	ret
 
 ; ebul_erase_prev: eb_i の prev1/prev2 が有効(≠0xFFFF)なら 2窓を ene_clr2x2 で消去。
@@ -5289,7 +5479,9 @@ ef_vmx:		db	0
 ef_vmy:		db	0
 lives:		db	3		; [敵弾] 残機(0 でゲームオーバー)
 ship_inv:	db	0		; 復活無敵フレーム
-game_over:	db	0		; 1=ゲームオーバー
+game_over:	db	0		; 1=ゲームオーバー(自動リスタート待ちで一時的)
+ship_st:	db	0		; 0=ALIVE 1=DYING 2=GAMEOVER_WAIT
+death_tmr:	db	0		; DYING/GAMEOVER_WAIT の残フレーム
 ; [敵] Bacura
 bac_active:	ds	MAX_BACURA
 bac_sx:		ds	MAX_BACURA	; 画面列(0xFF.. = 左に抜けた)
