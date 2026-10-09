@@ -236,7 +236,11 @@ domo_move:
 	;   wcy += 2dY, wcx += 16 − 2dX(dX=8 で地面に静止、dir0 は画面上 1px/f で自機へ、dir16 は画面静止)。
 	ld	a, (ix + DM_DIR) : add a, a : ld e, a : ld d, 0
 	ld	hl, domogram_vec : add hl, de : ex de, hl	; de = &vec[dir](X1 換算済 2dY, 16−2dX)
-	ld	a, (de) : call dmm_scale			; hl = 2dY*n
+	ld	a, (de)
+	IFDEF	ROT180
+	neg			; [180°] row 反転 → 横断 wcy は −2dY(wcx=16−2dX は不変。vec データは未変更)
+	ENDIF
+	call	dmm_scale					; hl = (±)2dY*n
 	ld	c, (ix + DM_WCYL) : ld b, (ix + DM_WCYH) : add hl, bc
 	ld	(ix + DM_WCYL), l : ld (ix + DM_WCYH), h
 	inc	de
