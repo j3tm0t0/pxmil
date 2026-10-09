@@ -48,6 +48,31 @@ GS = {0x1E: 0x17, 0x1F: 0x1F, 0x26: 0x2C, 0x20: 0x17, 0x2D: 0x2C,
 GS32 = {0x21: 0x24}                                    # 焼込 32x32(2x2 sprite base tile)
 TID = {0x1E: 1, 0x1F: 2, 0x26: 3, 0x20: 1, 0x2D: 3, 0x21: 6, 0x1B: 7}
 GROB = {0x2C, 0x38, 0x3A}   # 動く地上物 Grobda(stationary/stops/darts)。焼込まず位置のみ出力
+# [鏡像修正] XEVI_ROT180=1 で bake を 180°回転して出力([[xevi-scroll-mirror]])。
+#   地形鏡像/逆スクロールの根本原因=X1 がスクロール軸を arcade と逆走査しており、プレイヤー
+#   視点が arcade 表示(ROT90CW)の 180°回転になっている(RT3 実機・タイル単位で確定)。
+#   変換: 出力セル(col',row') = 入力(255-col', 24-row') を fx,fy 両toggle(=タイル180°)。
+#   物体 TL' = (W1-w-c0, H1-h-r0)、スプライト/クレーター/Sol は 180°回転。
+ROT180 = bool(int(os.environ.get("XEVI_ROT180", "0")))
+W1, H1 = 256, 25
+
+
+def rot180_grid(g):
+    """(RGB or None) の 2D グリッドを 180°回転。"""
+    h = len(g); w = len(g[0])
+    return [[g[h - 1 - y][w - 1 - x] for x in range(w)] for y in range(h)]
+
+
+def tl180(c0, r0, w):
+    """幅=高=w セルの物体 TL(c0,r0)を ROT180 なら 180°先の TL へ写す。"""
+    if ROT180:
+        return (W1 - w - c0) & 0xFF, H1 - w - r0
+    return c0 & 0xFF, r0
+
+
+def r180(sp):
+    """ROT180 のときだけスプライト(RGB/None grid)を 180°回転。"""
+    return rot180_grid(sp) if ROT180 else sp
 # 射撃砲台の ffreq mask_id(= SUB fn index, ffreq レコードと同じ番号)。非射撃=0。
 #   Derota(0x1B)/GaruDerota(0x21)=derota 0x08, Logram(0x26)=logram 0x09, BozaLogram(0x2D)=boza 0x10。
 #   gobj レコードに 1 バイト追加(TID=3 の Logram/Boza 曖昧を解消し turret 発火を正確化)。
@@ -139,12 +164,18 @@ def main():
             if li is None:
                 li = len(local); ci2local[ci] = li; local.append(ci)
             return li
+        def tcell(col, row):
+            """出力セル(col,row)の地形 RGB。ROT180 なら 180°先のセルを fx,fy 反転で返す。"""
+            if ROT180:
+                code, color, fx, fy = X.bg_cell(g4, (W1 - 1 - col) & 0xFF, bs1[H1 - 1 - row])
+                return XB.terrain_cell_rgb(ex, g2, rgb, bg_pen, code, color, not fx, not fy)
+            code, color, fx, fy = X.bg_cell(g4, col, bs1[row])
+            return XB.terrain_cell_rgb(ex, g2, rgb, bg_pen, code, color, fx, fy)
+
         lmap = [[0]*25 for _ in range(256)]
         for col in range(256):
             for row in range(25):
-                code, color, fx, fy = X.bg_cell(g4, col, bs1[row])
-                lmap[col][row] = local_idx(XB.rgb_to_pattern(
-                    XB.terrain_cell_rgb(ex, g2, rgb, bg_pen, code, color, fx, fy), ucmap, uorder))
+                lmap[col][row] = local_idx(XB.rgb_to_pattern(tcell(col, row), ucmap, uorder))
 
         # 正規 walker で全地上物を捕捉(旧 extract_ground は先頭1グループ≤14件のみで
         # 大半の砲台=Derota含む を取りこぼしていた。位置は保持しつつ補完する superset)。
@@ -159,8 +190,7 @@ def main():
                     col = (c0+cx) & 0xFF; row = r0+cy
                     if not (0 <= row < 25):
                         ids.append(None); continue
-                    code, color, fx, fy = X.bg_cell(g4, col, bs1[row])
-                    cell = XB.terrain_cell_rgb(ex, g2, rgb, bg_pen, code, color, fx, fy)
+                    cell = tcell(col, row)   # ROT180 なら 180°地形
                     for yy in range(8):
                         for xx in range(8):
                             ov = over[cy*8+yy][cx*8+xx]
@@ -177,21 +207,24 @@ def main():
         for trig, typ, o, y in objs:
             c0, r0 = col_of(trig), row_of(y)
             if typ in GROB:
-                grobda.append((c0, r0))
+                grobda.append(tl180(c0, r0, 2))
                 continue
             if typ in GS:
-                bake_cells(c0, r0, XB.sprite_rgb16(ex, rgb, sp_pen, GS[typ], 7), True)
-                cids = bake_cells(c0, r0, crater, False)
-                gobj.append((c0, r0, TID[typ], 1, FIRE_MASK.get(typ, 0), cids))
+                oc, orr = tl180(c0, r0, 2)
+                bake_cells(oc, orr, r180(XB.sprite_rgb16(ex, rgb, sp_pen, GS[typ], 7)), True)
+                cids = bake_cells(oc, orr, r180(crater), False)
+                gobj.append((oc, orr, TID[typ], 1, FIRE_MASK.get(typ, 0), cids))
             elif typ in GS32:
+                oc, orr = tl180(c0, r0, 4)
                 over32 = sprite_rgb32(ex, g3, sp_pen, rgb, GS32[typ], 7)
-                bake_cells(c0, r0, over32, True, ncell=4)
-                cids = bake_cells(c0, r0, crater32, False, ncell=4)
-                gobj.append((c0, r0, TID[typ], 2, FIRE_MASK.get(typ, 0), cids))
+                bake_cells(oc, orr, r180(over32), True, ncell=4)
+                cids = bake_cells(oc, orr, r180(crater32), False, ncell=4)
+                gobj.append((oc, orr, TID[typ], 2, FIRE_MASK.get(typ, 0), cids))
             elif typ == 0x1D:
-                frames = [bake_cells(c0, r0, XB.sprite_rgb16(ex, rgb, sp_pen, fr, 7), False)
+                oc, orr = tl180(c0, r0, 2)
+                frames = [bake_cells(oc, orr, r180(XB.sprite_rgb16(ex, rgb, sp_pen, fr, 7)), False)
                           for fr in SOL_FRAMES]
-                sol.append((c0, r0, frames))
+                sol.append((oc, orr, frames))
 
         def addr_of(li):
             return (TB + li*48) if li is not None else 0xFFFF
@@ -230,11 +263,12 @@ def main():
     #   dst = (terrain & ~mask) | pattern で重ねる。出力 = 4×48B パターン + 4×8B マスク = 224B。
     with open(os.path.join(OUT, "domo_crater.bin"), "wb") as f:
         pats = []; masks = []
+        domo_crater = r180(crater)   # ROT180 なら Domogram crater も 180°
         for cy, cx in ((0, 0), (0, 1), (1, 0), (1, 1)):
             planes = [bytearray(8) for _ in range(6)]; m = bytearray(8)
             for y in range(8):
                 for x in range(8):
-                    c = crater[cy*8+y][cx*8+x]
+                    c = domo_crater[cy*8+y][cx*8+x]
                     if c is None:
                         continue
                     r, g, b = c
