@@ -108,12 +108,12 @@ def main_dump():
 
     os.makedirs(OUT, exist_ok=True)
     open(os.path.join(OUT, "fly_type_tbl.bin"), "wb").write(main[FET:FET+0x80])
-    open(os.path.join(OUT, "fly_offset_tbl.bin"), "wb").write(sub[OFT:OFT+0x40])
+    open(os.path.join(OUT, "fly_offset_tbl.bin"), "wb").write(sub[OFT:OFT+0x100])
 
     rep = []
     rep.append("=== flying_enemy_type_offset_tbl (SUB0x04D8) idx -> (num, off) [types] ===")
     rep.append("  fn3 は rank(enemy_AI_level) を index に、fn2 は payload の idx をこの表に。")
-    for idx in range(0x20):
+    for idx in range(0x80):
         num = sub[OFT+idx*2]; off = sub[OFT+idx*2+1]
         rep.append("  idx%2d: num=%d off=0x%02X  %s" % (idx, num, off,
                    ", ".join(etypes(off, num)) if num else "-"))
