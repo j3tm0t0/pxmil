@@ -46,12 +46,25 @@ def parse():
     return areas
 
 
+# [鏡像修正] XEVI_ROT180=1 で spawn col/row を 180°反転([[xevi-scroll-mirror]])。
+#   Domogram は 2x2(DOMO_BASE)。TL' = (W1-2-col, H1-2-row)。経路 dir 列は不変
+#   (スクロール軸 wcx+=16-2dX は自己整合で不変、横断軸 wcy の符号反転はエンジン側
+#   =emm-scroll の担当)。flip 後は col 昇順で再ソート(domo_spawn の前方走査用)。
+ROT180 = bool(int(os.environ.get("XEVI_ROT180", "0")))
+W1, H1 = 256, 25
+
+
 def main():
     areas = parse()
     total = 0
     for a in range(1, 17):
+        doms = areas.get(a, [])
+        if ROT180:
+            # 2x2 TL の 180°。row は画面外(25-26→-1,-2)もあり得るので u8 マスク
+            #   (エンジンは row>=24 を非表示扱い、wcy 反転で対称に画面内へ進入)。
+            doms = [((W1 - 2 - col) & 0xFF, (H1 - 2 - row) & 0xFF, segs) for (col, row, segs) in doms]
         # col 昇順(= 出現順)。asm の domo_spawn は先頭ポインタだけを見て進める。
-        doms = sorted(areas.get(a, []), key=lambda d: d[0])
+        doms = sorted(doms, key=lambda d: d[0])
         buf = bytearray([len(doms)])
         for col, row, segs in doms:
             if col > 255 or row > 255 or len(segs) > 255:
