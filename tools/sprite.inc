@@ -4512,17 +4512,37 @@ clear_ready:
 
 ; restart_game: game_over 後の自動リスタート(area1 頭・残機3・opening)。
 restart_game:
-	call	erase_all_sprites
 	ld	a, 3
 	ld	(lives), a
 	xor	a
 	ld	(game_over), a		; game_over 解除
 	IFDEF	ALLAREAS
 	ld	(area_cur), a		; area1(0)
-	call	area_reload
-	ENDIF
+	; [②/restart] 自動リスタートも死亡復活と同じく「黒+READY で area1 reload を隠し、
+	;   READY_HOLD の間に残スプライトを一掃」する。従来 restart は READY も clear_tvram も
+	;   無く、game_over→自動restart 経路で READY 不可視 + 白リング(Toroid/敵弾)残存だった。
+	ld	ix, blackpal
+	call	load_palette64
+	call	draw_ready
+	call	erase_all_sprites
+	call	area_reload		; area1 の頭から
+	call	sprites_reset
+	xor	a			; blank_ctr=0: READY_HOLD 中は黒を保つ
+	ld	(blank_ctr), a
+	ld	ix, blackpal
+	call	load_palette64
+	call	clear_tvram		; 残スプライト(白リング等)を一掃
+	call	draw_ready
+	ld	a, 3
+	ld	(ship_st), a		; READY_HOLD(満了で finish_respawn→ship_respawn)
+	ld	a, READY_HOLD_FRAMES
+	ld	(death_tmr), a
+	ret
+	ELSE
+	call	erase_all_sprites
 	call	sprites_reset
 	jp	ship_respawn
+	ENDIF
 
 ; ship_respawn: 自機を初期位置へ戻し、ALIVE へ、READY 猶予を付与、opening を頭から。
 ;   無敵は無し(ROM 準拠)。安全は敵一掃+エリア頭+READY 期間の敵抑止で担保。
