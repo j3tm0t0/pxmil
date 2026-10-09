@@ -23,11 +23,14 @@ from xevi_sprites import gen96, inc_block
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # (name, out, [tiles], colour)。出力名は emm-scroll 配線済の _rot180 に統一。
-#   colour: Grobda=赤戦車(0x01 確定)。Jara/Torkan は比較画像で team-lead 確認(暫定)。
+#   colour: 敵は ROM で pulsing_colour_1(SUB _sub_fn_5 が colour_lut_pulsing_1={7,8,9,A,B,A,9,8}
+#     で巡回)=グレー体+pen6 が赤↔黒で点滅。canonical=0x07(aerial/自機狙い敵と同じ)。
+#     旧 Torkan/Grobda=0x01 は体全体が赤+青で誤り(xevi-re 再確認 2026-10-09)。
+#     理想は X1 側で 0x07-0x0B を点滅(fidelity-gaps)。静止表現は 0x07 に統一。
 SPR = [
     ("Jara",   "roms/jara_rot180.inc",   [0xA0, 0xA1, 0xA2, 0xA3], 0x07),
-    ("Torkan", "roms/torkan_rot180.inc", [0x10, 0x11],             0x01),
-    ("Grobda", "roms/grobda_rot180.inc", [0x4C, 0x4D],             0x01),
+    ("Torkan", "roms/torkan_rot180.inc", [0x10, 0x11],             0x07),
+    ("Grobda", "roms/grobda_rot180.inc", [0x4C, 0x4D],             0x07),
 ]
 
 
