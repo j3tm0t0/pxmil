@@ -1422,6 +1422,11 @@ area_advance:
 	;   area_cur を設定して call する。※敵/弾クリア(sprites_reset)はここには含めず、
 	;   シームレスなエリア境界の挙動を従来どおりに保つ(respawn/restart 側で別途行う)。
 area_reload:
+	IFDEF	RELMEAS
+	ld	hl,rel_buf		; [RELMEAS] area_reload 開始の 32bit サイクル
+	ld	bc,0x00FC : in a,(c) : ld (hl),a : inc hl
+	ld	bc,0x00FD : in a,(c) : ld (hl),a : inc hl : in a,(c) : ld (hl),a : inc hl : in a,(c) : ld (hl),a
+	ENDIF
 	xor	a
 	ld	(bla_active), a
 	IFDEF	ALLAREAS_DBG
@@ -1439,6 +1444,11 @@ area_reload:
 	; タイル表 + map base 切替
 	ld	a, (area_cur)
 	call	area_switch
+	IFDEF	RELMEAS
+	ld	hl,rel_buf+4		; [RELMEAS] area_switch 後
+	ld	bc,0x00FC : in a,(c) : ld (hl),a : inc hl
+	ld	bc,0x00FD : in a,(c) : ld (hl),a : inc hl : in a,(c) : ld (hl),a : inc hl : in a,(c) : ld (hl),a
+	ENDIF
 	; 地上物切替
 	ld	a, (area_cur)
 	call	gobj_load
@@ -1460,6 +1470,11 @@ area_reload:
 	ld	(adv_off), hl
 	; 再 prefill(新エリア cols 0..39 を GRAM へ)
 	call	prefill
+	IFDEF	RELMEAS
+	ld	hl,rel_buf+8		; [RELMEAS] prefill 後
+	ld	bc,0x00FC : in a,(c) : ld (hl),a : inc hl
+	ld	bc,0x00FD : in a,(c) : ld (hl),a : inc hl : in a,(c) : ld (hl),a : inc hl : in a,(c) : ld (hl),a
+	ENDIF
 	; トランジェント取消(旧座標の GRAM 書込を止める)
 	xor	a
 	ld	(pc_active), a		; クレーター待ち行列
@@ -1475,13 +1490,25 @@ area_reload:
 	ld	a, 2
 	ld	(blank_ctr), a
 	IFDEF	ALLAREAS_DBG
-	ld	a, 0xFF			; PROBE 0xA2FF: blackpal ロード完了
+	ld	a, 0xFF			; PROBE 0xA2FF: 再ロード完了
 	ld	e, a
 	ld	bc, 0x00FE
 	out	(c), e
 	ld	a, 0xA2
 	ld	bc, 0x00FF
 	out	(c), a
+	ENDIF
+	IFDEF	RELMEAS
+	ld	hl,rel_buf+12		; [RELMEAS] area_reload 終了の 32bit サイクル
+	ld	bc,0x00FC : in a,(c) : ld (hl),a : inc hl
+	ld	bc,0x00FD : in a,(c) : ld (hl),a : inc hl : in a,(c) : ld (hl),a : inc hl : in a,(c) : ld (hl),a
+	ld	hl,rel_buf		; t0/sw/pf/t1 ×4byte を PROBE 出力(marker 0xB0..0xBF)
+	ld	d,0xB0
+	ld	e,16
+.relm:	ld	a,(hl)
+	ld	bc,0x00FE : out (c),a
+	ld	bc,0x00FF : out (c),d
+	inc	hl : inc d : dec e : jr nz,.relm
 	ENDIF
 	ret
 
@@ -1684,6 +1711,9 @@ gobj_load:
 
 AS_TICK_EVERY	EQU	44		; 切替タイル集約中 snd_tick 間隔(~353/8)
 as_n:		dw	0
+	IFDEF	RELMEAS
+rel_buf:	ds	16		; [RELMEAS] t0/after_switch/after_prefill/t1 の 32bit サイクル×4
+	ENDIF
 as_cnt:		dw	0
 as_dst:		dw	0
 as_tick:	db	0		; snd_tick カウンタ
