@@ -55,6 +55,9 @@ GROB = {0x2C, 0x38, 0x3A}   # 動く地上物 Grobda(stationary/stops/darts)。�
 #   物体 TL' = (W1-w-c0, H1-h-r0)、スプライト/クレーター/Sol は 180°回転。
 ROT180 = bool(int(os.environ.get("XEVI_ROT180", "0")))
 W1, H1 = 256, 25
+if ROT180:
+    # [team-lead 方針] WIP/試験の 180° 出力は本番(allareas/)と分離し、投入時のみ差替え。
+    OUT = os.path.join(ROOT, "roms", "arcade", "xevious-out", "allareas_rot180")
 
 
 def rot180_grid(g):

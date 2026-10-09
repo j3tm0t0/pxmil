@@ -15,12 +15,16 @@ import os, struct
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 EN = os.path.join(ROOT, "roms", "arcade", "xevious-out", "enemies")
+# [team-lead 方針] 180° は enemies_rot180/ を読み書き(本番 enemies/ と分離)。
+ROT180 = bool(int(os.environ.get("XEVI_ROT180", "0")))
+IN_DIR = os.path.join(ROOT, "roms", "arcade", "xevious-out", "enemies_rot180") if ROT180 else EN
 
 
 def main():
+    os.makedirs(IN_DIR, exist_ok=True)
     blocks = []
     for a in range(1, 17):
-        p = os.path.join(EN, "area%02d_domogram.bin" % a)
+        p = os.path.join(IN_DIR, "area%02d_domogram.bin" % a)
         blocks.append(open(p, "rb").read())
     hdr = 17 * 2  # 17 u16 offsets
     offs = []
@@ -45,9 +49,9 @@ def main():
     for i in range(0, len(raw), 2):
         dy, dx = s8(raw[i]), s8(raw[i + 1])
         x1 += bytes([(2 * dy) & 0xFF, (16 - 2 * dx) & 0xFF])
-    open(os.path.join(EN, "domo_vec_x1.bin"), "wb").write(x1)
+    open(os.path.join(IN_DIR, "domo_vec_x1.bin"), "wb").write(x1)
     maxblk = max(len(b) for b in blocks)
-    path = os.path.join(EN, "domogram_all.bin")
+    path = os.path.join(IN_DIR, "domogram_all.bin")
     open(path, "wb").write(out)
     print("domogram_all.bin: %d bytes (hdr %d + data %d), max area block %d" %
           (len(out), hdr, pos - hdr, maxblk))

@@ -52,9 +52,13 @@ def parse():
 #   =emm-scroll の担当)。flip 後は col 昇順で再ソート(domo_spawn の前方走査用)。
 ROT180 = bool(int(os.environ.get("XEVI_ROT180", "0")))
 W1, H1 = 256, 25
+if ROT180:
+    # [team-lead 方針] 180° 出力は本番(enemies/)と分離。
+    OUT = os.path.join(ROOT, "roms", "arcade", "xevious-out", "enemies_rot180")
 
 
 def main():
+    os.makedirs(OUT, exist_ok=True)
     areas = parse()
     total = 0
     for a in range(1, 17):
