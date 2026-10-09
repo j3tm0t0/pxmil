@@ -544,6 +544,9 @@ move_ship:
 ;   初めて erase+draw される。sprite は TVRAM 層で terrain(GRAM/chunk)と別レイヤ
 ;   なので、非表示ページに残した stale sprite は chunk に壊されない。描画コスト半減。
 overlay_ship:
+	ld	a, (ship_st)		; [②] ALIVE 以外(DYING/READY_HOLD/GAMEOVER)は自機を消して描かない
+	or	a
+	jp	nz, .hide_sp
 	; --- soff / code 計算 ---
 	ld	a, (ship_vy)
 	srl	a
@@ -617,6 +620,32 @@ overlay_ship:
 	ex	de, hl			; hl = target
 	call	write_ship_3x3
 	ret
+.hide_sp:				; [②] 両表示ページの自機を消して prev 無効化(再描画させない)
+	ld	hl, ship_pp0
+	ld	e, (hl)
+	inc	hl
+	ld	d, (hl)
+	ld	a, d
+	cp	0xFF
+	jr	z, .hs1
+	ld	(hl), 0xFF
+	dec	hl
+	ld	(hl), 0xFF
+	ex	de, hl
+	call	erase_3x3
+.hs1:
+	ld	hl, ship_pp1
+	ld	e, (hl)
+	inc	hl
+	ld	d, (hl)
+	ld	a, d
+	cp	0xFF
+	ret	z
+	ld	(hl), 0xFF
+	dec	hl
+	ld	(hl), 0xFF
+	ex	de, hl
+	jp	erase_3x3		; tail-call
 	ELSE
 overlay_ship:
 	; [死亡演出] ALIVE 以外は自機を隠す: 旧位置を一度だけ消去し prev を無効化。

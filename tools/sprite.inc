@@ -371,6 +371,9 @@ reticle_erase:
 	ret
 
 reticle_draw:
+	ld	a, (ship_st)		; [②] ALIVE 以外は照準を描かない(READY 画面を汚さない)
+	or	a
+	ret	nz
 	ld	a, (ret_skip)
 	or	a
 	ret	nz			; erase 側でスキップ判定済
@@ -431,6 +434,9 @@ gen_blaster:
 	ret
 
 fire_blaster:
+	ld	a, (ship_st)		; [②] ALIVE 以外(DYING/READY_HOLD/GAMEOVER)は発射/照準描画しない
+	or	a
+	ret	nz
 	ld	a, (bfire_tmr)
 	or	a
 	jr	z, .rdy
@@ -1808,6 +1814,9 @@ bacura_shot_check:
 ;   毎フレーム -1、0 で発射+fire_tmr=FIRE_DELAY(保持時は20f周期)。最大3発は spawn_bullet
 ;   の空きslot判定で担保。(xevi-re ROM 0x1772 準拠)
 fire_check:
+	ld	a, (ship_st)		; [②] ALIVE 以外は発射しない
+	or	a
+	ret	nz
 	call	read_joy		; a = PSG port A (負論理, bit5=トリガ1)
 	bit	5, a
 	jr	z, .pressed		; 0 = 押下
@@ -2153,6 +2162,9 @@ enemy_spawn:
 	ld	a, (game_over)
 	or	a
 	ret	nz			; ゲームオーバー中は出現しない
+	ld	a, (ship_st)		; [②] DYING/READY_HOLD/GAMEOVER 中は敵出現を抑止
+	or	a
+	ret	nz
 	ld	a, (ready_tmr)		; [死亡演出] READY 猶予中は敵出現を抑止
 	or	a
 	ret	nz
@@ -4130,6 +4142,9 @@ turret_fire:
 	ld	a, (game_over)
 	or	a
 	ret	nz
+	ld	a, (ship_st)		; [②] DYING/READY_HOLD/GAMEOVER 中は砲台発射を抑止
+	or	a
+	ret	nz
 	ld	a, (ready_tmr)		; [死亡演出] READY 猶予中は砲台発射を抑止
 	or	a
 	ret	nz
@@ -4273,11 +4288,15 @@ ef_aim_spawn:
 ;   DYING = 爆発56 + 遅延32 + カウント64 = 152f(自機隠蔽)。
 ;   READY = 160f(自機は出るが ship_st=0 で ready_tmr>0 の間は敵出現/砲台発射を抑止)。
 ;   game_over = 128f 後に自動リスタート(デモ逸脱=タイトル無しのため。fidelity-gaps 記録)。
-DYING_FRAMES	EQU	152		; 56(爆発)+32(遅延)+64(カウント)
+DYING_FRAMES	EQU	152		; (参考)ROM の 56(爆発)+32(遅延)+64(カウント)
+EXPLODE_FRAMES	EQU	56		; [②] 爆発表示。満了後に READY+reload フェーズへ
+READY_HOLD_FRAMES EQU	60		; [②] reload 完了後に READY を見せる尾。計で ROM の待ち相当
 READY_FRAMES	EQU	160		; 復活後の猶予(敵抑止)。表示は省略
 GAMEOVER_FRAMES	EQU	128		; game_over → 自動リスタート
 CHECKPOINT_COL	EQU	151		; エリアの ~70%(coarsen 0..216)。超えて死んだら次エリア頭へ
+READY_CELL	EQU	3*40+18		; [②] READY 文字の先頭セル(行3・列18)
 ; ship_st: 0=ALIVE 1=DYING(爆発+自機隠蔽) 2=GAMEOVER_WAIT
+;   3=READY_HOLD([②] 画面を黒+READY 表示のまま reload 済、復活待ち)
 ; ship_hit: 自機被弾。ALIVE 以外/game_over 中は無視(無敵は無し)。被弾で DYING へ。
 ;   opening は再出現時(ship_respawn)。
 ship_hit:
@@ -4319,10 +4338,10 @@ ship_hit:
 	ld	a, (lives)
 	dec	a
 	ld	(lives), a
-	; DYING へ(自機を隠し爆発を見せる)
+	; DYING へ(自機を隠し爆発を見せる)。満了(EXPLODE_FRAMES)後に READY+reload フェーズ。
 	ld	a, 1
 	ld	(ship_st), a
-	ld	a, DYING_FRAMES
+	ld	a, EXPLODE_FRAMES
 	ld	(death_tmr), a
 	ret
 
@@ -4349,8 +4368,10 @@ death_tick:
 	ld	(ready_tmr), a
 	ret
 .busy:
-	dec	a
+	cp	1
 	jr	z, .dying		; ship_st==1
+	cp	3
+	jr	z, .ready_hold		; ship_st==3([②] READY_HOLD)
 	; --- ship_st==2: GAMEOVER_WAIT ---
 	ld	hl, death_tmr
 	dec	(hl)
@@ -4360,11 +4381,17 @@ death_tick:
 	ld	hl, death_tmr
 	dec	(hl)
 	ret	nz
-	; DYING 満了 → 残機ありなら respawn、0 なら game_over 待ちへ
+	; 爆発(EXPLODE_FRAMES)満了 → 残機ありなら [②] READY+reload へ、0 なら game_over 待ち
 	ld	a, (lives)
 	or	a
 	jr	z, .togo
-	jp	respawn_here
+	jp	enter_ready_reload
+.ready_hold:
+	; [②] 画面黒+READY のまま reload 済。tail を数え、満了で復活。
+	ld	hl, death_tmr
+	dec	(hl)
+	ret	nz
+	jp	finish_respawn
 .togo:
 	ld	a, 1
 	ld	(game_over), a		; BGM 停止 + 敵抑止
@@ -4374,24 +4401,104 @@ death_tick:
 	ld	(death_tmr), a
 	ret
 
-; respawn_here: エリア頭へ巻き戻して自機再出現。ROM どおり、死亡地点がエリアの
-;   ~70%(CHECKPOINT_COL)を超えていたら次エリアの頭から(area_advance が area16→area7
-;   の wrap と ++ を内包)。それ以外は現エリアの頭(area_reload)。
-;   旧スプライトは coarse ジャンプ前に現 ring 位置で消去する。
-respawn_here:
+; [②] enter_ready_reload: 爆発後。画面を黒にして READY を出し、その裏で checkpoint reload
+;   (約3.85秒)を実行。reload 中は prefill が黒パレットで GRAM を描くので地形(継ぎ目)は
+;   見えず、READY 文字(CGROM ANK=デジタルパレット)だけが点灯する。終わったら READY_HOLD へ。
+;   ※自機はまだ出さない(ship_st!=0 のまま隠蔽)。
+enter_ready_reload:
+	IFDEF	ALLAREAS
+	ld	ix, blackpal		; reload の「前」に黒(prefill の食い込みを黒で隠す)
+	call	load_palette64
+	call	draw_ready
+	call	do_checkpoint_reload	; erase + area_advance/area_reload + sprites_reset(重い)
+	xor	a			; reload 末尾の blank_ctr=2 を打ち消し、READY_HOLD 中は黒を保つ
+	ld	(blank_ctr), a
+	ld	ix, blackpal		; 念押しで黒を確定(reload 後の状態に依らず)
+	call	load_palette64
+	call	clear_tvram		; [②] 自機/照準/敵の残セルを一掃(この重いフレームで1回だけ=
+					;   体感フリーズ無し。READY_HOLD 中は overlay_ship/fire 抑止で再描画されない)
+	call	draw_ready		; 一掃の後に READY を描く
+	ld	a, 3
+	ld	(ship_st), a		; READY_HOLD
+	ld	a, READY_HOLD_FRAMES
+	ld	(death_tmr), a
+	ret
+	ELSE
+	; XEVSOL(単一エリア): area_reload が無く隠す reload も無いので、READY 演出は省略し
+	;   爆発後そのまま再出現(旧挙動)。
+	call	do_checkpoint_reload	; = erase_all_sprites + sprites_reset(area 部は IFDEF で空)
+	jp	ship_respawn
+	ENDIF
+
+; [②] finish_respawn: READY_HOLD 満了。READY を消し、パレットを復帰(次フレームで mainloop が
+;   pal_buf へ。scroll 再開で地形が再描画され色が戻る)、自機を再出現。
+finish_respawn:
+	call	clear_ready
+	IFDEF	ALLAREAS
+	ld	a, 1
+	ld	(blank_ctr), a		; 次フレームで mainloop が pal_buf 復帰
+	ENDIF
+	jp	ship_respawn
+
+; do_checkpoint_reload: respawn の reload 部(ship_respawn を除く)。死亡地点が ~70%
+;   (CHECKPOINT_COL)超なら次エリア頭、未満なら現エリア頭。旧スプライトは coarse ジャンプ前に消去。
+do_checkpoint_reload:
 	call	erase_all_sprites
 	IFDEF	ALLAREAS
 	ld	a, (death_col)
 	cp	CHECKPOINT_COL
-	jr	c, .rh_cur		; 70%未満 → 現エリア頭
-	call	area_advance		; 70%超 → 次エリア頭(area_cur++/wrap + reload)
-	jr	.rh_done
-.rh_cur:
-	call	area_reload		; 現エリアの再ロード(coarse頭出し+暗転+prefill)
-.rh_done:
+	jr	c, .cr_cur		; 70%未満 → 現エリア頭
+	call	area_advance		; 70%超 → 次エリア頭
+	jr	.cr_done
+.cr_cur:
+	call	area_reload
+.cr_done:
 	ENDIF
-	call	sprites_reset
-	jp	ship_respawn
+	jp	sprites_reset		; tail-call(ret 付き)
+
+; [②] draw_ready: CGROM ANK(属性 0x07=PCG ビット無し・全プレーン=黄白)で "READY" を
+;   READY_CELL から描く。テキスト面(デジタルパレット)なので黒パレット暗転でも点灯する。
+draw_ready:
+	ld	hl, ready_str
+	ld	de, READY_CELL
+.dr:	ld	a, (hl)
+	or	a
+	ret	z
+	ld	a, d			; TVRAM[de] = 文字コード
+	or	(TVRAM >> 8)
+	ld	b, a
+	ld	c, e
+	ld	a, (hl)
+	out	(c), a
+	ld	a, d			; TATTR[de] = 0x07
+	or	(TATTR >> 8)
+	ld	b, a
+	ld	a, 0x07
+	out	(c), a
+	inc	hl
+	inc	de
+	jr	.dr
+ready_str:	db	"READY", 0
+
+; [②] clear_ready: READY の 5 セルを透明(char0/attr0)に戻す。
+clear_ready:
+	ld	de, READY_CELL
+	ld	l, 5
+.cl:	ld	a, d			; TVRAM[de] = 0
+	or	(TVRAM >> 8)
+	ld	b, a
+	ld	c, e
+	xor	a
+	out	(c), a
+	ld	a, d			; TATTR[de] = 0
+	or	(TATTR >> 8)
+	ld	b, a
+	xor	a
+	out	(c), a
+	inc	de
+	dec	l
+	jr	nz, .cl
+	ret
 
 ; restart_game: game_over 後の自動リスタート(area1 頭・残機3・opening)。
 restart_game:
