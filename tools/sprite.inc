@@ -5755,14 +5755,17 @@ jara_data	EQU	enemy_data
 ;   未指定は Toroid 先頭2コマを流用。
 	IFDEF	TORKAN_EXTDATA
 torkan_data:
-	INCLUDE	"roms/torkan_ext.inc"
+	; [向き修正] 元 roms/torkan_ext.inc は rot0=逆さま(hand-made, ROM 非マッチ)。
+	;   ROM 正規抽出の rot180 版(xevi_ext_rot180.py)を無条件で参照(画面基準=地図回転と無関係)。
+	INCLUDE	"roms/torkan_rot180.inc"
 	ELSE
 torkan_data	EQU	enemy_data
 	ENDIF
 ; [M8⑥] Grobda PCG データ(2コマ=8セル=192B)。-DGROBDA_EXTDATA で有効。
 	IFDEF	GROBDA_EXTDATA
 grobda_data:
-	INCLUDE	"roms/grobda_ext.inc"
+	; [向き修正] ROM 正規抽出の rot180 版を無条件で参照(元 grobda_ext.inc は rot0=逆さま)。
+	INCLUDE	"roms/grobda_rot180.inc"
 	ENDIF
 
 ;=====================================================================
