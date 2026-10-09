@@ -411,6 +411,11 @@ mainloop:
 	out	(c), a
 	ENDIF
 	IFDEF	ALLAREAS
+	; [死亡演出] DYING/GAMEOVER 中はエリア自動切替を抑止(死亡中のスクロールで
+	;   area_cur が変わり respawn 先の 70%判定/巻戻しがずれるのを防ぐ)。
+	ld	a, (ship_st)
+	or	a
+	jr	nz, .no_area_adv
 	; [⑦(4)] coarsen >= W_CELLS-COLS+1(=217) でエリア境界 → 切替
 	ld	a, h
 	or	a

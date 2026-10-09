@@ -54,7 +54,7 @@ BLASTER_SIZES	EQU	3		; 照準へ近づくほど小さく(大→中→小)
 RETICLE_RED_BASE EQU	0xDC		; [M8-3] 照準ロック時の赤版 PCG (0xDC..0xDF, 2x2)
 RETICLE_BLINK	EQU	0x08		; 点滅周期(framecnt のこのビットで赤/シアン切替)
 MAX_BLASTER	EQU	1		; 同時存在数 (ピーク負荷削減)
-BLASTER_SPEED	EQU	4		; 前進/呼出 (2px単位)
+BLASTER_SPEED	EQU	1		; [④ROM] 飛行 2px/f。開始+5〜着弾(ship+RETICLE_DIST=+40)=距離35 → 35f(ROM: 発射→着弾 35f 固定)
 TRIG2		EQU	0x40		; PSG port A bit6 (トリガ2, 負論理)
 BLASTER_DELAY	EQU	12		; 連射間隔
 
@@ -99,8 +99,10 @@ sprite_init:
 	ld	(game_over), a
 	ld	(ship_st), a		; ALIVE
 	ld	(death_tmr), a
-	ld	a, SHIP_INV_START	; 開始時の無敵猶予(ROM 準拠、xevi-re 値で調整)
-	ld	(ship_inv), a
+	ld	(ship_inv), a		; 無敵は使わない(ROM 準拠=常に0)
+	ld	(death_col), a
+	ld	a, READY_FRAMES		; 開始時も READY 猶予(敵抑止。ROM の display_player_start_msgs 相当)
+	ld	(ready_tmr), a
 	call	gen_reticle
 	call	gen_reticle_red		; [M8-3] ロック点滅用の赤版照準 PCG
 	call	gen_blaster
@@ -455,7 +457,7 @@ fire_blaster:
 	ld	e, a
 	ld	d, 0
 	ld	a, (ship_hx)
-	add	a, 2 * 4		; 機首から
+	add	a, 5			; [④ROM] 開始を ship+5 に(着弾 ship+40 まで距離35=35f@speed1)
 	ld	hl, bla_hx
 	add	hl, de
 	ld	(hl), a
@@ -2151,6 +2153,9 @@ enemy_spawn:
 	ld	a, (game_over)
 	or	a
 	ret	nz			; ゲームオーバー中は出現しない
+	ld	a, (ready_tmr)		; [死亡演出] READY 猶予中は敵出現を抑止
+	or	a
+	ret	nz
 	; [出現②] col トリガ walker で fn2/fn3/fn5 を発火(①の時間駆動を置換)。
 	IFDEF	ENEMY_EXTDATA
 	call	fly_walk
@@ -4125,6 +4130,9 @@ turret_fire:
 	ld	a, (game_over)
 	or	a
 	ret	nz
+	ld	a, (ready_tmr)		; [死亡演出] READY 猶予中は砲台発射を抑止
+	or	a
+	ret	nz
 	ld	a, (framecnt)
 	and	7
 	ret	nz			; 8フレームに1回のみ処理(countup&7==0 相当)
@@ -4260,15 +4268,18 @@ ef_aim_spawn:
 	call	ebul_spawn
 	ret
 
-; ship_hit: 自機被弾。無敵/ゲームオーバー中は無視。爆発+残機-1。残機0でゲームオーバー。
-;   敵弾はクリアしない(無敵 64 フレームで保護、弾は通常 cull)。
-SHIP_INV_FRAMES	EQU	64		; 復活後の無敵フレーム(ROM 値は xevi-re 確認後に調整)
-SHIP_INV_START	EQU	64		; 開始時の無敵フレーム(同上)
-DEATH_FRAMES	EQU	32		; 被弾→再出現までの DYING 長(爆発~24f+間)
-GAMEOVER_FRAMES	EQU	150		; game_over 表示→自動リスタートまで(~2.5s)
+; [死亡演出 ROM 値 (xevi-re 確定)] 無敵は ROM に無し(check_solvalou_hit は被弾即死)。
+;   復活の安全は「敵一掃+エリア頭+READY 期間」で担保。
+;   DYING = 爆発56 + 遅延32 + カウント64 = 152f(自機隠蔽)。
+;   READY = 160f(自機は出るが ship_st=0 で ready_tmr>0 の間は敵出現/砲台発射を抑止)。
+;   game_over = 128f 後に自動リスタート(デモ逸脱=タイトル無しのため。fidelity-gaps 記録)。
+DYING_FRAMES	EQU	152		; 56(爆発)+32(遅延)+64(カウント)
+READY_FRAMES	EQU	160		; 復活後の猶予(敵抑止)。表示は省略
+GAMEOVER_FRAMES	EQU	128		; game_over → 自動リスタート
+CHECKPOINT_COL	EQU	151		; エリアの ~70%(coarsen 0..216)。超えて死んだら次エリア頭へ
 ; ship_st: 0=ALIVE 1=DYING(爆発+自機隠蔽) 2=GAMEOVER_WAIT
-; ship_hit: 自機被弾。ALIVE 以外/無敵/game_over 中は無視。被弾で DYING へ(爆発を見せ、
-;   death_tick が満了時に respawn か game_over を決める)。opening は再出現時(ship_respawn)。
+; ship_hit: 自機被弾。ALIVE 以外/game_over 中は無視(無敵は無し)。被弾で DYING へ。
+;   opening は再出現時(ship_respawn)。
 ship_hit:
 	IFDEF	PERF_NODEATH
 	ret				; [perf] worst-case 計測: 自機を死なせない(爆発/game_over を回避)
@@ -4279,9 +4290,9 @@ ship_hit:
 	ld	a, (game_over)
 	or	a
 	ret	nz
-	ld	a, (ship_inv)
-	or	a
-	ret	nz			; 無敵中
+	; [70%チェックポイント用] 死亡時のエリア進捗(coarsen 下位)を捕捉
+	ld	a, (coarsen)
+	ld	(death_col), a
 	; 爆発を自機セルへ
 	ld	a, (ship_hx)
 	srl	a
@@ -4311,11 +4322,11 @@ ship_hit:
 	; DYING へ(自機を隠し爆発を見せる)
 	ld	a, 1
 	ld	(ship_st), a
-	ld	a, DEATH_FRAMES
+	ld	a, DYING_FRAMES
 	ld	(death_tmr), a
 	ret
 
-; ship_tick: 毎フレーム。無敵タイマ減算。
+; ship_tick: 毎フレーム。無敵タイマ減算(ROM 無敵なしだが ship_inv は常に0=無害)。
 ship_tick:
 	ld	a, (ship_inv)
 	or	a
@@ -4324,15 +4335,23 @@ ship_tick:
 	ld	(ship_inv), a
 	ret
 
-; death_tick: 毎フレーム(ship_tick の後)。DYING/GAMEOVER_WAIT のタイマを進め、
-;   満了で respawn(残機あり)/ game_over 移行 / 自動リスタート(残機0)。
+; death_tick: 毎フレーム(ship_tick の後)。ALIVE では READY 猶予(ready_tmr)を減算。
+;   DYING/GAMEOVER_WAIT のタイマを進め、満了で respawn / game_over / 自動リスタート。
 death_tick:
 	ld	a, (ship_st)
+	or	a
+	jr	nz, .busy
+	; ALIVE: READY 猶予を減算(0 で通常=敵抑止解除)
+	ld	a, (ready_tmr)
+	or	a
+	ret	z
+	dec	a
+	ld	(ready_tmr), a
+	ret
+.busy:
 	dec	a
 	jr	z, .dying		; ship_st==1
-	dec	a
-	ret	nz			; ship_st!=2(ALIVE 等)
-	; --- GAMEOVER_WAIT ---
+	; --- ship_st==2: GAMEOVER_WAIT ---
 	ld	hl, death_tmr
 	dec	(hl)
 	ret	nz
@@ -4355,12 +4374,21 @@ death_tick:
 	ld	(death_tmr), a
 	ret
 
-; respawn_here: 現エリアの頭へ巻き戻して自機再出現。
-;   旧スプライトは coarse ジャンプ前に現 ring 位置で消去してから area_reload する。
+; respawn_here: エリア頭へ巻き戻して自機再出現。ROM どおり、死亡地点がエリアの
+;   ~70%(CHECKPOINT_COL)を超えていたら次エリアの頭から(area_advance が area16→area7
+;   の wrap と ++ を内包)。それ以外は現エリアの頭(area_reload)。
+;   旧スプライトは coarse ジャンプ前に現 ring 位置で消去する。
 respawn_here:
 	call	erase_all_sprites
 	IFDEF	ALLAREAS
-	call	area_reload		; area_cur のエリア再ロード(coarse頭出し+暗転+prefill)
+	ld	a, (death_col)
+	cp	CHECKPOINT_COL
+	jr	c, .rh_cur		; 70%未満 → 現エリア頭
+	call	area_advance		; 70%超 → 次エリア頭(area_cur++/wrap + reload)
+	jr	.rh_done
+.rh_cur:
+	call	area_reload		; 現エリアの再ロード(coarse頭出し+暗転+prefill)
+.rh_done:
 	ENDIF
 	call	sprites_reset
 	jp	ship_respawn
@@ -4379,7 +4407,8 @@ restart_game:
 	call	sprites_reset
 	jp	ship_respawn
 
-; ship_respawn: 自機を初期位置へ戻し無敵付与、ALIVE へ、opening を頭から。
+; ship_respawn: 自機を初期位置へ戻し、ALIVE へ、READY 猶予を付与、opening を頭から。
+;   無敵は無し(ROM 準拠)。安全は敵一掃+エリア頭+READY 期間の敵抑止で担保。
 ship_respawn:
 	ld	a, SHIP_HX0
 	ld	(ship_hx), a
@@ -4388,10 +4417,10 @@ ship_respawn:
 	ld	hl, 0xFFFF		; 自機 prev 無効(再描画で旧消去しない)
 	ld	(ship_prev), hl
 	ld	(ship_prev2), hl
-	ld	a, SHIP_INV_FRAMES
-	ld	(ship_inv), a
 	xor	a
 	ld	(ship_st), a		; ALIVE
+	ld	a, READY_FRAMES
+	ld	(ready_tmr), a		; READY 猶予(この間は敵出現/砲台発射を抑止)
 	IFDEF	SOUND
 	ld	a, 1			; ライフ開始 = opening を頭から
 	ld	(bgm_silent), a
@@ -5482,6 +5511,8 @@ ship_inv:	db	0		; 復活無敵フレーム
 game_over:	db	0		; 1=ゲームオーバー(自動リスタート待ちで一時的)
 ship_st:	db	0		; 0=ALIVE 1=DYING 2=GAMEOVER_WAIT
 death_tmr:	db	0		; DYING/GAMEOVER_WAIT の残フレーム
+ready_tmr:	db	0		; 復活/開始後の READY 猶予(>0 で敵出現/砲台発射抑止)
+death_col:	db	0		; 死亡時の coarsen 下位(70%チェックポイント判定用)
 ; [敵] Bacura
 bac_active:	ds	MAX_BACURA
 bac_sx:		ds	MAX_BACURA	; 画面列(0xFF.. = 左に抜けた)

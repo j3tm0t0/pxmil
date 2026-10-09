@@ -378,6 +378,14 @@ st_sfx:
 	ld	a, (sfx_v+V_ACT)
 	or	a
 	ret	nz
+	; [③修正] 終了時に R7(ミキサ)と vol C を復帰(noise SFX と同じ)。これを
+	;   怠ると tone SFX(kankan)の残留状態で後続の kankan が鳴らなくなる。
+	ld	d, 7
+	ld	e, 0x38
+	call	psg_set
+	ld	d, 10
+	ld	e, 0
+	call	psg_set
 	xor	a			; SFX終了
 	ld	(sfx_type), a
 	ret
