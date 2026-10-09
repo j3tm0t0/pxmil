@@ -4411,7 +4411,7 @@ enter_ready_reload:
 	call	load_palette64
 	call	draw_ready
 	call	do_checkpoint_reload	; erase + area_advance/area_reload + sprites_reset(重い)
-	xor	a			; reload 末尾の blank_ctr=2 を打ち消し、READY_HOLD 中は黒を保つ
+	xor	a			; blank_ctr=0: READY_HOLD 中は mainloop の pal_buf 復帰を止め黒を保つ
 	ld	(blank_ctr), a
 	ld	ix, blackpal		; 念押しで黒を確定(reload 後の状態に依らず)
 	call	load_palette64

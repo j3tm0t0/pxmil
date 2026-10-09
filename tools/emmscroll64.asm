@@ -1484,11 +1484,10 @@ area_reload:
 	call	grobda_init
 	ENDIF
 	call	bacura_init		; [敵] 切替で Bacura クリア
-	; 暗転: 黒パレットを最後にロード(EMM/GRAM I/O の後で palandply を確定させる)
-	ld	ix, blackpal
-	call	load_palette64
-	ld	a, 2
-	ld	(blank_ctr), a
+	; [暫定(B)] ここで暗転(blackpal)していたが、emu のパレット全画面反映修正(548649f)で
+	;   これが効くようになり通常の area_advance が約3.85秒真っ黒になった(ハング見え)。
+	;   そこで暗転を外す。死亡巻戻し(②)は enter_ready_reload が独自に blackpal を入れるので
+	;   影響なし。area_advance 自体のフリーズは ③(シームレス=prefill 廃止)で解消予定。
 	IFDEF	ALLAREAS_DBG
 	ld	a, 0xFF			; PROBE 0xA2FF: 再ロード完了
 	ld	e, a
