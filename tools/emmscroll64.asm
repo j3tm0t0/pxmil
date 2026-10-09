@@ -354,6 +354,16 @@ realstart:
 	ENDIF
 
 mainloop:
+	IFDEF	FASTDEATH
+	ld	a, (ship_st)
+	or	a
+	jr	nz, .nofd
+	ld	a, (framecnt)
+	and	0x7F
+	jr	nz, .nofd
+	call	ship_hit
+.nofd:
+	ENDIF
 	call	wait_vblank
 	IFDEF	SOUND
 	call	snd_bgm_mgr		; [SND] BGM 終了検出→次曲(fanfare→本BGM→ループ)

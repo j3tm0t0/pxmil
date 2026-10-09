@@ -20,6 +20,7 @@ BULLET_BASE	EQU	0xA0		; 弾 PCG 先頭 (0xA0..0xAF)。実使用は 0xA0-0xA3(2�
 MAX_BULLETS	EQU	3		; [ROM準拠] 画面内同時上限3(slot 0x24-0x26)。1トリガ=1オブジェクト
 	IFDEF	ALLAREAS
 DOMO_BASE	EQU	0xA4		; [Domogram] 本体 PCG 2x2=4セル(0xA4-0xA7, 弾予約域の空き)
+READY_PCG_BASE	EQU	0xA8		; [縦持ちREADY] 90°回転 READY! の 6 グリフ(0xA8-0xAD, Phase2 Zakato/sparkle 予約域の空き)
 MAX_DOMOGRAM	EQU	8		; 同時最大(ROM: 40桁窓の同時出現上限)
 MAX_DOMO_PEND	EQU	19		; per-area pending 上限(=bake 最大 ndomo。切り詰め無し)
 DOMO_MASK	EQU	0x11		; [Domogram] 射撃 ffreq mask_id(Derota/Logram と同一, index=0x11-8=9)
@@ -103,13 +104,18 @@ sprite_init:
 	ld	(death_col), a
 	ld	a, READY_FRAMES		; 開始時も READY 猶予(敵抑止。ROM の display_player_start_msgs 相当)
 	ld	(ready_tmr), a
+	IFDEF	RDYTEST
+	xor	a			; [テスト] 通常プレイから開始(FASTDEATH で READY! を出す)
+	ELSE
 	ld	a, 1			; [scroll-only] 起動時はスクロールオンリーモード(明示初期化=db頼みにしない)
+	ENDIF
 	ld	(scroll_only), a
 	xor	a
 	ld	(trig_prev), a		; [scroll-only] トリガーエッジ検出の前回状態(0=押下扱い→release後の押下で開始)
 	call	gen_reticle
 	call	gen_reticle_red		; [M8-3] ロック点滅用の赤版照準 PCG
 	call	gen_blaster
+	call	gen_ready_pcg		; [縦持ちREADY] 90°回転 READY! の PCG(0xA8-0xAD)を定義
 	IFDEF	GROBDA_EXTDATA
 	call	gen_grobda		; [M8⑥] Grobda PCG
 	call	grobda_init		; Grobda 初期配置
@@ -4522,34 +4528,37 @@ do_checkpoint_reload:
 	ENDIF
 	jp	sprites_reset		; tail-call(ret 付き)
 
-; [②] draw_ready: CGROM ANK(属性 0x07=PCG ビット無し・全プレーン=黄白)で "READY" を
-;   READY_CELL から描く。テキスト面(デジタルパレット)なので黒パレット暗転でも点灯する。
+; [縦持ちREADY] draw_ready: 90°回転グリフの PCG(0xA8-0xAD)を landscape 横一列6セルに置く。
+;   横一列(左→右 = コード 0xA8..0xAD = ! Y D A E R)。プレイヤー視点は landscape を 90° CCW に
+;   回した向き(現状の横書き READY が左端に縦の横倒しで見えることから確定)なので、上→下に
+;   R E A D Y ! と正立して読める。色は B+R プレーンのみ定義(G=0)で slot=B+2R+4G=3=テキスト
+;   slot3=グレー #707070(ROM 準拠)。PCG 定義は boot で gen_ready_pcg が 1 回だけ。
 draw_ready:
-	ld	hl, ready_str
 	ld	de, READY_CELL
-.dr:	ld	a, (hl)
-	or	a
-	ret	z
-	ld	a, d			; TVRAM[de] = 文字コード
+	ld	l, READY_PCG_BASE	; l = PCG コード(0xA8..0xAD)
+.dr:
+	ld	a, d			; TVRAM[de] = コード
 	or	(TVRAM >> 8)
 	ld	b, a
 	ld	c, e
-	ld	a, (hl)
+	ld	a, l
 	out	(c), a
-	ld	a, d			; TATTR[de] = 色 slot3(ROM 準拠のグレー #707070)
+	ld	a, d			; TATTR[de] = PCG + 全プレーン有効(0x27)。G=0 定義なので色= B+R= slot3 グレー
 	or	(TATTR >> 8)
 	ld	b, a
-	ld	a, 0x03			; [⑤] テキスト pen slot3 = tpal_a[2]=0x15 = #707070(ROM の READY 色)
+	ld	a, 0x27
 	out	(c), a
-	inc	hl
 	inc	de
-	jr	.dr
-ready_str:	db	"READY", 0
+	inc	l
+	ld	a, l
+	cp	READY_PCG_BASE + 6
+	jr	nz, .dr
+	ret
 
-; [②] clear_ready: READY の 5 セルを透明(char0/attr0)に戻す。
+; [縦持ちREADY] clear_ready: 6 セルを透明(char0/attr0)に戻す。
 clear_ready:
 	ld	de, READY_CELL
-	ld	l, 5
+	ld	l, 6
 .cl:	ld	a, d			; TVRAM[de] = 0
 	or	(TVRAM >> 8)
 	ld	b, a
@@ -4565,6 +4574,49 @@ clear_ready:
 	dec	l
 	jr	nz, .cl
 	ret
+
+; [縦持ちREADY] gen_ready_pcg: 6 グリフを PCG 0xA8-0xAD に定義(boot で 1 回)。グレーにする
+;   ため B と R プレーンに同じビットマップ、G プレーンは 0(slot=B+2R+4G=3=グレー)。
+gen_ready_pcg:
+	ld	hl, ready_glyphs
+	ld	a, READY_PCG_BASE
+	ld	(rg_code), a
+	ld	b, 6
+.gl:	push	bc
+	ld	a, (rg_code)
+	call	pcg_select
+	ld	d, PCG_B >> 8		; B プレーン = グリフ
+	push	hl
+	call	def_plane
+	pop	hl
+	ld	d, PCG_R >> 8		; R プレーン = グリフ(同じビットマップ)
+	push	hl
+	call	def_plane
+	pop	hl
+	ld	d, PCG_G >> 8		; G プレーン = 0
+	push	hl
+	ld	hl, rg_zero
+	call	def_plane
+	pop	hl
+	ld	de, 8			; def_plane は hl を 8 進めるので push/pop で温存し、ここで次グリフへ
+	add	hl, de
+	ld	a, (rg_code)
+	inc	a
+	ld	(rg_code), a
+	pop	bc
+	djnz	.gl
+	ret
+
+rg_code:	db	0
+rg_zero:	db	0,0,0,0,0,0,0,0
+; 90°回転(CW)グリフ(8x8)。landscape 左→右 = ! Y D A E R(プレイヤー視点 上→下 = R E A D Y !)。
+ready_glyphs:
+	db	0x00,0x00,0x06,0x5F,0x5F,0x06,0x00,0x00	; '!' rot90CW (code 0xA8)
+	db	0x00,0x03,0x07,0x7C,0x7C,0x07,0x03,0x00	; 'Y' rot90CW (0xA9)
+	db	0x41,0x7F,0x7F,0x41,0x63,0x3E,0x1C,0x00	; 'D' rot90CW (0xAA)
+	db	0x00,0x7C,0x7E,0x0B,0x0B,0x7E,0x7C,0x00	; 'A' rot90CW (0xAB)
+	db	0x41,0x7F,0x7F,0x49,0x5D,0x41,0x63,0x00	; 'E' rot90CW (0xAC)
+	db	0x41,0x7F,0x7F,0x09,0x19,0x7F,0x66,0x00	; 'R' rot90CW (0xAD)
 
 ; restart_game: game_over 後の自動リスタート(area1 頭・残機3・opening)。
 restart_game:
