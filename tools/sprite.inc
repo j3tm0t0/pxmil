@@ -4419,6 +4419,9 @@ enter_ready_reload:
 	IFDEF	ALLAREAS
 	ld	ix, blackpal		; reload の「前」に黒(prefill の食い込みを黒で隠す)
 	call	load_palette64
+	call	clear_tvram		; [修正] reload の「前」に残 PCG/TVRAM セル(敵/地上物リング)を一掃。
+					;   旧実装は reload の後に clear していたため、reload フリーズ
+					;   (約3.85s)の間ずっと残リングが黒画面+READY に見えていた。
 	call	draw_ready
 	call	do_checkpoint_reload	; erase + area_advance/area_reload + sprites_reset(重い)
 	xor	a			; blank_ctr=0: READY_HOLD 中は mainloop の pal_buf 復帰を止め黒を保つ
@@ -4523,8 +4526,9 @@ restart_game:
 	;   無く、game_over→自動restart 経路で READY 不可視 + 白リング(Toroid/敵弾)残存だった。
 	ld	ix, blackpal
 	call	load_palette64
-	call	draw_ready
 	call	erase_all_sprites
+	call	clear_tvram		; [修正] reload の「前」に残セル(リング)を一掃(② と同根)
+	call	draw_ready
 	call	area_reload		; area1 の頭から
 	call	sprites_reset
 	xor	a			; blank_ctr=0: READY_HOLD 中は黒を保つ
